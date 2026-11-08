@@ -614,7 +614,7 @@ export default definePlugin(() => {
   );
 
   return {
-    name: "EmuDecky RomM Manager",
+    name: "EmuDecky RomMM",
     icon: <FaGamepad />,
     content: <QAMPanel />,
     alwaysRender: true,
