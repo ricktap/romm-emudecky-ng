@@ -41,7 +41,7 @@
 # unavailable, the placement degrades to a warning and BPM still opens.
 set -euo pipefail
 
-SCRIPT_NAME="romm-emudecky-bpm-place"
+SCRIPT_NAME="romm-emudecky-ng-bpm-place"
 
 enabled_outputs() {
   # connected AND enabled: KWin only exposes enabled outputs as screens, so a

@@ -194,15 +194,15 @@ class TestShortcutDataFormat:
     """
 
     def test_exe_path_points_to_rom_launcher(self, plugin):
-        """Exe path must point to bin/rom-launcher inside the plugin directory."""
+        """Exe path must point to bin/rom-launcher-ng inside the plugin directory."""
         import decky
 
         from domain.shortcut_data import build_shortcuts_data
 
         result = build_shortcuts_data([{"id": 1, "name": "Game"}], decky.DECKY_PLUGIN_DIR, {}, {})
         exe = result[0]["exe"]
-        expected = os.path.join(decky.DECKY_PLUGIN_DIR, "bin", "rom-launcher")
-        assert exe == expected, f"Exe path should be the plugin's bin/rom-launcher ({expected}), got: {exe}"
+        expected = os.path.join(decky.DECKY_PLUGIN_DIR, "bin", "rom-launcher-ng")
+        assert exe == expected, f"Exe path should be the plugin's bin/rom-launcher-ng ({expected}), got: {exe}"
 
     def test_installed_rom_gets_launch_command(self, plugin):
         """An installed ROM with a resolved invocation bakes the full launch command."""

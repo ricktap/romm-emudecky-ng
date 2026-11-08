@@ -84,7 +84,7 @@ def _retroarch_invocation(
     """
     launcher = os.path.join(launchers_path, retroarch_launcher_script)
     # The %ROM% placeholder stays — :func:`build_launch_options` appends the
-    # actual ROM path after the invocation, and rom-launcher exec's "$@" so
+    # actual ROM path after the invocation, and rom-launcher-ng exec's "$@" so
     # the trailing ROM argument lands in RetroArch's %ROM% slot. We do NOT
     # bake %ROM% here because build_launch_options composes
     # ``<invocation> "<rom-path>"`` — adding %ROM% would double the ROM.

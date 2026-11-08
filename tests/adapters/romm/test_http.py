@@ -45,7 +45,7 @@ def plugin():
     import decky
 
     p._http_adapter = RommHttpAdapter(
-        p.settings, decky.DECKY_PLUGIN_DIR, logging.getLogger("test"), "romm-emudecky/9.9.9"
+        p.settings, decky.DECKY_PLUGIN_DIR, logging.getLogger("test"), "romm-emudecky-ng/9.9.9"
     )
     p._romm_api = MagicMock()
 
@@ -232,7 +232,7 @@ class TestWithRetryOnRetryListener:
             {"romm_url": ""},
             "/tmp",
             logging.getLogger("test"),
-            "romm-emudecky/9.9.9",
+            "romm-emudecky-ng/9.9.9",
             on_retry=on_retry,
         )
 
@@ -393,7 +393,7 @@ class TestRommBasicAuthRequest:
             plugin._http_adapter.basic_auth_request("/api/client-tokens", "u", "p", method="POST", data={"name": "x"})
 
         req = mock_open.call_args[0][0]
-        assert req.get_header("User-agent") == "romm-emudecky/9.9.9"
+        assert req.get_header("User-agent") == "romm-emudecky-ng/9.9.9"
 
     def test_does_not_retry_on_server_error(self, plugin):
         """Mint/delete are not retry-safe — a 500 raises immediately, no retry."""
@@ -450,7 +450,7 @@ class TestUnauthenticatedPostJson:
         assert result == {"raw_token": "rmm_paired"}
         req = mock_open.call_args[0][0]
         assert req.get_header("Authorization") is None
-        assert req.get_header("User-agent") == "romm-emudecky/9.9.9"
+        assert req.get_header("User-agent") == "romm-emudecky-ng/9.9.9"
         assert req.get_header("Content-type") == "application/json"
         assert req.get_method() == "POST"
         assert json.loads(req.data.decode()) == {"code": "ABCD2345"}
@@ -546,7 +546,7 @@ class TestRommRequest:
             plugin._http_adapter.request("/api/test")
 
         req = mock_open.call_args[0][0]
-        assert req.get_header("User-agent") == "romm-emudecky/9.9.9"
+        assert req.get_header("User-agent") == "romm-emudecky-ng/9.9.9"
 
     def test_omits_authorization_when_no_token(self, plugin):
         """A pre-mint probe (no stored token) must not send an empty ``Bearer ``
@@ -568,7 +568,7 @@ class TestRommRequest:
 
         req = mock_open.call_args[0][0]
         assert req.get_header("Authorization") is None
-        assert req.get_header("User-agent") == "romm-emudecky/9.9.9"
+        assert req.get_header("User-agent") == "romm-emudecky-ng/9.9.9"
 
     def test_sends_authorization_when_token_present(self, plugin):
         """With a stored token, the Bearer header is sent alongside the UA."""
@@ -589,7 +589,7 @@ class TestRommRequest:
 
         req = mock_open.call_args[0][0]
         assert req.get_header("Authorization") == "Bearer rmm_runtime"
-        assert req.get_header("User-agent") == "romm-emudecky/9.9.9"
+        assert req.get_header("User-agent") == "romm-emudecky-ng/9.9.9"
 
 
 class TestRommRequestOnce:
@@ -656,7 +656,7 @@ class TestRommJsonRequest:
         assert req.get_method() == "POST"
         assert req.get_header("Content-type") == "application/json"
         assert req.get_header("Authorization") == "Bearer rmm_runtime"
-        assert req.get_header("User-agent") == "romm-emudecky/9.9.9"
+        assert req.get_header("User-agent") == "romm-emudecky-ng/9.9.9"
 
     def test_put_json(self, plugin):
         import json as _json
@@ -696,7 +696,7 @@ class TestRommJsonRequest:
 
         req = mock_open.call_args[0][0]
         assert req.get_header("Authorization") is None
-        assert req.get_header("User-agent") == "romm-emudecky/9.9.9"
+        assert req.get_header("User-agent") == "romm-emudecky-ng/9.9.9"
 
 
 class TestRommUploadMultipart:
@@ -724,7 +724,7 @@ class TestRommUploadMultipart:
         assert "multipart/form-data" in req.get_header("Content-type")
         assert b"save data here" in req.data
         assert req.get_header("Authorization") == "Bearer rmm_runtime"
-        assert req.get_header("User-agent") == "romm-emudecky/9.9.9"
+        assert req.get_header("User-agent") == "romm-emudecky-ng/9.9.9"
 
     def test_upload_strips_control_chars_from_filename(self, plugin, tmp_path):
         """Filenames with CRLF/null bytes must not inject multipart headers."""
@@ -781,7 +781,7 @@ class TestPlatformMap:
         """
         import logging
 
-        adapter = RommHttpAdapter({}, str(tmp_path), logging.getLogger("test"), "romm-emudecky/9.9.9")
+        adapter = RommHttpAdapter({}, str(tmp_path), logging.getLogger("test"), "romm-emudecky-ng/9.9.9")
         assert adapter.load_platform_map() == {}
         # resolve_system survives the empty map and passes the slug through unchanged.
         assert adapter.resolve_system("dc") == "dc"
@@ -791,7 +791,7 @@ class TestPlatformMap:
         import logging
 
         (tmp_path / "config.json").write_text("{ this is not valid json")
-        adapter = RommHttpAdapter({}, str(tmp_path), logging.getLogger("test"), "romm-emudecky/9.9.9")
+        adapter = RommHttpAdapter({}, str(tmp_path), logging.getLogger("test"), "romm-emudecky-ng/9.9.9")
         assert adapter.load_platform_map() == {}
         assert adapter.resolve_system("dc") == "dc"
 
@@ -1421,7 +1421,7 @@ class TestTranslateHttpStatus:
             {"romm_url": "http://test", "romm_user": "u", "romm_pass": "p"},
             "/tmp",
             logging.getLogger("test"),
-            "romm-emudecky/9.9.9",
+            "romm-emudecky-ng/9.9.9",
         )
 
     def test_400_bad_request(self):
@@ -1575,7 +1575,7 @@ class TestDownloadTimeout:
         import logging
 
         settings = {"romm_url": "http://romm.local", "romm_user": "user", "romm_pass": "pass"}
-        return RommHttpAdapter(settings, "/fake/plugin_dir", logging.getLogger("test"), "romm-emudecky/9.9.9")
+        return RommHttpAdapter(settings, "/fake/plugin_dir", logging.getLogger("test"), "romm-emudecky-ng/9.9.9")
 
     # ------------------------------------------------------------------
     # _stream_to_file direct tests
@@ -1716,7 +1716,7 @@ class TestDownloadTimeout:
             adapter.download("/roms/game.zip", dest)
 
         req = mock_open.call_args[0][0]
-        assert req.get_header("User-agent") == "romm-emudecky/9.9.9"
+        assert req.get_header("User-agent") == "romm-emudecky-ng/9.9.9"
 
     def test_download_omits_authorization_when_no_token(self, tmp_path):
         """A token-less download omits the Authorization header (no empty Bearer)."""
@@ -1739,7 +1739,7 @@ class TestDownloadTimeout:
 
         req = mock_open.call_args[0][0]
         assert req.get_header("Authorization") is None
-        assert req.get_header("User-agent") == "romm-emudecky/9.9.9"
+        assert req.get_header("User-agent") == "romm-emudecky-ng/9.9.9"
 
     def test_connection_timeout_still_works(self, tmp_path):
         """socket.timeout raised by urlopen (connection phase) -> RommTimeoutError."""
@@ -1836,7 +1836,7 @@ def _resume_adapter():
     import logging
 
     settings = {"romm_url": "http://romm.local", "romm_user": "u", "romm_pass": "p"}
-    return RommHttpAdapter(settings, "/fake/plugin_dir", logging.getLogger("test"), "romm-emudecky/9.9.9")
+    return RommHttpAdapter(settings, "/fake/plugin_dir", logging.getLogger("test"), "romm-emudecky-ng/9.9.9")
 
 
 class TestIsCloudflare:

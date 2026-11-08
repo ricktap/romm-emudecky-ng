@@ -41,7 +41,7 @@ the new app internally.
 Pass the raw path:
 
 ```typescript
-SteamClient.Apps.SetShortcutExe(appId, "/home/deck/homebrew/plugins/romm-emudecky/bin/rom-launcher");
+SteamClient.Apps.SetShortcutExe(appId, "/home/deck/homebrew/plugins/romm-emudecky-ng/bin/rom-launcher-ng");
 ```
 
 ### Updating existing shortcuts
@@ -70,7 +70,7 @@ See: `src/utils/steamShortcuts.ts`
 ### appId reuse across a server switch / re-import
 
 Because the appId is `CRC32(exe + name)` and both are **stable for a given ROM across syncs** (the exe is the constant
-`…/bin/rom-launcher`, the name is the RomM `name`), the same game always hashes to the **same appId** — even after its
+`…/bin/rom-launcher-ng`, the name is the RomM `name`), the same game always hashes to the **same appId** — even after its
 server-issued `rom_id` changes. Switching the RomM server URL (or re-importing on the same server) reissues `rom_id`s;
 the `roms` rows survive (ADR-0007 retention) and the new `rom_id` for an unchanged game resolves to the appId the old
 `rom_id` already holds.
@@ -100,7 +100,7 @@ It runs **before** the sync builds its work queue — so the unbind lands before
 the skip-preview (`start_sync`) and preview (`sync_preview`) paths:
 
 1. `getLiveRomMShortcutAppIds()` (`src/utils/steamShortcuts.ts`) scans Steam's live shortcuts and returns the raw appIds
-   of every RomM-owned shortcut (exe ends with `/bin/rom-launcher`), regardless of any backend binding. It returns
+   of every RomM-owned shortcut (exe ends with `/bin/rom-launcher-ng`), regardless of any backend binding. It returns
    `null` when the store was **unreadable** (`collectionStore` absent) versus `[]` when the scan **ran and found none**
    — a load-bearing distinction.
 2. `reconcileStaleShortcuts()` (`src/utils/syncManager.ts`) skips the reconcile on a `null` scan (reconciling against
@@ -171,7 +171,7 @@ Each entry has these key fields:
 | `AppName`       | string       | Display name                                                                                                                                                                                                                                                                                                   |
 | `Exe`           | string       | **Quoted** path: `"/path/to/exe"`                                                                                                                                                                                                                                                                              |
 | `StartDir`      | string       | **Quoted** path: `"/path/to/dir"`                                                                                                                                                                                                                                                                              |
-| `LaunchOptions` | string       | The full launch command the `bin/rom-launcher` exec wrapper runs, e.g. EmuDeck launcher script invocation like `<storagePath>/Emulation/tools/launchers/retroarch.sh "/path/to/game.iso"` — or `""` (placeholder) for an uninstalled ROM. No `romm:<id>` marker; ownership is detected by the exe path instead |
+| `LaunchOptions` | string       | The full launch command the `bin/rom-launcher-ng` exec wrapper runs, e.g. EmuDeck launcher script invocation like `<storagePath>/Emulation/tools/launchers/retroarch.sh "/path/to/game.iso"` — or `""` (placeholder) for an uninstalled ROM. No `romm:<id>` marker; ownership is detected by the exe path instead |
 | `appid`         | signed int32 | Assigned by Steam when `AddShortcut` runs; stored as the signed int32 form (`to_signed_app_id`)                                                                                                                                                                                                                |
 | `icon`          | string       | Icon path or hash                                                                                                                                                                                                                                                                                              |
 | `tags`          | object       | Steam collection tags. The plugin manages collections via `collectionStore` (machine-scoped names like `RomM: N64 (steamdeck)`), not by writing this VDF field.                                                                                                                                                |
@@ -253,7 +253,7 @@ hero/logo/grid/icon, writing the icon into the grid dir) own the artwork flow. I
 | `py_modules/adapters/steam_config.py`     | `SteamConfigAdapter` — VDF read/write, grid dir, shortcut icon write, Steam Input config                                                                                                                                                                                                                                                       |
 | `py_modules/services/library/`            | LibraryService — builds shortcut data, drives per-unit sync apply                                                                                                                                                                                                                                                                              |
 | `py_modules/domain/sgdb_artwork.py`       | `to_signed_app_id`, SGDB asset-type/endpoint maps                                                                                                                                                                                                                                                                                              |
-| `bin/rom-launcher`                        | Pure `exec "$@"` wrapper invoked by Steam — runs the full launch command baked into the shortcut's launch options; owns no state, no path resolution, no emulator knowledge                                                                                                                                                                    |
+| `bin/rom-launcher-ng`                        | Pure `exec "$@"` wrapper invoked by Steam — runs the full launch command baked into the shortcut's launch options; owns no state, no path resolution, no emulator knowledge                                                                                                                                                                    |
 
 ## Common Pitfalls
 

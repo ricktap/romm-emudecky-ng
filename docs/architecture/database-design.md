@@ -517,7 +517,7 @@ The service cutover ([#784](https://github.com/danielcopper/decky-romm-sync/issu
 is complete. Every slice migrated:
 
 - **firmware** and **downloads** (the launcher's old SQLite read path was since removed — the launcher no longer reads
-  SQLite at all; the launch command is baked into the shortcut's `launch_options` and the `rom-launcher` exec wrapper
+  SQLite at all; the launch command is baked into the shortcut's `launch_options` and the `rom-launcher-ng` exec wrapper
   just runs it, per
   [ADR-0009](https://github.com/danielcopper/decky-romm-sync/blob/main/docs/adr/0009-launcher-pure-exec-wrapper-baked-launch-options.md)).
 - the **saves** vertical.

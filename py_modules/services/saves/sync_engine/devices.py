@@ -243,7 +243,7 @@ class DeviceRegistry:
                 lambda: self._romm_api.register_device(
                     name=hostname,
                     platform="linux",
-                    client="romm-emudecky",
+                    client="romm-emudecky-ng",
                     client_version=self._plugin_version,
                     hostname=machine_id,
                 ),

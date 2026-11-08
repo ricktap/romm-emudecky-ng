@@ -95,7 +95,7 @@ class TestBuildShortcutsData:
     """Tests for build_shortcuts_data()."""
 
     def test_builds_correct_format(self):
-        plugin_dir = "/home/deck/homebrew/plugins/romm-emudecky"
+        plugin_dir = "/home/deck/homebrew/plugins/romm-emudecky-ng"
         roms = [
             {
                 "id": 1,
@@ -120,7 +120,7 @@ class TestBuildShortcutsData:
         assert result[0]["sgdb_id"] == 200
         assert result[0]["ra_id"] == 300
         assert result[0]["cover_path"] == ""
-        assert result[0]["exe"] == os.path.join(plugin_dir, "bin", "rom-launcher")
+        assert result[0]["exe"] == os.path.join(plugin_dir, "bin", "rom-launcher-ng")
         assert result[0]["start_dir"] == os.path.join(plugin_dir, "bin")
         assert result[1]["fs_name"] == ""
 
@@ -134,7 +134,7 @@ class TestBuildShortcutsData:
         result = build_shortcuts_data(roms, "/plugin", {1: "/roms/n64/gamea.z64"}, {})
         # Installed but no invocation resolved (needs_setup / launcher_missing) —
         # the path is still baked (build_launch_options("", path)) so the shortcut
-        # exists; the empty invocation prefix means rom-launcher exec's the path
+        # exists; the empty invocation prefix means rom-launcher-ng exec's the path
         # directly (not useful without an emulator, but the shortcut survives).
         assert result[0]["launch_options"] == ' "/roms/n64/gamea.z64"'
 
@@ -212,13 +212,13 @@ class TestBuildShortcutsData:
         assert result[0]["sgdb_id"] is None
 
     def test_exe_path_contains_rom_launcher(self):
-        plugin_dir = "/home/deck/homebrew/plugins/romm-emudecky"
+        plugin_dir = "/home/deck/homebrew/plugins/romm-emudecky-ng"
         roms = [{"id": 1, "name": "Game"}]
         result = build_shortcuts_data(roms, plugin_dir, {}, {})
-        assert result[0]["exe"].endswith("/bin/rom-launcher")
+        assert result[0]["exe"].endswith("/bin/rom-launcher-ng")
 
     def test_start_dir_is_parent_of_exe(self):
-        plugin_dir = "/home/deck/homebrew/plugins/romm-emudecky"
+        plugin_dir = "/home/deck/homebrew/plugins/romm-emudecky-ng"
         roms = [{"id": 1, "name": "Game"}]
         result = build_shortcuts_data(roms, plugin_dir, {}, {})
         assert result[0]["start_dir"] == os.path.dirname(result[0]["exe"])

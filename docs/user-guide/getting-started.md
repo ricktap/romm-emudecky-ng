@@ -38,13 +38,13 @@ Before installing the plugin, you need:
    The URL for the latest release follows this pattern:
 
    ```text
-   https://github.com/ricktap/romm-emudecky-ng/releases/download/romm-emudecky-v{VERSION}/romm-emudecky.zip
+   https://github.com/ricktap/romm-emudecky-ng/releases/download/romm-emudecky-ng-v{VERSION}/romm-emudecky-ng.zip
    ```
 
    For example, for v0.26.1:
 
    ```text
-   https://github.com/ricktap/romm-emudecky-ng/releases/download/romm-emudecky-v0.26.1/romm-emudecky.zip
+   https://github.com/ricktap/romm-emudecky-ng/releases/download/romm-emudecky-ng-v0.26.1/romm-emudecky-ng.zip
    ```
 
 6. Decky downloads and installs the plugin automatically — no restart needed
@@ -58,7 +58,7 @@ Any direct URL to the zip file works (GitHub releases, a self-hosted mirror, etc
 
 ### Manual installation (alternative)
 
-1. Download `romm-emudecky.zip` from the [releases page](https://github.com/ricktap/romm-emudecky-ng/releases)
+1. Download `romm-emudecky-ng.zip` from the [releases page](https://github.com/ricktap/romm-emudecky-ng/releases)
 2. Extract the zip to `~/homebrew/plugins/` on your device (via SSH, file manager, or USB)
 3. Restart Decky Loader — either reboot, or run `sudo systemctl restart plugin_loader` via SSH
 4. The plugin appears in your QAM under the Decky tab

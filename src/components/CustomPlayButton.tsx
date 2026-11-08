@@ -806,7 +806,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
       const result = await removeRom(romId);
       if (result.success) {
         // Reset the now-stale launch command to the uninstalled "" placeholder so a
-        // raced-past not_installed launch execs `bin/rom-launcher` with no args (clean
+        // raced-past not_installed launch execs `bin/rom-launcher-ng` with no args (clean
         // exit 1) instead of a stale `flatpak run … "<deleted path>"` (#1051). Best-effort:
         // a launch-options hiccup must not turn a successful uninstall into an error.
         await setLaunchOptionsConfirmed(appId, "").catch(() => false);

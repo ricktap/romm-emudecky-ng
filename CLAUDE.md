@@ -13,11 +13,11 @@ install/uninstall games, launch via EmuDeck emulators, save sync, BIOS/firmware.
 
 - Setup: `mise run setup` (or `uv venv --python 3.11 .venv && uv pip install -r requirements-dev.lock && pnpm install`)
 - Python tests: `python -m pytest tests/ -q` · Frontend tests: `pnpm test` · Build: `pnpm build`
-- Deploy to a device: `mise run dev` (build + copy to `~/homebrew/plugins/romm-emudecky` + restart `plugin_loader`)
+- Deploy to a device: `mise run dev` (build + copy to `~/homebrew/plugins/romm-emudecky-ng` + restart `plugin_loader`)
 - Python deps: edit `requirements-dev.txt`, then `mise run lock-update`.
 
 **CI** (`.github/workflows/`): `test.yml` runs both test suites on every push to any branch. `release.yml` runs on a
-`v*` tag: stamps the version from the tag, builds and smoke-tests `romm-emudecky.zip`, publishes a GitHub Release with
+`v*` tag: stamps the version from the tag, builds and smoke-tests `romm-emudecky-ng.zip`, publishes a GitHub Release with
 the commit subjects since the previous tag as notes. To release: `git tag v0.27.0 && git push origin v0.27.0`. There is
 no linting/formatting in CI — don't add any.
 
@@ -28,7 +28,9 @@ no linting/formatting in CI — don't add any.
   never a silent fallback to `~/Emulation`.
 - Decky's embedded Python is **3.11**; third-party runtime deps are vendored in `py_modules/_vendor/` (Decky has no
   package manager). Only adapters import `_vendor`.
-- Plugin id/folder/User-Agent slug: `romm-emudecky`. Display name: "EmuDecky RomM Manager".
+- Plugin id/folder/User-Agent slug: `romm-emudecky-ng` (must equal the repo name — the release zip's top folder is the
+  checkout dir and becomes the install folder). Display name: "EmuDecky RomM Manager". Side-by-side installs with
+  upstream `decky-romm-sync` are supported (see plan D8).
 
 ## Key technical constraints
 
@@ -38,18 +40,18 @@ no linting/formatting in CI — don't add any.
   `setLaunchOptionsConfirmed` (fire, then poll `AppDetails`).
 - **appId = CRC(exe + name).** launchOptions/startDir changes keep the appId (artwork, collections, playtime survive);
   exe/name changes create a new shortcut.
-- **Launcher model:** every shortcut's exe is `bin/rom-launcher`, a pure `exec "$@"` wrapper. `launch_options` carries
+- **Launcher model:** every shortcut's exe is `bin/rom-launcher-ng`, a pure `exec "$@"` wrapper. `launch_options` carries
   the full command (emulator invocation + `"<rom-path>"`), or `""` when uninstalled/unresolvable (`needs_setup` /
   `launcher_missing`, which the UI must surface). One shared resolver builds every `launch_options`:
   `resolve_emulator_invocation` → `domain/emudeck_launch.resolve_emudeck_invocation`. Ownership = exe ends with
-  `/bin/rom-launcher`; rom_id↔appId lives in `roms.shortcut_app_id`.
+  `/bin/rom-launcher-ng`; rom_id↔appId lives in `roms.shortcut_app_id`.
 - **Frontend API:** `@decky/ui` + `@decky/api`, `callable()` (not `decky-frontend-lib` / `callPluginMethod`). Every
   callable in `main.py` must be `async def`. Don't push bulk data through `decky.emit()` — use per-item callables.
 - **Callable failures** return `{success: False, reason, message}` (`reason` from `lib.list_result.ErrorCode` or a
   short string). Never `error` / `error_code` keys.
 - **RomM:** requires ≥ 4.9.0 (`_MIN_REQUIRED_VERSION` in `main.py`). Filter param is `platform_ids` (plural); cover URLs
   contain unencoded spaces; lists are paginated `{"items": [...], "total": N}`. Send a real User-Agent
-  (`romm-emudecky/<version>`, read from `package.json`) — Cloudflare/SteamGridDB 403 the Python default.
+  (`romm-emudecky-ng/<version>`, read from `package.json`) — Cloudflare/SteamGridDB 403 the Python default.
 - **Token-host binding:** the API token is sent only to the origin it was minted for (`romm_api_token_origin`);
   mismatch raises `TokenHostMismatchError`. Sign-in persists URL+token+origin atomically only on success. Changing
   origin forgets the registered save-sync device id. (Plan D6 extends this to an internal + external URL pair.)

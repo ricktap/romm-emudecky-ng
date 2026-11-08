@@ -44,7 +44,7 @@ interface SteamAppDetails {
   strLaunchOptions?: string;
   LaunchOptions?: string;
   // The shortcut's executable path. Used as the RomM ownership marker:
-  // shortcuts whose exe ends in `/bin/rom-launcher` are ours.
+  // shortcuts whose exe ends in `/bin/rom-launcher-ng` are ours.
   strShortcutExe?: string;
 }
 
