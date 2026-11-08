@@ -4,9 +4,13 @@ name: Release
 # Release for it. The release notes are the commit subjects since the
 # previous tag. The version in package.json / plugin.json is stamped from the
 # tag at build time, so tagging is the only release step.
+#
+# A manual run (workflow_dispatch) on any branch only builds and smoke-tests
+# the zip, as a dry run; it never publishes.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -20,14 +24,12 @@ jobs:
         with:
           fetch-depth: 0 # full history + tags for the release notes
 
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      # No host-side pnpm install: the Decky CLI installs and builds the frontend
+      # inside its own builder container, and aborts if it finds a node_modules
+      # created by a different pnpm.
 
       - name: Stamp version from tag
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           for f in package.json plugin.json; do
@@ -59,6 +61,7 @@ jobs:
             || { echo "bin/rom-launcher is not executable"; exit 1; }
 
       - name: Write release notes
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           PREV=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
           RANGE=${PREV:+$PREV..}$GITHUB_REF_NAME
@@ -70,6 +73,7 @@ jobs:
           cat /tmp/notes.md
 
       - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
