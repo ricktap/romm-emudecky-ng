@@ -1,4 +1,4 @@
-"""In-memory ``UnitOfWork`` composing the nine fake repositories, for service tests.
+"""In-memory ``UnitOfWork`` composing the fake repositories, for service tests.
 
 Mirrors the real UoW's context-manager shape — a clean ``__exit__`` commits and
 flips ``committed``; an exceptional one truly rolls back (discards every write
@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from fakes.fake_bios_file_repository import FakeBiosFileRepository
+from fakes.fake_download_job_repository import FakeDownloadJobRepository
 from fakes.fake_firmware_cache_repository import FakeFirmwareCacheRepository
 from fakes.fake_kv_config_repository import FakeKvConfigRepository
 from fakes.fake_playtime_repository import FakePlaytimeRepository
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from domain.bios_file import BiosFile
+    from domain.download_job import DownloadJob
     from domain.firmware_cache import FirmwareCacheEntry
     from domain.playtime import Playtime
     from domain.rom import Rom
@@ -64,10 +66,11 @@ class _Snapshot:
     firmware_cache: dict[tuple[str, str], FirmwareCacheEntry]
     sync_runs: dict[str, SyncRun]
     kv_config: dict[str, str]
+    download_jobs: dict[int, DownloadJob]
 
 
 class FakeUnitOfWork:
-    """In-memory unit of work over nine fake repositories with commit/rollback flags."""
+    """In-memory unit of work over the fake repositories with commit/rollback flags."""
 
     # Child repos whose aggregate carries a ``rom_id`` foreign key onto ``roms``
     # (schema: rom_installs / rom_metadata / rom_playtime / rom_save_states +
@@ -87,6 +90,7 @@ class FakeUnitOfWork:
         self.firmware_cache = FakeFirmwareCacheRepository()
         self.sync_runs = FakeSyncRunRepository()
         self.kv_config = FakeKvConfigRepository()
+        self.download_jobs = FakeDownloadJobRepository()
         self.committed = False
         self.rolled_back = False
         self.enter_count = 0
@@ -106,6 +110,7 @@ class FakeUnitOfWork:
             firmware_cache=self.firmware_cache._snapshot(),
             sync_runs=self.sync_runs._snapshot(),
             kv_config=self.kv_config._snapshot(),
+            download_jobs=self.download_jobs._snapshot(),
         )
         return self
 
@@ -147,6 +152,7 @@ class FakeUnitOfWork:
         self.firmware_cache._restore(snapshot.firmware_cache)
         self.sync_runs._restore(snapshot.sync_runs)
         self.kv_config._restore(snapshot.kv_config)
+        self.download_jobs._restore(snapshot.download_jobs)
 
     def _enforce_rom_id_foreign_keys(self) -> None:
         """Raise ``sqlite3.IntegrityError`` if any per-rom child row is orphaned.

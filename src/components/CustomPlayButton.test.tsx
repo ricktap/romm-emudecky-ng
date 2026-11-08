@@ -486,6 +486,85 @@ describe("CustomPlayButton — pause/resume on active download (#1124)", () => {
   });
 });
 
+describe("CustomPlayButton — interrupted download (durable queue)", () => {
+  beforeEach(() => {
+    vi.mocked(getCachedGameDetail).mockReset();
+    vi.mocked(showContextMenu).mockReset();
+    vi.mocked(backend.startDownload).mockResolvedValue({ success: true, message: "" });
+    vi.mocked(backend.resumeDownload).mockResolvedValue({ success: true, message: "" });
+    vi.mocked(backend.getDownloadQueue).mockResolvedValue({ downloads: [] });
+  });
+
+  function openMenu(button: HTMLElement): ReturnType<typeof render> {
+    act(() => {
+      button.click();
+    });
+    const calls = vi.mocked(showContextMenu).mock.calls;
+    const menu = calls[calls.length - 1]![0] as ReactElement;
+    return render(menu);
+  }
+
+  it("rehydrates an interrupted download with its reason and offers Resume even when not resumable", async () => {
+    mockCachedDetail({ rom_id: 42, installed: false });
+    vi.mocked(backend.getDownloadQueue).mockResolvedValue({
+      downloads: [
+        {
+          rom_id: 42,
+          rom_name: "Test ROM",
+          platform_name: "PSX",
+          file_name: "test.chd",
+          status: "interrupted",
+          reason: "restart",
+          progress: 0.3,
+          bytes_downloaded: 300,
+          total_bytes: 1000,
+          resumable: false,
+        },
+      ],
+    });
+
+    const { findByText, findByLabelText, queryByText } = render(<CustomPlayButton appId={100} />);
+
+    expect(await findByText("Interrupted — plugin restarted")).toBeInTheDocument();
+    expect(queryByText("Download")).toBeNull();
+    const menu = openMenu(await findByLabelText("Download actions"));
+    const resumeItem = await menu.findByText("Resume");
+    await act(async () => {
+      resumeItem.click();
+      await Promise.resolve();
+    });
+    expect(backend.resumeDownload).toHaveBeenCalledWith(42);
+  });
+
+  it("a live interrupted frame freezes the button with the reason label", async () => {
+    mockCachedDetail({ rom_id: 42, installed: false });
+    const { findByText } = render(<CustomPlayButton appId={100} />);
+    const downloadBtn = await findByText("Download");
+    await act(async () => {
+      downloadBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", {
+        rom_id: 42,
+        rom_name: "Test ROM",
+        platform_name: "PSX",
+        file_name: "test.chd",
+        status: "interrupted",
+        reason: "disk_full",
+        progress: 0.5,
+        bytes_downloaded: 500,
+        total_bytes: 1000,
+        resumable: true,
+      });
+    });
+
+    expect(await findByText("Interrupted — disk full")).toBeInTheDocument();
+  });
+});
+
 describe("CustomPlayButton — extraction phase on a multi-file download", () => {
   beforeEach(() => {
     vi.mocked(getCachedGameDetail).mockReset();

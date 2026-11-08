@@ -152,7 +152,9 @@ class Plugin:
         self._sgdb_service.prune_orphaned_artwork_cache()
         self._artwork_service.prune_orphaned_staging_artwork()
         self._artwork_service.prune_orphaned_cover_cache()
-        self._download_service.cleanup_leftover_tmp_files()
+        # Restore the durable download queue: keep job partials, drop orphan
+        # .tmp files, and auto-resume interrupted jobs in the background.
+        self._download_service.reconcile_persisted_downloads()
 
         # ── 6. Background tasks ─────────────────────────────────────────────
         self._migration_service.detect_save_sort_change()

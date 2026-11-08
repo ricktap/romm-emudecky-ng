@@ -72,11 +72,11 @@ def _set_user_version(db_path: str, version: int) -> None:
 # + 005_unconfirm_legacy_slot_confirmations + 006_native_play_sessions
 # + 007_add_last_played + 008_add_version_metadata
 # + 009_add_last_session_start_monotonic + 010_add_sibling_group_key_index
-# + 011_rekey_sibling_group_key).
-_SHIPPED_VERSION = 11
+# + 011_rekey_sibling_group_key + 012_download_jobs).
+_SHIPPED_VERSION = 12
 
 # Tables after every shipped migration: the v1 set plus 006's play-session outbox.
-_SHIPPED_TABLES = _V1_TABLES | {"rom_playtime_sessions"}
+_SHIPPED_TABLES = _V1_TABLES | {"rom_playtime_sessions", "download_jobs"}
 
 
 class TestEmptyDatabase:

@@ -943,7 +943,7 @@ class TestMainStartupOrdering:
         artwork_service.prune_orphaned_staging_artwork = MagicMock()
 
         download_service = MagicMock()
-        download_service.cleanup_leftover_tmp_files = MagicMock()
+        download_service.reconcile_persisted_downloads = MagicMock()
 
         firmware_service = MagicMock()
         firmware_service.load_bios_registry = MagicMock()
@@ -1036,6 +1036,8 @@ class TestMainStartupOrdering:
         assert "detect_retrodeck_path_change" in call_order
         assert "prune_stale_installed_roms" in call_order
         assert call_order.index("detect_retrodeck_path_change") < call_order.index("prune_stale_installed_roms")
+        # The durable download queue is restored on startup (replaces the old blanket tmp wipe).
+        download_service.reconcile_persisted_downloads.assert_called_once_with()
 
 
 class TestCancelCallablesNotBlockedByMigration:

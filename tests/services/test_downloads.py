@@ -3418,6 +3418,8 @@ class TestUrlEncodedFilenameRename:
 
 
 class TestCleanupLeftoverTmpFiles:
+    """With no persisted jobs, startup reconciliation deletes every leftover tmp (all orphans)."""
+
     def test_removes_tmp_file(self, plugin, tmp_path):
         import decky
 
@@ -3435,7 +3437,7 @@ class TestCleanupLeftoverTmpFiles:
         tmp_file = system_dir / "zelda.z64.tmp"
         tmp_file.write_text("partial download")
 
-        plugin._download_service.cleanup_leftover_tmp_files()
+        plugin._download_service.reconcile_persisted_downloads()
         assert not tmp_file.exists()
 
     def test_removes_zip_tmp_file(self, plugin, tmp_path):
@@ -3455,7 +3457,7 @@ class TestCleanupLeftoverTmpFiles:
         tmp_file = system_dir / "game.zip.tmp"
         tmp_file.write_text("partial zip")
 
-        plugin._download_service.cleanup_leftover_tmp_files()
+        plugin._download_service.reconcile_persisted_downloads()
         assert not tmp_file.exists()
 
     def test_keeps_real_rom_files(self, plugin, tmp_path):
@@ -3479,7 +3481,7 @@ class TestCleanupLeftoverTmpFiles:
         cue_file = system_dir / "game.cue"
         cue_file.write_text("real cue")
 
-        plugin._download_service.cleanup_leftover_tmp_files()
+        plugin._download_service.reconcile_persisted_downloads()
         assert real_rom.exists()
         assert bin_file.exists()
         assert cue_file.exists()
@@ -3501,7 +3503,7 @@ class TestCleanupLeftoverTmpFiles:
         tmp_file = bios_dir / "dc_boot.bin.tmp"
         tmp_file.write_text("partial bios")
 
-        plugin._download_service.cleanup_leftover_tmp_files()
+        plugin._download_service.reconcile_persisted_downloads()
         assert not tmp_file.exists()
 
     def test_no_roms_dir_no_crash(self, plugin, tmp_path):
@@ -3516,7 +3518,7 @@ class TestCleanupLeftoverTmpFiles:
             roms=str(tmp_path / "retrodeck" / "roms"),
         )
         # No retrodeck/roms directory exists — should not crash
-        plugin._download_service.cleanup_leftover_tmp_files()
+        plugin._download_service.reconcile_persisted_downloads()
 
     def test_handles_permission_error(self, plugin, tmp_path, caplog):
         import logging
@@ -3548,7 +3550,7 @@ class TestCleanupLeftoverTmpFiles:
         plugin._download_service._download_file_store = fake
 
         with caplog.at_level(logging.WARNING, logger="test_romm"):
-            plugin._download_service.cleanup_leftover_tmp_files()
+            plugin._download_service.reconcile_persisted_downloads()
 
         # Per-file warning must be emitted; sister-PR pattern in
         # SteamGridService.prune_orphaned_artwork_cache.
@@ -3693,9 +3695,9 @@ class TestShutdown:
 
 
 class TestCleanupLeftoverTmpFilesNoRetrodeckPaths:
-    """Tests for cleanup_leftover_tmp_files when retrodeck paths resolve to empty.
+    """Tests for startup tmp cleanup when retrodeck paths resolve to empty.
 
-    Covers the early-return guard inside _clean_rom_tmp_files /
+    Covers the early-return guard inside _clean_orphan_rom_tmp_files /
     _clean_bios_tmp_files when retrodeck.json is absent (roms_path()
     / bios_path() return ""). Service must not walk an empty path.
     """
@@ -3709,7 +3711,7 @@ class TestCleanupLeftoverTmpFilesNoRetrodeckPaths:
         # retrodeck.json) — service must early-return on each branch.
         plugin._download_service._retrodeck_paths = FakeRetroDeckPaths(roms="", bios="")
 
-        plugin._download_service.cleanup_leftover_tmp_files()
+        plugin._download_service.reconcile_persisted_downloads()
 
         assert fake.walk_calls == []
 
@@ -4504,7 +4506,7 @@ class TestConcurrencyReservation:
         assert 42 not in plugin._download_service._reserved_bytes
 
     @pytest.mark.asyncio
-    async def test_third_download_emits_queued_while_two_run(self, plugin, tmp_path):
+    async def test_second_download_emits_queued_while_one_runs(self, plugin, tmp_path):
         from unittest.mock import patch
 
         import decky
@@ -4519,12 +4521,12 @@ class TestConcurrencyReservation:
         roms_dir = tmp_path / "retrodeck" / "roms" / "n64"
         roms_dir.mkdir(parents=True)
 
-        # Hold the semaphore so it is fully locked, forcing the third download to
-        # emit a "queued" frame before it can acquire.
-        sem = plugin._download_service._download_semaphore
-        await sem.acquire()
-        await sem.acquire()
-        assert sem.locked()
+        # Hold the single transfer slot with a foreign control, forcing the next
+        # download to emit a "queued" frame before it can start.
+        svc = plugin._download_service
+        holder = _DownloadControl()
+        await svc._acquire_transfer_slot(99, holder)
+        assert svc._active_control is holder
 
         rom_detail = {
             "id": 3,
@@ -4542,20 +4544,14 @@ class TestConcurrencyReservation:
                 f.write(b"\x00" * 64)
 
         _seed_rom(plugin._uow, 3)
-        plugin._download_service._loop = asyncio.get_event_loop()
-        plugin._download_service._download_queue[3] = {"rom_id": 3, "status": "queued", "progress": 0}
+        svc._loop = asyncio.get_event_loop()
+        svc._download_queue[3] = {"rom_id": 3, "status": "queued", "progress": 0}
 
-        # Run the third download as a task — it must emit "queued" then block on
-        # the semaphore (which we hold).
         with patch.object(plugin._romm_api, "download_rom_content", side_effect=fake_download):
-            task = asyncio.ensure_future(
-                plugin._download_service._do_download(3, rom_detail, target_path, "n64", "third.z64")
-            )
-            # Let it reach the semaphore wait.
+            task = asyncio.ensure_future(svc._do_download(3, rom_detail, target_path, "n64", "third.z64"))
             await asyncio.sleep(0)
             await asyncio.sleep(0)
 
-            # It emitted a queued frame and is still waiting (status queued).
             queued = [
                 c
                 for c in decky.emit.call_args_list
@@ -4563,14 +4559,14 @@ class TestConcurrencyReservation:
             ]
             assert len(queued) == 1
             assert queued[0][0][1]["rom_id"] == 3
-            assert plugin._download_service._download_queue[3]["status"] == "queued"
+            assert svc._download_queue[3]["status"] == "queued"
 
-            # Release the semaphore so the third can proceed and finish.
-            sem.release()
-            sem.release()
+            # Releasing the slot hands it to the waiting download, which finishes.
+            svc._release_transfer_slot(holder)
             await task
 
-        assert plugin._download_service._download_queue[3]["status"] == "completed"
+        assert svc._download_queue[3]["status"] == "completed"
+        assert svc._active_control is None
 
 
 class TestCooperativeCancel:
@@ -5473,3 +5469,786 @@ class TestResumeSupersede:
         result = await plugin.resume_download(7)
         assert result["reason"] == "not_paused"
         provider.assert_not_called()
+
+
+# ── Durable download queue (DownloadJob rows, scheduler, reconciliation) ────────
+
+
+class _ScriptedRomm:
+    """``RommRomReader`` stand-in writing into a ``FakeDownloadFileStore``.
+
+    ``download_rom_content`` mirrors the real adapter's resume contract: with
+    ``resume=True`` and a partial on disk it appends from the partial's size
+    (the ``Range`` offset), otherwise it starts from byte 0. Per-ROM hooks let a
+    test block a transfer (``gates``), stop it partway (``stop_after``), or make
+    it raise (``errors``).
+    """
+
+    def __init__(self, store):
+        self.store = store
+        self.details: dict[int, dict[str, Any]] = {}
+        self.content: dict[int, bytes] = {}
+        self.get_rom_error: Exception | None = None
+        self.get_rom_calls: list[int] = []
+        self.download_calls: list[dict[str, Any]] = []
+        self.gates: dict[int, Any] = {}
+        self.stop_after: dict[int, tuple[int, BaseException]] = {}
+        self.errors: dict[int, BaseException] = {}
+        self.active = 0
+        self.max_active = 0
+
+    def get_rom(self, rom_id):
+        self.get_rom_calls.append(rom_id)
+        if self.get_rom_error is not None:
+            raise self.get_rom_error
+        return dict(self.details[rom_id])
+
+    def download_rom_content(self, rom_id, file_name, dest, progress_callback=None, *, resume=False, on_meta=None):
+        offset = self.store.file_size(dest) if resume else 0
+        self.download_calls.append({"rom_id": rom_id, "dest": dest, "resume": resume, "offset": offset})
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            content = self.content[rom_id]
+            if on_meta is not None:
+                on_meta(True)
+            existing = self.store.files.get(dest, b"") if offset else b""
+            gate = self.gates.get(rom_id)
+            if rom_id in self.stop_after:
+                # Partial bytes land on disk first; the transfer then stalls (gate)
+                # and stops with the scripted error.
+                upto, exc = self.stop_after.pop(rom_id)
+                self.store.files[dest] = existing + content[offset:upto]
+                if progress_callback is not None:
+                    progress_callback(upto, len(content))
+                if gate is not None:
+                    gate.wait(5)
+                raise exc
+            if gate is not None:
+                gate.wait(5)
+            if rom_id in self.errors:
+                raise self.errors[rom_id]
+            self.store.files[dest] = existing + content[offset:]
+            if progress_callback is not None:
+                progress_callback(len(content), len(content))
+        finally:
+            self.active -= 1
+
+
+class _QueueEnv:
+    """A DownloadService over in-memory fakes with a real event loop."""
+
+    def __init__(self):
+        import logging
+        from unittest.mock import AsyncMock
+
+        from fakes.fake_download_file_store import FakeDownloadFileStore
+
+        self.store = FakeDownloadFileStore()
+        self.store.make_dirs("/roms")
+        self.store.make_dirs("/bios")
+        self.uow = FakeUnitOfWork()
+        self.emit = AsyncMock()
+        self.romm = _ScriptedRomm(self.store)
+        self.saved_statuses: list[tuple[int, str]] = []
+        real_save = self.uow.download_jobs.save
+
+        def _recording_save(job):
+            self.saved_statuses.append((job.rom_id, job.status))
+            real_save(job)
+
+        self.uow.download_jobs.save = _recording_save  # type: ignore[method-assign]
+
+        async def _remove_rom(_rom_id):
+            return {"success": False, "reason": "not_installed", "message": "ROM not installed"}
+
+        active_core = MagicMock()
+        active_core.active_emulator_for_rom.return_value = None
+        self.clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
+        self.service = DownloadService(
+            config=DownloadServiceConfig(
+                romm_api=self.romm,
+                download_file_store=self.store,
+                resolve_system=lambda slug, fs_slug=None: fs_slug or slug,
+                loop=asyncio.get_event_loop(),
+                logger=logging.getLogger("test_download_queue"),
+                emit=self.emit,
+                clock=self.clock,
+                sleeper=FakeSleeper(),
+                retrodeck_paths=FakeRetroDeckPaths(roms="/roms", bios="/bios"),
+                active_core=active_core,
+                disc_resolver=FakeDiscResolver(),
+                m3u_support=lambda _system: True,
+                uow_factory=FakeUnitOfWorkFactory(self.uow),
+                rom_remover=lambda: _remove_rom,
+                launch_resolver=FakeLaunchResolver(),
+            )
+        )
+
+    def add_rom(self, rom_id: int, *, size: int = 1000, multi: bool = False, content: bytes | None = None) -> None:
+        platform = "psx" if multi else "n64"
+        detail: dict[str, Any] = {
+            "id": rom_id,
+            "name": f"Game {rom_id}",
+            "fs_name": f"game{rom_id}" if multi else f"game{rom_id}.z64",
+            "fs_size_bytes": size,
+            "platform_slug": platform,
+            "platform_name": "PlayStation" if multi else "Nintendo 64",
+            "has_multiple_files": multi,
+        }
+        if multi:
+            detail["files"] = [{"file_name": "a.iso"}, {"file_name": "b.iso"}]
+        self.romm.details[rom_id] = detail
+        self.romm.content[rom_id] = content if content is not None else bytes(i % 251 for i in range(size))
+        if multi:
+            self.store.set_zip_members(self.tmp_path(rom_id), {"a.iso": b"A" * 10, "b.iso": b"B" * 20})
+        with self.uow:
+            _seed_rom(self.uow, rom_id, platform_slug=platform)
+
+    def target_path(self, rom_id: int) -> str:
+        detail = self.romm.details[rom_id]
+        return f"/roms/{detail['platform_slug']}/{detail['fs_name']}"
+
+    def tmp_path(self, rom_id: int) -> str:
+        detail = self.romm.details[rom_id]
+        return self.target_path(rom_id) + (".zip.tmp" if detail["has_multiple_files"] else ".tmp")
+
+    def job(self, rom_id: int):
+        return self.uow.download_jobs.get(rom_id)
+
+    def frames(self, status: str) -> list[dict[str, Any]]:
+        return [
+            c[0][1]
+            for c in self.emit.call_args_list
+            if c[0][0] == "download_progress" and c[0][1].get("status") == status
+        ]
+
+    async def settle(self) -> None:
+        """Await the auto-resume task and every download task until the queue is idle."""
+        for _ in range(50):
+            pending = list(self.service._download_tasks.values())
+            if self.service._auto_resume_task is not None and not self.service._auto_resume_task.done():
+                pending.append(self.service._auto_resume_task)
+            if not pending:
+                return
+            await asyncio.gather(*pending, return_exceptions=True)
+
+
+async def _wait_for(predicate, timeout: float = 2.0) -> None:
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() > deadline:
+            raise AssertionError("condition not reached")
+        await asyncio.sleep(0.005)
+
+
+@pytest.fixture
+async def qenv():
+    return _QueueEnv()
+
+
+class TestClassifyDownloadFailure:
+    @staticmethod
+    def _wrapped(cause: BaseException):
+        from lib.errors import RommConnectionError
+
+        try:
+            raise RommConnectionError("transfer failed") from cause
+        except RommConnectionError as e:
+            return e
+
+    def test_connection_error_is_interrupted(self):
+        from lib.errors import RommConnectionError, RommTimeoutError
+        from services.downloads import classify_download_failure
+
+        assert classify_download_failure(RommConnectionError("down")) == ("interrupted", "server_unreachable")
+        assert classify_download_failure(RommTimeoutError("slow")) == ("interrupted", "server_unreachable")
+
+    def test_server_errors_and_rate_limit_are_interrupted(self):
+        from lib.errors import RommServerError
+        from services.downloads import classify_download_failure
+
+        assert classify_download_failure(RommServerError("x", status_code=503))[0] == "interrupted"
+        assert classify_download_failure(RommServerError("x", status_code=429))[0] == "interrupted"
+
+    def test_disk_full_anywhere_in_chain_is_interrupted(self):
+        import errno as _errno
+
+        from services.downloads import classify_download_failure
+
+        enospc = OSError(_errno.ENOSPC, "No space left on device")
+        assert classify_download_failure(self._wrapped(enospc)) == ("interrupted", "disk_full")
+        assert classify_download_failure(enospc) == ("interrupted", "disk_full")
+
+    def test_auth_failures_are_interrupted(self):
+        from lib.errors import RommAuthError, RommForbiddenError, TokenHostMismatchError
+        from services.downloads import classify_download_failure
+
+        for exc in (RommAuthError("401"), RommForbiddenError("403"), TokenHostMismatchError("origin")):
+            assert classify_download_failure(exc) == ("interrupted", "auth_failed")
+
+    def test_not_found_and_other_4xx_fail(self):
+        from lib.errors import RommApiError, RommNotFoundError
+        from services.downloads import classify_download_failure
+
+        assert classify_download_failure(RommNotFoundError("404")) == ("failed", None)
+        assert classify_download_failure(RommApiError("HTTP 416: Range Not Satisfiable (GET /x)")) == ("failed", None)
+
+    def test_short_stream_is_interrupted_but_overshoot_fails(self):
+        from services.downloads import classify_download_failure
+
+        short = self._wrapped(OSError("Download incomplete: got 50 bytes, expected 100"))
+        over = self._wrapped(OSError("Download incomplete: got 150 bytes, expected 100"))
+        empty = self._wrapped(OSError("Download produced 0 bytes (no Content-Length header and no data received)"))
+        assert classify_download_failure(short) == ("interrupted", "server_unreachable")
+        assert classify_download_failure(over) == ("failed", None)
+        assert classify_download_failure(empty) == ("failed", None)
+
+    def test_local_invariant_and_path_errors_fail(self):
+        from lib.path_safety import PathTraversalError
+        from services.downloads import classify_download_failure
+
+        assert classify_download_failure(ValueError("bad install")) == ("failed", None)
+        assert classify_download_failure(PathTraversalError("x")) == ("failed", None)
+        assert classify_download_failure(OSError("Permission denied")) == ("failed", None)
+
+
+class TestDurableJobPersistence:
+    @pytest.mark.asyncio
+    async def test_single_file_transitions_then_row_deleted_on_complete(self, qenv):
+        import threading
+
+        qenv.add_rom(1)
+        gate = threading.Event()
+        qenv.romm.gates[1] = gate
+
+        result = await qenv.service.start_download(1)
+        assert result["success"] is True
+        job = qenv.job(1)
+        assert job is not None
+        assert job.status == "queued"
+        assert job.tmp_path == qenv.tmp_path(1)
+        assert job.target_path == qenv.target_path(1)
+        assert job.position == 1
+        assert job.total_bytes == 1000
+
+        await _wait_for(lambda: qenv.romm.download_calls)
+        assert qenv.job(1).status == "downloading"
+        gate.set()
+        await qenv.settle()
+
+        assert qenv.job(1) is None
+        assert qenv.service._download_queue[1]["status"] == "completed"
+        assert qenv.store.files[qenv.target_path(1)] == qenv.romm.content[1]
+        statuses = [s for rid, s in qenv.saved_statuses if rid == 1]
+        assert statuses[:2] == ["queued", "downloading"]
+        # No per-tick writes: at most one extra observation write for the transfer total.
+        assert len(statuses) <= 3
+
+    @pytest.mark.asyncio
+    async def test_multi_file_persists_extracting(self, qenv):
+        qenv.add_rom(2, size=300, multi=True)
+        await qenv.service.start_download(2)
+        await qenv.settle()
+
+        statuses = [s for rid, s in qenv.saved_statuses if rid == 2]
+        assert "extracting" in statuses
+        assert statuses.index("downloading") < statuses.index("extracting")
+        assert qenv.job(2) is None
+        assert qenv.service._download_queue[2]["status"] == "completed"
+        assert qenv.tmp_path(2) not in qenv.store.files
+
+    @pytest.mark.asyncio
+    async def test_cancel_deletes_row_and_partial(self, qenv):
+        import threading
+
+        qenv.add_rom(3)
+        gate = threading.Event()
+        qenv.romm.gates[3] = gate
+        qenv.romm.stop_after[3] = (400, asyncio.CancelledError())
+        await qenv.service.start_download(3)
+        await _wait_for(lambda: qenv.romm.download_calls)
+        qenv.service.cancel_download(3)
+        gate.set()
+        await qenv.settle()
+
+        assert qenv.job(3) is None
+        assert qenv.tmp_path(3) not in qenv.store.files
+        assert qenv.service._download_queue[3]["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_pause_keeps_row_and_partial_then_resume_appends(self, qenv):
+        import threading
+
+        qenv.add_rom(4)
+        gate = threading.Event()
+        qenv.romm.gates[4] = gate
+        qenv.romm.stop_after[4] = (400, asyncio.CancelledError())
+        await qenv.service.start_download(4)
+        await _wait_for(lambda: qenv.romm.download_calls)
+        qenv.service.pause_download(4)
+        gate.set()
+        await qenv.settle()
+
+        job = qenv.job(4)
+        assert job is not None
+        assert job.status == "paused"
+        assert len(qenv.store.files[qenv.tmp_path(4)]) == 400
+        assert qenv.service._download_queue[4]["status"] == "paused"
+
+        qenv.romm.gates.pop(4)
+        result = await qenv.service.resume_download(4)
+        assert result["success"] is True
+        assert qenv.job(4).position == job.position  # resume keeps its place in line
+        await qenv.settle()
+
+        assert qenv.romm.download_calls[-1]["resume"] is True
+        assert qenv.romm.download_calls[-1]["offset"] == 400
+        assert qenv.store.files[qenv.target_path(4)] == qenv.romm.content[4]
+        assert qenv.job(4) is None
+
+    @pytest.mark.asyncio
+    async def test_new_jobs_append_positions(self, qenv):
+        import threading
+
+        for rid in (5, 6, 7):
+            qenv.add_rom(rid)
+            qenv.romm.gates[rid] = threading.Event()
+            await qenv.service.start_download(rid)
+        assert [qenv.job(r).position for r in (5, 6, 7)] == [1, 2, 3]
+        for gate in qenv.romm.gates.values():
+            gate.set()
+        await qenv.settle()
+
+
+class TestFailureClassificationInService:
+    @pytest.mark.asyncio
+    async def test_network_error_interrupts_and_keeps_partial(self, qenv):
+        from lib.errors import RommConnectionError
+
+        qenv.add_rom(10)
+        qenv.romm.stop_after[10] = (300, RommConnectionError("connection reset"))
+        await qenv.service.start_download(10)
+        await qenv.settle()
+
+        job = qenv.job(10)
+        assert job is not None
+        assert job.status == "interrupted"
+        assert job.interrupt_reason == "server_unreachable"
+        assert len(qenv.store.files[qenv.tmp_path(10)]) == 300
+        entry = qenv.service._download_queue[10]
+        assert entry["status"] == "interrupted"
+        assert entry["reason"] == "server_unreachable"
+        frames = qenv.frames("interrupted")
+        assert frames
+        assert frames[-1]["reason"] == "server_unreachable"
+        assert not [c for c in qenv.emit.call_args_list if c[0][0] == "download_failed"]
+        # Interrupted downloads hold no in-progress claim (like paused).
+        assert 10 not in qenv.service.active_download_rom_ids()
+
+    @pytest.mark.asyncio
+    async def test_disk_full_interrupts_and_keeps_partial(self, qenv):
+        import errno as _errno
+
+        from lib.errors import RommConnectionError
+
+        qenv.add_rom(11)
+        err = RommConnectionError("write failed")
+        err.__cause__ = OSError(_errno.ENOSPC, "No space left on device")
+        qenv.romm.stop_after[11] = (250, err)
+        await qenv.service.start_download(11)
+        await qenv.settle()
+
+        assert qenv.job(11).interrupt_reason == "disk_full"
+        assert len(qenv.store.files[qenv.tmp_path(11)]) == 250
+        assert qenv.service._download_queue[11]["reason"] == "disk_full"
+
+    @pytest.mark.asyncio
+    async def test_not_found_fails_and_deletes_partial(self, qenv):
+        from lib.errors import RommNotFoundError
+
+        qenv.add_rom(12)
+        qenv.romm.stop_after[12] = (250, RommNotFoundError("gone"))
+        await qenv.service.start_download(12)
+        await qenv.settle()
+
+        assert qenv.job(12) is None
+        assert qenv.tmp_path(12) not in qenv.store.files
+        assert qenv.service._download_queue[12]["status"] == "failed"
+        assert [c for c in qenv.emit.call_args_list if c[0][0] == "download_failed"]
+
+    @pytest.mark.asyncio
+    async def test_size_overshoot_fails_and_deletes_partial(self, qenv):
+        from lib.errors import RommConnectionError
+
+        qenv.add_rom(13)
+        err = RommConnectionError("Download incomplete")
+        err.__cause__ = OSError("Download incomplete: got 1200 bytes, expected 1000")
+        qenv.romm.stop_after[13] = (1000, err)
+        await qenv.service.start_download(13)
+        await qenv.settle()
+
+        assert qenv.job(13) is None
+        assert qenv.tmp_path(13) not in qenv.store.files
+        assert qenv.service._download_queue[13]["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_resume_with_insufficient_space_interrupts_disk_full(self, qenv):
+        from lib.errors import RommConnectionError
+
+        # RomM reports 500 MB; the scripted transfer stops early, so the content is short.
+        qenv.add_rom(14, size=500 * 1024 * 1024, content=b"x" * 2048)
+        qenv.romm.stop_after[14] = (1024, RommConnectionError("reset"))
+        await qenv.service.start_download(14)
+        await qenv.settle()
+        assert qenv.job(14).status == "interrupted"
+
+        qenv.store.set_disk_free(10 * 1024 * 1024)
+        result = await qenv.service.resume_download(14)
+        assert result["success"] is False
+        assert result["reason"] == "insufficient_space"
+        job = qenv.job(14)
+        assert job.status == "interrupted"
+        assert job.interrupt_reason == "disk_full"
+        assert len(qenv.store.files[qenv.tmp_path(14)]) == 1024
+        assert 14 not in qenv.service.active_download_rom_ids()
+
+    @pytest.mark.asyncio
+    async def test_cancel_of_interrupted_job_discards_row_and_partial(self, qenv):
+        from lib.errors import RommConnectionError
+
+        qenv.add_rom(15)
+        qenv.romm.stop_after[15] = (300, RommConnectionError("reset"))
+        await qenv.service.start_download(15)
+        await qenv.settle()
+
+        result = qenv.service.cancel_download(15)
+        assert result["success"] is True
+        await asyncio.sleep(0.01)
+        assert qenv.job(15) is None
+        assert qenv.tmp_path(15) not in qenv.store.files
+        assert qenv.service._download_queue[15]["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_evict_of_paused_job_drops_row_and_partial(self, qenv):
+        from lib.errors import RommConnectionError
+
+        qenv.add_rom(16)
+        qenv.romm.stop_after[16] = (300, RommConnectionError("reset"))
+        await qenv.service.start_download(16)
+        await qenv.settle()
+
+        qenv.service.evict(16)
+        assert qenv.job(16) is None
+        assert qenv.tmp_path(16) not in qenv.store.files
+        assert 16 not in qenv.service._download_queue
+
+    @pytest.mark.asyncio
+    async def test_shutdown_keeps_row_and_partial(self, qenv):
+        import threading
+
+        qenv.add_rom(17)
+        gate = threading.Event()
+        qenv.romm.gates[17] = gate
+        qenv.romm.stop_after[17] = (300, asyncio.CancelledError())
+        await qenv.service.start_download(17)
+        await _wait_for(lambda: qenv.romm.download_calls)
+        tasks = list(qenv.service._download_tasks.values())
+        await qenv.service.shutdown()
+        gate.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        job = qenv.job(17)
+        assert job is not None
+        assert job.status == "downloading"  # reconciliation turns it interrupted on the next start
+        assert len(qenv.store.files[qenv.tmp_path(17)]) == 300
+
+
+class TestSingleWorkerScheduler:
+    @pytest.mark.asyncio
+    async def test_one_transfer_at_a_time_in_position_order(self, qenv):
+        import threading
+
+        for rid in (21, 22, 23):
+            qenv.add_rom(rid)
+            qenv.romm.gates[rid] = threading.Event()
+            await qenv.service.start_download(rid)
+
+        await _wait_for(lambda: len(qenv.romm.download_calls) == 1)
+        assert qenv.romm.download_calls[0]["rom_id"] == 21
+        assert qenv.service._download_queue[22]["status"] == "queued"
+        assert qenv.service._download_queue[23]["status"] == "queued"
+
+        # Reorder while 21 transfers: 23 jumps ahead of 22.
+        result = qenv.service.move_to_front(23)
+        assert result["success"] is True
+        assert qenv.job(23).position < qenv.job(22).position
+
+        qenv.romm.gates[21].set()
+        await _wait_for(lambda: len(qenv.romm.download_calls) == 2)
+        assert qenv.romm.download_calls[1]["rom_id"] == 23
+        qenv.romm.gates[23].set()
+        await _wait_for(lambda: len(qenv.romm.download_calls) == 3)
+        assert qenv.romm.download_calls[2]["rom_id"] == 22
+        qenv.romm.gates[22].set()
+        await qenv.settle()
+
+        assert qenv.romm.max_active == 1
+        assert all(qenv.service._download_queue[r]["status"] == "completed" for r in (21, 22, 23))
+        assert qenv.service._active_control is None
+
+    @pytest.mark.asyncio
+    async def test_pausing_the_active_job_starts_the_next(self, qenv):
+        import threading
+
+        for rid in (24, 25):
+            qenv.add_rom(rid)
+            qenv.romm.gates[rid] = threading.Event()
+            await qenv.service.start_download(rid)
+        qenv.romm.stop_after[24] = (100, asyncio.CancelledError())
+
+        await _wait_for(lambda: len(qenv.romm.download_calls) == 1)
+        qenv.service.pause_download(24)
+        qenv.romm.gates[24].set()
+        await _wait_for(lambda: len(qenv.romm.download_calls) == 2)
+        assert qenv.romm.download_calls[1]["rom_id"] == 25
+        qenv.romm.gates[25].set()
+        await qenv.settle()
+
+        assert qenv.job(24).status == "paused"
+        assert qenv.service._download_queue[25]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_pausing_a_waiting_job_skips_it(self, qenv):
+        import threading
+
+        for rid in (26, 27, 28):
+            qenv.add_rom(rid)
+            qenv.romm.gates[rid] = threading.Event()
+            await qenv.service.start_download(rid)
+        await _wait_for(lambda: len(qenv.romm.download_calls) == 1)
+
+        qenv.service.pause_download(27)
+        await asyncio.sleep(0.01)
+        assert qenv.job(27).status == "paused"
+        qenv.romm.gates[26].set()
+        await _wait_for(lambda: len(qenv.romm.download_calls) == 2)
+        assert qenv.romm.download_calls[1]["rom_id"] == 28
+        qenv.romm.gates[28].set()
+        await qenv.settle()
+        assert [c["rom_id"] for c in qenv.romm.download_calls] == [26, 28]
+
+    @pytest.mark.asyncio
+    async def test_move_to_front_unknown_rom(self, qenv):
+        result = qenv.service.move_to_front(999)
+        assert result["success"] is False
+        assert result["reason"] == "not_queued"
+        assert result["message"]
+
+    @pytest.mark.asyncio
+    async def test_move_to_front_already_first_is_noop(self, qenv):
+        import threading
+
+        qenv.add_rom(29)
+        qenv.romm.gates[29] = threading.Event()
+        await qenv.service.start_download(29)
+        before = qenv.job(29).position
+        assert qenv.service.move_to_front(29)["success"] is True
+        assert qenv.job(29).position == before
+        qenv.romm.gates[29].set()
+        await qenv.settle()
+
+
+def _persist_job(env: _QueueEnv, rom_id: int, *, status: str, position: int, total=None, reason=None):
+    from domain.download_job import DownloadJob
+
+    detail = env.romm.details[rom_id]
+    job = DownloadJob.enqueue(
+        rom_id=rom_id,
+        rom_name=detail["name"],
+        platform_name=detail["platform_name"],
+        file_name=detail["fs_name"],
+        target_path=env.target_path(rom_id),
+        tmp_path=env.tmp_path(rom_id),
+        is_multi=bool(detail["has_multiple_files"]),
+        position=position,
+        now="2026-01-01T00:00:00+00:00",
+        total_bytes=total,
+    )
+    if status == "paused":
+        job.pause("2026-01-01T00:00:00+00:00")
+    elif status in ("downloading", "extracting"):
+        job.start("2026-01-01T00:00:00+00:00")
+        if status == "extracting":
+            job.begin_extract("2026-01-01T00:00:00+00:00")
+    elif status == "interrupted":
+        job.interrupt(reason or "server_unreachable", "2026-01-01T00:00:00+00:00")
+    with env.uow:
+        env.uow.download_jobs.save(job)
+
+
+class TestStartupReconciliation:
+    @pytest.mark.asyncio
+    async def test_restores_queue_cleans_orphans_and_resumes_in_order(self, qenv):
+        for rid in (31, 32, 33):
+            qenv.add_rom(rid)
+        _persist_job(qenv, 31, status="downloading", position=2, total=1000)
+        _persist_job(qenv, 32, status="paused", position=1, total=1000)
+        _persist_job(qenv, 33, status="queued", position=3, total=1000)
+        qenv.store.files[qenv.tmp_path(31)] = qenv.romm.content[31][:600]
+        qenv.store.files[qenv.tmp_path(32)] = qenv.romm.content[32][:200]
+        orphan = "/roms/n64/stray.z64.tmp"
+        orphan_zip = "/roms/psx/stray.zip.tmp"
+        bios_tmp = "/bios/dc/dc_boot.bin.tmp"
+        for path in (orphan, orphan_zip, bios_tmp):
+            qenv.store.files[path] = b"junk"
+        qenv.saved_statuses.clear()
+
+        qenv.service.reconcile_persisted_downloads()
+
+        # Visible immediately, with the real partial sizes.
+        queue = {e["rom_id"]: e for e in qenv.service.get_download_queue()["downloads"]}
+        assert queue[31]["status"] == "interrupted"
+        assert queue[31]["reason"] == "restart"
+        assert queue[31]["bytes_downloaded"] == 600
+        assert queue[31]["total_bytes"] == 1000
+        assert queue[32]["status"] == "paused"
+        assert queue[32]["bytes_downloaded"] == 200
+        assert queue[33]["status"] == "interrupted"
+        # Orphans gone, job partials kept.
+        assert orphan not in qenv.store.files
+        assert orphan_zip not in qenv.store.files
+        assert bios_tmp not in qenv.store.files
+        assert qenv.tmp_path(31) in qenv.store.files
+        assert qenv.tmp_path(32) in qenv.store.files
+
+        await qenv.settle()
+
+        # Interrupted jobs resumed in position order; the paused one never ran.
+        assert [c["rom_id"] for c in qenv.romm.download_calls] == [31, 33]
+        assert qenv.romm.download_calls[0]["resume"] is True
+        assert qenv.romm.download_calls[0]["offset"] == 600
+        assert qenv.store.files[qenv.target_path(31)] == qenv.romm.content[31]
+        assert qenv.store.files[qenv.target_path(33)] == qenv.romm.content[33]
+        assert qenv.job(31) is None
+        assert qenv.job(33) is None
+        assert qenv.job(32).status == "paused"
+        assert qenv.service._download_queue[32]["status"] == "paused"
+
+    @pytest.mark.asyncio
+    async def test_failed_job_load_never_deletes_rom_partials(self, qenv):
+        """If the job table can't be read, ROM .tmp files can't be told apart from
+        orphans — they must all be kept (only BIOS .tmp files are still wiped)."""
+        qenv.add_rom(51)
+        _persist_job(qenv, 51, status="downloading", position=1, total=1000)
+        partial = qenv.tmp_path(51)
+        qenv.store.files[partial] = qenv.romm.content[51][:400]
+        stray = "/roms/n64/stray.z64.tmp"
+        bios_tmp = "/bios/dc/dc_boot.bin.tmp"
+        qenv.store.files[stray] = b"junk"
+        qenv.store.files[bios_tmp] = b"junk"
+
+        def broken_uow():
+            raise RuntimeError("database is locked")
+
+        qenv.service._uow_factory = broken_uow
+
+        qenv.service.reconcile_persisted_downloads()
+        await qenv.settle()
+
+        assert qenv.store.files[partial] == qenv.romm.content[51][:400]
+        assert stray in qenv.store.files
+        assert bios_tmp not in qenv.store.files
+        assert qenv.romm.download_calls == []
+
+    @pytest.mark.asyncio
+    async def test_unreachable_server_leaves_jobs_interrupted_without_retry(self, qenv):
+        from lib.errors import RommConnectionError
+
+        for rid in (41, 42):
+            qenv.add_rom(rid)
+        _persist_job(qenv, 41, status="downloading", position=1, total=1000)
+        _persist_job(qenv, 42, status="queued", position=2, total=1000)
+        qenv.store.files[qenv.tmp_path(41)] = b"x" * 100
+        qenv.romm.get_rom_error = RommConnectionError("refused")
+
+        qenv.service.reconcile_persisted_downloads()
+        await qenv.settle()
+
+        assert qenv.romm.get_rom_calls == [41]  # no attempt for the rest, no retry loop
+        assert qenv.romm.download_calls == []
+        for rid in (41, 42):
+            job = qenv.job(rid)
+            assert job.status == "interrupted"
+            assert job.interrupt_reason == "server_unreachable"
+            assert qenv.service._download_queue[rid]["reason"] == "server_unreachable"
+        assert len(qenv.store.files[qenv.tmp_path(41)]) == 100
+        assert qenv.service.active_download_rom_ids() == set()
+
+    @pytest.mark.asyncio
+    async def test_rom_gone_from_server_drops_job_on_resume(self, qenv):
+        from lib.errors import RommNotFoundError
+
+        qenv.add_rom(43)
+        _persist_job(qenv, 43, status="interrupted", position=1, total=1000, reason="restart")
+        qenv.store.files[qenv.tmp_path(43)] = b"x" * 100
+        qenv.romm.get_rom_error = RommNotFoundError("gone")
+
+        qenv.service.reconcile_persisted_downloads()
+        await qenv.settle()
+
+        assert qenv.job(43) is None
+        assert qenv.tmp_path(43) not in qenv.store.files
+        assert qenv.service._download_queue[43]["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_complete_partial_skips_the_transfer(self, qenv):
+        qenv.add_rom(44)
+        _persist_job(qenv, 44, status="downloading", position=1, total=1000)
+        qenv.store.files[qenv.tmp_path(44)] = qenv.romm.content[44]
+
+        qenv.service.reconcile_persisted_downloads()
+        await qenv.settle()
+
+        assert qenv.romm.download_calls == []  # no request → no 416
+        assert qenv.store.files[qenv.target_path(44)] == qenv.romm.content[44]
+        assert qenv.uow.rom_installs.get(44) is not None
+        assert qenv.job(44) is None
+
+    @pytest.mark.asyncio
+    async def test_oversized_partial_restarts_from_zero(self, qenv):
+        qenv.add_rom(45)
+        _persist_job(qenv, 45, status="interrupted", position=1, total=1000, reason="restart")
+        qenv.store.files[qenv.tmp_path(45)] = b"z" * 1500
+
+        qenv.service.reconcile_persisted_downloads()
+        await qenv.settle()
+
+        assert qenv.romm.download_calls[0]["resume"] is False
+        assert qenv.store.files[qenv.target_path(45)] == qenv.romm.content[45]
+
+    @pytest.mark.asyncio
+    async def test_extraction_crash_re_extracts_from_complete_archive(self, qenv):
+        qenv.add_rom(46, size=300, multi=True)
+        _persist_job(qenv, 46, status="extracting", position=1, total=300)
+        qenv.store.files[qenv.tmp_path(46)] = qenv.romm.content[46]
+        stale = "/roms/psx/game46/half-written.tmpfile"
+        qenv.store.files[stale] = b"partial extract"
+
+        qenv.service.reconcile_persisted_downloads()
+        await qenv.settle()
+
+        assert qenv.romm.download_calls == []
+        assert stale not in qenv.store.files
+        install = qenv.uow.rom_installs.get(46)
+        assert install is not None
+        assert qenv.tmp_path(46) not in qenv.store.files
+        assert qenv.job(46) is None
+        assert qenv.service._download_queue[46]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_no_jobs_schedules_nothing(self, qenv):
+        qenv.service.reconcile_persisted_downloads()
+        assert qenv.service._auto_resume_task is None
+        assert qenv.service.get_download_queue() == {"downloads": []}

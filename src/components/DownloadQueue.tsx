@@ -5,6 +5,7 @@ import { getDownloadState, setDownloads } from "../utils/downloadStore";
 import { formatBytes } from "../utils/formatters";
 import { scrollToTop } from "../utils/scrollHelpers";
 import { detach } from "../utils/detach";
+import { isStoppedStatus, isUnfinishedStatus, stoppedCaptionSuffix } from "../utils/downloadStatus";
 import type { DownloadItem } from "../types";
 
 interface DownloadQueueProps {
@@ -36,11 +37,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
   const unclearRestarted =
     (current: DownloadItem[]) =>
     (prev: Set<number>): Set<number> => {
-      const restarted = current.filter(
-        (d) =>
-          (d.status === "downloading" || d.status === "queued" || d.status === "paused" || d.status === "extracting") &&
-          prev.has(d.rom_id),
-      );
+      const restarted = current.filter((d) => isUnfinishedStatus(d.status) && prev.has(d.rom_id));
       if (restarted.length === 0) return prev;
       const next = new Set(prev);
       for (const d of restarted) next.delete(d.rom_id);
@@ -109,12 +106,11 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
   };
 
   const visible = downloads.filter((d) => !cleared.has(d.rom_id));
-  // Paused and extracting downloads stay in the active section — they're not
-  // finished. Paused holds the partial transfer for resume; extracting is the
-  // post-transfer ZIP unpack (not cancellable, no pause/resume offered).
-  const active = visible.filter(
-    (d) => d.status === "queued" || d.status === "downloading" || d.status === "paused" || d.status === "extracting",
-  );
+  // Paused, interrupted and extracting downloads stay in the active section —
+  // they're not finished. Paused/interrupted hold the partial transfer for
+  // resume; extracting is the post-transfer ZIP unpack (not cancellable, no
+  // pause/resume offered).
+  const active = visible.filter((d) => isUnfinishedStatus(d.status));
   const finished = visible.filter((d) => d.status === "completed" || d.status === "failed" || d.status === "cancelled");
   const hasFinished = downloads.some(
     (d) => !cleared.has(d.rom_id) && (d.status === "completed" || d.status === "failed" || d.status === "cancelled"),
@@ -163,7 +159,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
                       data-testid="dl-caption"
                       style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                     >
-                      {item.rom_name} ({item.platform_name}){item.status === "paused" ? " — Paused" : ""}
+                      {item.rom_name} ({item.platform_name}){stoppedCaptionSuffix(item.status, item.reason)}
                       {item.status === "extracting" ? " — Extracting…" : ""}
                     </span>
                     <span data-testid="dl-bytes" style={{ flexShrink: 0 }}>
@@ -197,7 +193,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
                       </ButtonItem>
                     </PanelSectionRow>
                   )}
-                  {item.status === "paused" && (
+                  {isStoppedStatus(item.status) && (
                     <PanelSectionRow>
                       <ButtonItem
                         layout="below"

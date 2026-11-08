@@ -52,6 +52,7 @@ import { isAppRunning } from "../utils/runningApps";
 import type { DownloadProgressEvent, DownloadCompleteEvent, DownloadFailedEvent } from "../types";
 import { SAVEFILES_IN_CONTENT_DIR_REASON } from "../types";
 import { detach } from "../utils/detach";
+import { interruptedLabel, isStoppedStatus, isUnfinishedStatus } from "../utils/downloadStatus";
 import { setLaunchOptionsConfirmed } from "../utils/steamShortcuts";
 import { reconfirmLaunchOptions } from "../utils/launchOptionsReconcile";
 
@@ -63,8 +64,13 @@ interface DownloadProgress {
   totalBytes: number;
   /** Server honoured the Range probe — Pause/Resume is offered. */
   resumable: boolean;
-  /** True once a paused frame arrives; the transfer is frozen, awaiting Resume. */
+  /**
+   * True once a paused or interrupted frame arrives; the transfer is frozen,
+   * the partial is kept, awaiting Resume.
+   */
   paused: boolean;
+  /** Reason slug ("" when unknown) when the download was interrupted, not user-paused; null otherwise. */
+  interruptReason: string | null;
   /**
    * True once an `extracting` frame arrives — the byte transfer is done and the
    * multi-file ZIP is being unpacked. The transfer is not cancellable here, so
@@ -148,19 +154,14 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
       // No post-await `cancelled` guard needed: React 18 no-ops a setState on an
       // unmounted component, and a remount keeps its own state.
       const entry = queue.downloads.find((d) => d.rom_id === rid);
-      if (
-        entry &&
-        (entry.status === "downloading" ||
-          entry.status === "queued" ||
-          entry.status === "paused" ||
-          entry.status === "extracting")
-      ) {
+      if (entry && isUnfinishedStatus(entry.status)) {
         setActionPending(true);
         setDlProgress({
           bytesDownloaded: entry.bytes_downloaded,
           totalBytes: entry.total_bytes,
           resumable: entry.status === "extracting" ? false : entry.resumable,
-          paused: entry.status === "paused",
+          paused: isStoppedStatus(entry.status),
+          interruptReason: entry.status === "interrupted" ? (entry.reason ?? "") : null,
           extracting: entry.status === "extracting",
         });
       }
@@ -253,7 +254,8 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
             bytesDownloaded: evt.bytes_downloaded,
             totalBytes: evt.total_bytes,
             resumable: extracting ? false : (evt.resumable ?? prev?.resumable ?? false),
-            paused: extracting ? false : evt.status === "paused",
+            paused: extracting ? false : isStoppedStatus(evt.status),
+            interruptReason: evt.status === "interrupted" ? (evt.reason ?? "") : null,
             extracting,
           }));
         }
@@ -968,6 +970,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     const t = dlProgress && dlProgress.totalBytes > 0 ? dlProgress.bytesDownloaded / dlProgress.totalBytes : 0;
     const downloading = actionPending && dlProgress;
     const paused = downloading ? dlProgress.paused : false;
+    const interruptReason = downloading ? dlProgress.interruptReason : null;
     const resumable = downloading ? dlProgress.resumable : false;
     // Post-transfer ZIP unpack for a multi-file ROM — bytes climb 0→100 again
     // over the uncompressed total. Not cancellable: the right-side action is a
@@ -1004,7 +1007,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     if (extracting) {
       dlLabel = `Extracting… ${Math.round(t * 100)}%`;
     } else if (paused) {
-      dlLabel = "Paused";
+      dlLabel = interruptReason === null ? "Paused" : interruptedLabel(interruptReason);
     } else if (downloading) {
       dlLabel = formatProgress(dlProgress.bytesDownloaded, dlProgress.totalBytes);
     } else if (actionPending) {
@@ -1091,9 +1094,10 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
       </DialogButton>
     );
 
-    // Resumable downloads (live or paused) get a dropdown chevron whose menu
-    // offers Pause/Resume + Cancel; non-resumable downloads keep the direct
-    // cancel X (the #1122 behavior — multi-file zips and Cloudflare can't
+    // Resumable downloads (live or paused) and every stopped download (paused
+    // or interrupted — Resume must stay reachable) get a dropdown chevron whose
+    // menu offers Pause/Resume + Cancel; a live non-resumable download keeps the
+    // direct cancel X (the #1122 behavior — Cloudflare / no Range support can't
     // resume, so there's nothing to pause).
     const dropdown = (
       <DialogButton
@@ -1144,7 +1148,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     let rightAction: ReactElement;
     if (extracting) {
       rightAction = extractThrobber;
-    } else if (resumable) {
+    } else if (resumable || paused) {
       rightAction = dropdown;
     } else {
       rightAction = cancelX;
