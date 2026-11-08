@@ -1177,6 +1177,99 @@ class TestDoSyncPerUnit:
         assert by_rom[11]["launch_options"] == ""
 
     @pytest.mark.asyncio
+    async def test_adopted_rom_gets_launch_options_and_is_committed_after_unit(self, plugin, fake_romm_api):
+        """ROM files already on disk are adopted during sync (Phase 1.5).
+
+        The adopter is planned with the unit's ROMs (RomM ``files`` lists still
+        attached), its candidates are baked as installed in the SAME sync's
+        emitted shortcuts, the ``files`` lists are stripped afterwards, and the
+        RomInstall rows are committed only after the unit's ROM rows commit.
+        """
+        import decky
+
+        from domain.install_layout import AdoptionCandidate
+        from domain.rom_install import RomInstall
+        from fakes.fake_install_adopter import FakeInstallAdopter
+
+        decky.emit.reset_mock()
+        plugin.loop = asyncio.get_event_loop()
+        _use_fake_romm(plugin, fake_romm_api)
+        _seed_platform(
+            fake_romm_api,
+            platform_id=1,
+            name="N64",
+            slug="n64",
+            roms=[
+                {"id": 10, "name": "OnDisk", "files": [{"file_name": "ondisk.z64"}]},
+                {"id": 11, "name": "NotOnDisk", "files": [{"file_name": "nope.z64"}]},
+            ],
+        )
+        plugin.settings["enabled_platforms"] = {"1": True}
+        install = RomInstall.mark_installed(
+            rom_id=10,
+            file_path="/roms/n64/ondisk.z64",
+            rom_dir=None,
+            platform_slug="n64",
+            system="n64",
+            installed_at="2026-01-01T00:00:00",
+        )
+        cand = AdoptionCandidate(rom_id=10, install=install, bake_path="/roms/n64/ondisk.z64", group_key=None)
+        adopter = FakeInstallAdopter([cand])
+        plugin._sync_service._orchestrator._install_adopter = adopter
+
+        order: list[str] = []
+        real_commit_adoptions = adopter.commit_adoptions
+
+        def _commit_adoptions(cands):
+            order.append("adopt")
+            return real_commit_adoptions(cands)
+
+        adopter.commit_adoptions = _commit_adoptions  # type: ignore[method-assign]
+
+        async def _commit_unit(_applied, unit_roms):
+            order.append("unit")
+            assert all("files" not in r for r in unit_roms)
+
+        plugin._sync_service._orchestrator._download_artwork = AsyncMock(return_value={})
+        plugin._sync_service._orchestrator._wait_for_unit_complete = _fake_wait_set_event
+        plugin._sync_service._reporter.commit_unit_results = _commit_unit  # type: ignore[method-assign]
+        plugin._sync_service._box.sync_state = SyncState.RUNNING
+
+        await plugin._sync_service._orchestrator._do_sync_per_unit()
+
+        # Planned with RomM's file lists still attached.
+        assert len(adopter.planned_with) == 1
+        assert {r["id"] for r in adopter.planned_with[0]} == {10, 11}
+        assert all("files" in r for r in adopter.planned_with[0])
+        unit_events = [c[0][1] for c in decky.emit.call_args_list if c[0][0] == "sync_apply_unit"]
+        by_rom = {s["rom_id"]: s for s in unit_events[0]["shortcuts"]}
+        assert by_rom[10]["launch_options"] == 'flatpak run net.retrodeck.retrodeck "/roms/n64/ondisk.z64"'
+        assert by_rom[11]["launch_options"] == ""
+        assert adopter.committed == [[cand]]
+        assert order == ["unit", "adopt"]
+
+    @pytest.mark.asyncio
+    async def test_no_adoption_commit_when_nothing_adopted(self, plugin, fake_romm_api):
+        """No candidates → the adopter is planned but never asked to commit."""
+        from fakes.fake_install_adopter import FakeInstallAdopter
+
+        plugin.loop = asyncio.get_event_loop()
+        _use_fake_romm(plugin, fake_romm_api)
+        _seed_platform(fake_romm_api, platform_id=1, name="N64", slug="n64", roms=[{"id": 10, "name": "A"}])
+        plugin.settings["enabled_platforms"] = {"1": True}
+        adopter = FakeInstallAdopter()
+        plugin._sync_service._orchestrator._install_adopter = adopter
+        plugin._sync_service._orchestrator._download_artwork = AsyncMock(return_value={})
+        plugin._sync_service._orchestrator._wait_for_unit_complete = _fake_wait_set_event
+        plugin._sync_service._reporter.commit_unit_results = AsyncMock()  # type: ignore[method-assign]
+        plugin._sync_service._box.sync_state = SyncState.RUNNING
+
+        await plugin._sync_service._orchestrator._do_sync_per_unit()
+
+        assert len(adopter.planned_with) == 1
+        assert adopter.committed == []
+
+    @pytest.mark.asyncio
     async def test_apply_bakes_emulator_override_into_launch_options(self, plugin, fake_romm_api):
         """A pinned ``emulator_override`` bakes the ``-e`` form; a NULL pin stays plain (R6).
 

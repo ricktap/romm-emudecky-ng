@@ -53,6 +53,7 @@ if TYPE_CHECKING:
         Clock,
         DiscResolver,
         EventEmitter,
+        InstallAdopter,
         LaunchResolverFn,
         Sleeper,
         UnitOfWorkFactory,
@@ -75,6 +76,12 @@ _UNIT_HEARTBEAT_TIMEOUT_SEC = 60.0
 _UNIT_WAIT_POLL_SEC = 1.0
 
 
+def _strip_file_lists(roms: list[dict[str, Any]]) -> None:
+    """Drop RomM's per-ROM ``files`` list from fetched ROM dicts (memory; only adoption reads it)."""
+    for rom in roms:
+        rom.pop("files", None)
+
+
 @dataclass(frozen=True)
 class SyncOrchestratorConfig:
     """Frozen wiring bundle handed to ``SyncOrchestrator.__init__``.
@@ -95,7 +102,9 @@ class SyncOrchestratorConfig:
     per-game/per-platform deviation folded over the es_systems default)
     into ``launch_options`` at sync time, and the shared ``disc_resolver`` bakes
     each multi-disc ROM's selected disc (the persisted ``selected_disc`` pin) into
-    the installed-launch path at sync time.
+    the installed-launch path at sync time. The ``install_adopter`` adopts ROM
+    files already on disk (exact path + size) so they count as installed and
+    get their launch command in the same sync.
     """
 
     settings: dict[str, Any]
@@ -114,6 +123,7 @@ class SyncOrchestratorConfig:
     active_core: ActiveCoreReader
     disc_resolver: DiscResolver
     launch_resolver: LaunchResolverFn
+    install_adopter: InstallAdopter
 
 
 class SyncOrchestrator:
@@ -136,6 +146,7 @@ class SyncOrchestrator:
         self._active_core = config.active_core
         self._disc_resolver = config.disc_resolver
         self._launch_resolver = config.launch_resolver
+        self._install_adopter = config.install_adopter
 
     # ── Sync control ─────────────────────────────────────────────
 
@@ -336,12 +347,14 @@ class SyncOrchestrator:
         """
         if unit.type == "platform":
             unit_roms, _skipped = await self._fetcher.fetch_platform_unit(unit)
+            _strip_file_lists(unit_roms)
             for rom in unit_roms:
                 platform_rom_ids.add(rom["id"])
                 synced_rom_ids.add(rom["id"])
             all_roms.extend(unit_roms)
         else:
             unit_roms, all_collection_rom_ids = await self._fetcher.fetch_collection_unit(unit, synced_rom_ids)
+            _strip_file_lists(unit_roms)
             if all_collection_rom_ids:
                 collection_memberships[unit.name] = all_collection_rom_ids
             all_roms.extend(unit_roms)
@@ -738,7 +751,7 @@ class SyncOrchestrator:
         than a per-ROM coalesce-first key. A resident dict (one that already carries
         a key — an incremental-reconstructed row) is left untouched: the kernel
         returns no key for it. Mutates *roms* in place, matching the other in-place
-        decorations (``platform_name``, popped ``files``) the fetch already applied.
+        decorations (``platform_name``) the fetch already applied.
         """
         keys = compute_component_group_keys(roms, resident_keys)
         for rom in roms:
@@ -823,6 +836,19 @@ class SyncOrchestrator:
             int(rom_id): entry["sibling_group_key"] for rom_id, entry in registry.items() if entry["sibling_group_key"]
         }
         self._stamp_component_group_keys(unit_roms, resident_keys)
+
+        # Adopt ROM files already on disk (exact path + size, ROM files only —
+        # see ``InstallAdoptionService``). Probed here, after the sibling keys
+        # are stamped and before the build, so an adopted ROM is treated as
+        # installed by the group collapse and gets its full launch command in
+        # this same sync. The RomInstall rows are written after the unit commit
+        # below (``rom_installs`` references the ``roms`` row the commit upserts).
+        adoptions = await self._loop.run_in_executor(None, self._install_adopter.plan_adoptions, unit_roms)
+        # RomM's per-ROM file lists are only needed by the adoption probe.
+        _strip_file_lists(unit_roms)
+        for cand in adoptions:
+            installed_paths.setdefault(cand.rom_id, cand.bake_path)
+
         shortcuts_data = build_shortcuts_data(unit_roms, self._plugin_dir, installed_paths, invocations)
 
         # Collapse to one Steam shortcut per sibling group (ADR-0021): only the
@@ -923,6 +949,8 @@ class SyncOrchestrator:
         # first, metadata second — FK-safe). ``unit_roms`` is the live RomM
         # fetch for the whole unit — the source of ``metadatum``.
         await self._reporter.get().commit_unit_results(applied, unit_roms)
+        if adoptions:
+            await self._loop.run_in_executor(None, self._install_adopter.commit_adoptions, adoptions)
 
         box.pending_sync = {}
         box.pending_all_roms = {}

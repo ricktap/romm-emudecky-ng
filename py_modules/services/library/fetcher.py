@@ -629,7 +629,6 @@ class LibraryFetcher:
 
             rom_list = page.get("items", []) if isinstance(page, dict) else page
             for rom in rom_list:
-                rom.pop("files", None)
                 rom["platform_name"] = platform_name
                 rom["platform_slug"] = platform_slug
             unit_roms.extend(rom_list)
@@ -692,7 +691,6 @@ class LibraryFetcher:
                 synced_rom_ids.add(rid)
                 rom["platform_name"] = rom.get("platform_name", rom.get("platform_display_name", "Unknown"))
                 rom["platform_slug"] = rom.get("platform_slug", rom.get("platform_fs_slug", ""))
-                rom.pop("files", None)
                 new_roms.append(rom)
 
             if len(items) < limit:

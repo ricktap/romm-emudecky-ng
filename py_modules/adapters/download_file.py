@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import os
 import shutil
+import stat
 import urllib.parse
 import zipfile
 from typing import TYPE_CHECKING
@@ -82,6 +83,20 @@ class DownloadFileAdapter:
             return os.path.getsize(path)
         except OSError:
             return 0
+
+    def regular_file_size(self, path: str) -> int | None:
+        """Return the size of the regular file at *path*, or ``None`` if missing / not a regular file."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        if not stat.S_ISREG(st.st_mode):
+            return None
+        return st.st_size
+
+    def is_dir(self, path: str) -> bool:
+        """Return True when *path* is an existing directory."""
+        return os.path.isdir(path)
 
     def walk_files_matching_suffixes(self, base_dir: str, suffixes: tuple[str, ...]) -> list[str]:
         """Recursively list files under *base_dir* matching any of *suffixes*.

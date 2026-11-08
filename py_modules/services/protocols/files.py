@@ -86,6 +86,27 @@ class CoverArtFileStore(Protocol):
         ...
 
 
+class InstalledFileReader(Protocol):
+    """Read-only probe of files already in the ROM folders (install adoption).
+
+    The narrow seam install adoption uses to check whether a ROM's files are
+    already on disk where a download would put them: one ``stat`` per expected
+    file, never a hash, never a write.
+    """
+
+    def regular_file_size(self, path: str) -> int | None:
+        """Return the size of the regular file at *path*, or ``None`` if missing / not a regular file."""
+        ...
+
+    def is_dir(self, path: str) -> bool:
+        """Return True when *path* is an existing directory."""
+        ...
+
+    def scan_files_with_sizes(self, directory: str) -> list[tuple[str, int]]:
+        """Recursively return ``(absolute_path, size_bytes)`` for every file under *directory*."""
+        ...
+
+
 class DownloadFileStore(Protocol):
     """Filesystem seam for ROM download target operations.
 

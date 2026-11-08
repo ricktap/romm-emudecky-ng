@@ -19,6 +19,7 @@ import { getSettingsResetNotice, getAllPlaytime, getAppIdRomIdMap, getInstalledR
 import { getSettingsResetState, setSettingsResetState } from "./utils/settingsResetStore";
 import { recordSyncCreated, resetSyncDelta } from "./utils/syncDeltaStore";
 import { resetSyncCancel } from "./utils/syncManager";
+import { getDownloadState } from "./utils/downloadStore";
 import type { DownloadCompleteEvent, SyncPlanData, SyncStaleData } from "./types";
 
 vi.mock("./patches/gameDetailPatch", () => ({
@@ -117,6 +118,50 @@ describe("index.tsx — download_complete launch-options sync", () => {
       5000,
       'flatpak run net.retrodeck.retrodeck "/games/test.bin"',
     );
+    plugin.onDismount();
+  });
+
+  it("adopted (already on disk): sets launch options but skips the queue entry and toast", async () => {
+    vi.mocked(toaster.toast).mockClear();
+    const plugin = pluginFactory();
+
+    act(() => {
+      emitDeckyEvent<[DownloadCompleteEvent]>("download_complete", {
+        rom_id: 43,
+        rom_name: "On Disk",
+        platform_name: "GBA",
+        file_path: "/roms/gba/on-disk.gba",
+        app_id: 5001,
+        launch_options: "LAUNCH /roms/gba/on-disk.gba",
+        adopted: true,
+      });
+    });
+    await flush();
+
+    expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(5001, "LAUNCH /roms/gba/on-disk.gba");
+    expect(toaster.toast).not.toHaveBeenCalled();
+    expect(getDownloadState().find((d) => d.rom_id === 43)).toBeUndefined();
+    plugin.onDismount();
+  });
+
+  it("a real download completion still toasts and records the queue entry", async () => {
+    vi.mocked(toaster.toast).mockClear();
+    const plugin = pluginFactory();
+
+    act(() => {
+      emitDeckyEvent<[DownloadCompleteEvent]>("download_complete", {
+        rom_id: 44,
+        rom_name: "Fetched",
+        platform_name: "GBA",
+        file_path: "/roms/gba/fetched.gba",
+        app_id: null,
+        launch_options: "",
+      });
+    });
+    await flush();
+
+    expect(toaster.toast).toHaveBeenCalledWith(expect.objectContaining({ body: "Downloaded Fetched" }));
+    expect(getDownloadState().find((d) => d.rom_id === 44)?.status).toBe("completed");
     plugin.onDismount();
   });
 

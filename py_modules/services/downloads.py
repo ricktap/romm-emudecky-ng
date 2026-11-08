@@ -34,10 +34,8 @@ from domain.rom_files import (
     folder_boot_layout_root,
     is_multi_file_download,
     needs_m3u,
-    resolve_extract_dir_name,
-    resolve_local_file_name,
-    synthetic_rom_name,
 )
+from domain.install_layout import resolve_download_names
 from domain.rom_install import RomInstall
 from domain.shortcut_data import EmulatorInvocation, build_launch_options
 from lib.errors import (
@@ -50,7 +48,7 @@ from lib.errors import (
     error_response,
 )
 from lib.list_result import ErrorCode
-from lib.path_safety import PathTraversalError, coerce_safe_component, safe_join
+from lib.path_safety import PathTraversalError, safe_join
 
 if TYPE_CHECKING:
     import logging
@@ -737,19 +735,21 @@ class DownloadService:
                     },
                 )
                 return {"success": False, "reason": "path_traversal", "message": message}
-            file_name, files_missing = resolve_local_file_name(rom_detail)
-            if files_missing:
+            # The shared name resolution (``resolve_download_names``) is the one
+            # adoption of pre-existing files uses too, so the two never diverge.
+            # It coerces the server-supplied name to a single safe component:
+            # any directory portion is stripped and a degenerate result (``..``
+            # would escape the platform dir, ``.``/``""`` would resolve to it)
+            # falls back to the synthetic rom_<id> identity.
+            names = resolve_download_names(rom_detail)
+            if names.files_missing:
                 self._logger.warning(
-                    f"has_nested_single_file=true but files list is empty; falling back to fs_name='{file_name}'"
+                    "has_nested_single_file=true but files list is empty; "
+                    f"falling back to fs_name='{names.raw_file_name}'"
                 )
-            # Coerce the server-supplied name to a single safe component: strip
-            # any directory portion and reject a degenerate result (``..`` would
-            # escape the platform dir, ``.``/``""`` would resolve to it) — falling
-            # back to the synthetic rom_<id> identity.
-            safe_name, name_changed = coerce_safe_component(file_name, synthetic_rom_name(rom_detail))
-            if name_changed:
-                self._logger.warning(f"Sanitized fs_name from '{file_name}' to '{safe_name}'")
-                file_name = safe_name
+            if names.file_name_changed:
+                self._logger.warning(f"Sanitized fs_name from '{names.raw_file_name}' to '{names.file_name}'")
+            file_name = names.file_name
             file_size = rom_detail.get("fs_size_bytes", 0)
             target_path = os.path.join(roms_dir, file_name)
             is_multi = is_multi_file_download(rom_detail)
@@ -954,11 +954,12 @@ class DownloadService:
         library-wide delete) falls back to the synthetic ``rom_<id>`` identity.
         Mirrors the ``file_name`` guard in ``_begin_download``.
         """
-        raw = resolve_extract_dir_name(rom_detail)
-        safe, changed = coerce_safe_component(raw, synthetic_rom_name(rom_detail))
-        if changed:
-            self._logger.warning(f"Sanitized extract dir name from '{raw}' to '{safe}'")
-        return safe
+        names = resolve_download_names(rom_detail)
+        if names.extract_dir_name_changed:
+            self._logger.warning(
+                f"Sanitized extract dir name from '{names.raw_extract_dir_name}' to '{names.extract_dir_name}'"
+            )
+        return names.extract_dir_name
 
     def _post_download_multi_io(
         self, rom_id, rom_detail, target_path, file_name, system, extract_dir_name, *, fresh_extract=False

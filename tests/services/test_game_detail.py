@@ -7,6 +7,7 @@ import pytest
 
 # conftest.py patches decky before this import; use _make_testable_plugin for test-only attrs
 from conftest import _make_retry, _make_testable_plugin
+from fakes.fake_install_adopter import FakeInstallAdopter
 from fakes.fake_active_core_resolver import FakeActiveCoreResolver
 from fakes.fake_core_info_provider import FakeCoreInfoProvider
 from fakes.fake_disc_resolver import FakeDiscResolver
@@ -58,6 +59,7 @@ def plugin(tmp_path):
 
     p._sync_service = LibraryService(
         config=LibraryServiceConfig(
+            install_adopter=FakeInstallAdopter(),
             romm_api=MagicMock(),
             steam_config=steam_config,
             settings=p.settings,
@@ -181,6 +183,7 @@ def game_detail_service(plugin, clock, active_core_resolver):
     """Create a GameDetailService wired to the plugin's shared UoW and pinned clock."""
     return GameDetailService(
         config=GameDetailServiceConfig(
+            adoption_scheduler=MagicMock(),
             settings=plugin.settings,
             logger=logging.getLogger("test"),
             clock=clock,
@@ -454,6 +457,8 @@ class TestGetCachedGameDetailInstalled:
         result = game_detail_service.get_cached_game_detail(50000)
         assert result["installed"] is True
         assert result["rom_file"] == "game.sfc"
+        # Installed → no on-disk adoption check.
+        game_detail_service._adoption_scheduler.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_not_installed(self, plugin, game_detail_service):
@@ -463,6 +468,14 @@ class TestGetCachedGameDetailInstalled:
         assert result["installed"] is False
         # No install record → rom_file falls back to Rom.fs_name.
         assert result["rom_file"] == "game_10.sfc"
+        # Not installed → a background check for files already on disk starts.
+        game_detail_service._adoption_scheduler.assert_called_once_with(10)
+
+    @pytest.mark.asyncio
+    async def test_not_found_schedules_no_adoption_check(self, game_detail_service):
+        """An unknown app_id never schedules an adoption check."""
+        assert game_detail_service.get_cached_game_detail(12345) == {"found": False}
+        game_detail_service._adoption_scheduler.assert_not_called()
 
 
 class TestGetCachedGameDetailConflictFiltering:

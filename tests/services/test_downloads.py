@@ -9,6 +9,7 @@ import pytest
 
 # conftest.py patches decky before this import; use _make_testable_plugin for test-only attrs
 from conftest import _make_testable_plugin
+from fakes.fake_install_adopter import FakeInstallAdopter
 from fakes.fake_core_info_provider import FakeCoreInfoProvider
 from fakes.fake_disc_resolver import FakeDiscResolver
 from fakes.fake_platform_core_reader import FakePlatformCoreReader
@@ -144,6 +145,7 @@ def plugin():
 
     p._sync_service = LibraryService(
         config=LibraryServiceConfig(
+            install_adopter=FakeInstallAdopter(),
             romm_api=p._romm_api,
             steam_config=steam_config,
             settings=p.settings,

@@ -4,6 +4,7 @@ import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fakes.fake_install_adopter import FakeInstallAdopter
 from fakes.fake_active_core_resolver import FakeActiveCoreResolver
 from fakes.fake_disc_resolver import FakeDiscResolver
 from fakes.fake_path_exists_reader import FakePathExistsReader
@@ -55,6 +56,7 @@ def plugin():
 
     p._sync_service = LibraryService(
         config=LibraryServiceConfig(
+            install_adopter=FakeInstallAdopter(),
             romm_api=p._romm_api,
             steam_config=steam_config,
             settings=p.settings,
