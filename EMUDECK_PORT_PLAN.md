@@ -126,6 +126,9 @@ Local dev note: this Mac has no `mise` and no `.venv`, so the test baseline stil
     its shortcuts launch through `bin/rom-launcher-ng` ("next generation"). Ownership is detected by the exe ending in
     `/bin/rom-launcher-ng`, which never matches upstream's `/bin/rom-launcher` and vice versa, so neither plugin sees
     or touches the other's shortcuts. A frontend test pins this.
+  - **Short name in Decky (2026-11-08):** the Decky plugin list and QAM entry (`plugin.json` `name`, `definePlugin`
+    in `src/index.tsx`) say "EmuDecky RomMM", because the full name was too long there. Everything else keeps
+    "EmuDecky RomM Manager".
   - The release workflow fails the build if the zip's top folder (the install folder) is not `romm-emudecky-ng`.
 
 ---

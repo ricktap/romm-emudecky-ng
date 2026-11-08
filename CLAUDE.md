@@ -29,7 +29,8 @@ no linting/formatting in CI — don't add any.
 - Decky's embedded Python is **3.11**; third-party runtime deps are vendored in `py_modules/_vendor/` (Decky has no
   package manager). Only adapters import `_vendor`.
 - Plugin id/folder/User-Agent slug: `romm-emudecky-ng` (must equal the repo name — the release zip's top folder is the
-  checkout dir and becomes the install folder). Display name: "EmuDecky RomM Manager". Side-by-side installs with
+  checkout dir and becomes the install folder). Display name: "EmuDecky RomM Manager", except the Decky plugin list / QAM entry (`plugin.json` `name` + `definePlugin` in
+  `src/index.tsx`), which use the short "EmuDecky RomMM". Side-by-side installs with
   upstream `decky-romm-sync` are supported (see plan D8).
 
 ## Key technical constraints
