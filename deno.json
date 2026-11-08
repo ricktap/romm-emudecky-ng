@@ -1,8 +1,0 @@
-{
-  "fmt": {
-    "include": ["**/*.md"],
-    "exclude": ["CHANGELOG.md", "site/", "node_modules/", ".worktrees/"],
-    "proseWrap": "always",
-    "lineWidth": 120
-  }
-}

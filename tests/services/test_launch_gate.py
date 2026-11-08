@@ -253,7 +253,7 @@ class TestEvaluateBlock:
 
         assert verdict.action == "block"
         assert verdict.reason == "not_installed"
-        assert verdict.toast_title == "RomM Sync"
+        assert verdict.toast_title == "EmuDecky RomM Manager"
         assert verdict.toast_body == "ROM not downloaded. Open the game page to download it first."
         # Save-status reader must not be consulted when the ROM is not installed.
         assert save_status_reader.calls == []

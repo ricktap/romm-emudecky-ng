@@ -1,6 +1,6 @@
 # Development
 
-Guide for setting up a development environment and contributing to decky-romm-sync.
+Guide for setting up a development environment and contributing to EmuDecky RomM Manager.
 
 ## Prerequisites
 
@@ -16,8 +16,8 @@ Guide for setting up a development environment and contributing to decky-romm-sy
 ## Setup
 
 ```bash
-git clone https://github.com/danielcopper/decky-romm-sync.git
-cd decky-romm-sync
+git clone https://github.com/ricktap/romm-emudecky-ng.git
+cd romm-emudecky-ng
 mise install          # installs Node LTS, pnpm, Python
 mise run setup        # installs JS + Python dependencies
 ```
@@ -116,10 +116,10 @@ Every backend feature or callable where testing makes sense should have unit tes
 mise run dev          # build frontend, deploy to the plugin dir, restart plugin_loader
 ```
 
-This builds the frontend, copies the plugin files into `~/homebrew/plugins/decky-romm-sync`, and restarts
-`plugin_loader` to pick up the changes. It **stops** `plugin_loader` around the file copy on purpose: the loader runs as
-root and continuously re-owns the plugin dir back to root within ~1–2s as a tamper guard, so copying while it runs races
-against that re-own and fails with `permission denied`. With the loader stopped, the copy is uncontested; it restarts
+This builds the frontend, copies the plugin files into `~/homebrew/plugins/romm-emudecky`, and restarts `plugin_loader`
+to pick up the changes. It **stops** `plugin_loader` around the file copy on purpose: the loader runs as root and
+continuously re-owns the plugin dir back to root within ~1–2s as a tamper guard, so copying while it runs races against
+that re-own and fails with `permission denied`. With the loader stopped, the copy is uncontested; it restarts
 automatically when the task finishes — even if the build or copy fails, so a failure never leaves the plugin dead. For
 backend-only changes, restarting the plugin loader is sufficient without rebuilding.
 
@@ -134,7 +134,7 @@ shortcuts, and caveats.
 For development, symlink the repo into the plugins directory:
 
 ```bash
-sudo ln -sf "$(pwd)" ~/homebrew/plugins/decky-romm-sync
+sudo ln -sf "$(pwd)" ~/homebrew/plugins/romm-emudecky
 sudo systemctl restart plugin_loader
 ```
 
@@ -193,15 +193,25 @@ See [Backend Architecture](../architecture/backend-architecture.md) for details.
 
 ## Code Quality
 
-- **SonarCloud** — CI-based analysis on every human PR and push to main. Quality Gate enforces 80% coverage on new code,
-  0 bugs, 0 vulnerabilities. The scan is skipped on Dependabot PRs (no `SONAR_TOKEN` access in that restricted context);
-  the required status check is the `sonar-gate` job, which passes when SonarCloud succeeded or was skipped and fails
-  only when it failed — so dependency PRs aren't deadlocked on a check that can never run for them.
 - **Ruff** — Python linting in CI. Expanded ruleset includes B (bugbear), SIM (simplify), UP (pyupgrade), RUF
   (ruff-specific), and ARG (unused arguments) in addition to the base E/F rules.
 - **basedpyright** — Type checking in CI. Checks all source files including the test suite (tests/ is not excluded).
 - **import-linter** — Layer boundary enforcement in CI (see Linting section above).
-- **pytest-cov** — Branch coverage reported to SonarCloud.
+- **pytest-cov / vitest coverage** — Branch coverage printed in the CI log. There is no external analysis service
+  (SonarCloud is not used in this fork).
+
+## Releasing
+
+Push a version tag; that is the whole release step:
+
+```bash
+git tag v0.27.0
+git push origin v0.27.0
+```
+
+`.github/workflows/release.yml` then stamps the version from the tag into `package.json` / `plugin.json`, builds and
+smoke-tests `romm-emudecky.zip`, and publishes a GitHub Release whose notes list the commit subjects since the previous
+tag.
 
 ## Project Structure
 

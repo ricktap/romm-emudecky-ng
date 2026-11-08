@@ -1,4 +1,3 @@
-from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
@@ -33,6 +32,7 @@ from services.library import LibraryService, LibraryServiceConfig
 from services.migration import MigrationService, MigrationServiceConfig
 from services.playtime import PlaytimeService, PlaytimeServiceConfig
 from services.saves import SaveService, SaveServiceConfig
+from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 
 
 @pytest.fixture
@@ -46,7 +46,7 @@ def plugin(tmp_path):
         "log_level": "warn",
     }
     p._http_adapter = RommHttpAdapter(
-        p.settings, __import__("decky").DECKY_PLUGIN_DIR, logging.getLogger("test"), "decky-romm-sync/9.9.9"
+        p.settings, __import__("decky").DECKY_PLUGIN_DIR, logging.getLogger("test"), "romm-emudecky/9.9.9"
     )
     p._romm_api = MagicMock()
 

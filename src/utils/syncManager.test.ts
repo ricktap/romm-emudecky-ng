@@ -46,7 +46,7 @@ function unit(launchOptions: string, runId = "run-1"): SyncApplyUnitData {
       {
         rom_id: 42,
         name: "Test ROM",
-        exe: "/home/deck/homebrew/plugins/decky-romm-sync/bin/rom-launcher",
+        exe: "/home/deck/homebrew/plugins/romm-emudecky/bin/rom-launcher",
         start_dir: "/home/deck",
         launch_options: launchOptions,
         platform_name: "PSX",
@@ -89,7 +89,7 @@ describe("syncManager — existing-shortcut update uses confirm-poll", () => {
 });
 
 describe("syncManager — group-aware emit: one Steam shortcut per game (ADR-0021)", () => {
-  const EXE = "/home/deck/homebrew/plugins/decky-romm-sync/bin/rom-launcher";
+  const EXE = "/home/deck/homebrew/plugins/romm-emudecky/bin/rom-launcher";
 
   beforeEach(() => {
     setLaunchOptionsConfirmed.mockClear();
@@ -198,7 +198,7 @@ describe("syncManager — group-aware emit: one Steam shortcut per game (ADR-002
 });
 
 describe("syncManager — registers resolved appIds as RomM-owned at ack time (#1205)", () => {
-  const EXE = "/home/deck/homebrew/plugins/decky-romm-sync/bin/rom-launcher";
+  const EXE = "/home/deck/homebrew/plugins/romm-emudecky/bin/rom-launcher";
 
   beforeEach(() => {
     setLaunchOptionsConfirmed.mockClear();

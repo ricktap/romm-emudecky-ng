@@ -1,4 +1,4 @@
-# CONTEXT.md — decky-romm-sync domain glossary
+# CONTEXT.md — EmuDecky RomM Manager domain glossary
 
 This file is a glossary. It defines the canonical meaning of project-specific terms so that conversations, issues, PRs,
 and code stay aligned. It is _not_ a spec or design doc — implementation docs live in `docs/architecture/`, and

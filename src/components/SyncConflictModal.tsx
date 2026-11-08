@@ -184,7 +184,7 @@ const SyncConflictModalHost: FC<SyncConflictModalHostProps> = ({ conflict, close
         action === "keep_local"
           ? "Conflict resolved — kept your local save (uploaded to server)."
           : "Conflict resolved — used the server save · your local was backed up.";
-      toaster.toast({ title: "RomM Sync", body: successBody });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: successBody });
       closeModal?.();
       onDone(action);
     } catch (e) {

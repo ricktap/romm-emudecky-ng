@@ -1,7 +1,6 @@
 """Tests for DiscService — get_disc_selection (read) + select_disc (write)."""
-from __future__ import annotations
 
-from tests.fakes.fake_launch_resolver import FakeLaunchResolver
+from __future__ import annotations
 
 import asyncio
 import contextlib
@@ -16,6 +15,7 @@ from domain.disc_selection import Disc
 from domain.rom import Rom
 from domain.rom_install import RomInstall
 from services.disc import DiscService, DiscServiceConfig
+from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 
 _ROM_DIR = "/roms/psx/game"
 _DISC1 = "Game (Disc 1).cue"

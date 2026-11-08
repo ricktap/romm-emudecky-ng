@@ -198,8 +198,8 @@ Steam also tracks playtime natively for non-Steam shortcuts, so you'll see playt
 
 ## Save File Location
 
-Save files are stored in your EmuDeck saves directory. The exact path is determined by EmuDeck's storage
-configuration — typically:
+Save files are stored in your EmuDeck saves directory. The exact path is determined by EmuDeck's storage configuration —
+typically:
 
 - **Internal SSD**: `<storagePath>/Emulation/saves/{system}/{rom_name}.srm`
 - **SD card**: `/run/media/deck/Emulation/saves/{system}/{rom_name}.srm`
@@ -209,10 +209,10 @@ configuration — typically:
 Save sync expects save files to be organized as `{saves_dir}/{system}/{rom_name}.srm`. This matches **EmuDeck's
 RetroArch** configuration:
 
-| RetroArch Setting                            | Required Value | EmuDeck Default   |
-| -------------------------------------------- | -------------- | ----------------- |
-| Sort Saves into Folders by Content Directory | **ON**         | ON                |
-| Sort Saves into Folders by Core Name         | **OFF**        | OFF               |
+| RetroArch Setting                            | Required Value | EmuDeck Default |
+| -------------------------------------------- | -------------- | --------------- |
+| Sort Saves into Folders by Content Directory | **ON**         | ON              |
+| Sort Saves into Folders by Core Name         | **OFF**        | OFF             |
 
 > **If you changed these settings in RetroArch, save sync will silently fail to find your save files.** No error is
 > shown — saves simply won't sync.

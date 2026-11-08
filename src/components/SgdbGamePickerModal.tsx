@@ -136,7 +136,7 @@ export const SgdbGamePickerModalContent: FC<SgdbGamePickerModalProps> = ({
         return { success: false };
       });
       if (!result.success) {
-        toaster.toast({ title: "RomM Sync", body: "Failed to apply artwork selection" });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: "Failed to apply artwork selection" });
         return;
       }
       const applied = await applyArtwork(romId, appId).catch((e): number => {
@@ -144,11 +144,11 @@ export const SgdbGamePickerModalContent: FC<SgdbGamePickerModalProps> = ({
         return 0;
       });
       if (applied === -1) {
-        toaster.toast({ title: "RomM Sync", body: "Set a SteamGridDB API key in settings first" });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: "Set a SteamGridDB API key in settings first" });
       } else if (applied > 0) {
-        toaster.toast({ title: "RomM Sync", body: `Artwork refreshed (${applied}/4 images applied)` });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: `Artwork refreshed (${applied}/4 images applied)` });
       } else {
-        toaster.toast({ title: "RomM Sync", body: "No artwork available for this game" });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: "No artwork available for this game" });
       }
       onApplied(applied);
       closeModal?.();

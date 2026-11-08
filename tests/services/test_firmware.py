@@ -1,4 +1,3 @@
-from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 import asyncio
 import os
 from dataclasses import asdict
@@ -28,6 +27,7 @@ from domain.firmware_cache import FirmwareCacheEntry
 from domain.rom import Rom
 from services.firmware import FirmwareService, FirmwareServiceConfig
 from services.library import LibraryService, LibraryServiceConfig
+from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 
 
 class FakeSystemResolver:

@@ -311,7 +311,7 @@ describe("launchInterceptor — full funnel watcher", () => {
 
       expect(SteamClient.Apps.CancelGameAction).toHaveBeenCalledWith(77);
       expect(toaster.toast).toHaveBeenCalledWith({
-        title: "RomM Sync",
+        title: "EmuDecky RomM Manager",
         body: "ROM not downloaded. Open the plugin to download it first.",
       });
       expect(launchGate.runLaunchGate).not.toHaveBeenCalled();
@@ -355,7 +355,7 @@ describe("launchInterceptor — full funnel watcher", () => {
       await flush();
 
       expect(toaster.toast).toHaveBeenCalledWith({
-        title: "RomM Sync",
+        title: "EmuDecky RomM Manager",
         body: "ROM not downloaded. Open the plugin to download it first.",
       });
       expect(launchGate.runLaunchGate).not.toHaveBeenCalled();
@@ -501,7 +501,7 @@ describe("launchInterceptor — full funnel watcher", () => {
       await flush();
 
       expect(toaster.toast).toHaveBeenCalledWith({
-        title: "RomM Sync",
+        title: "EmuDecky RomM Manager",
         body: "Pending RetroDECK migration. Open the plugin QAM to migrate or dismiss.",
       });
       expect(runGameMock()).not.toHaveBeenCalled();

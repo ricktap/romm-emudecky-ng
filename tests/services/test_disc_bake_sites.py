@@ -15,9 +15,8 @@ The migration relaunch path (``services.migration._build_relaunch_items``) and
 the startup reconcile both bake through the shared ``RelaunchOptionsResolver``;
 its disc-pin behavior is pinned in ``test_relaunch_options_resolver.py``.
 """
-from __future__ import annotations
 
-from tests.fakes.fake_launch_resolver import FakeLaunchResolver
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -32,6 +31,7 @@ from fakes.system_time import FakeClock, FakeSleeper, FakeUuidGen
 from domain.disc_selection import Disc
 from domain.rom import Rom
 from domain.rom_install import RomInstall
+from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 
 _ROM_DIR = "/roms/psx/game-1"
 _DISC1 = "Game (Disc 1).cue"

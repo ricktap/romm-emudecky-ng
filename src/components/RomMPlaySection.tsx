@@ -626,7 +626,7 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
   const handleRefreshArtwork = async () => {
     if (actionPending) return;
     if (!info.romId) {
-      toaster.toast({ title: "RomM Sync", body: "ROM info not loaded yet" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "ROM info not loaded yet" });
       return;
     }
     const romId = info.romId;
@@ -659,22 +659,22 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
         return null;
       });
       if (!resolution) {
-        toaster.toast({ title: "RomM Sync", body: "Failed to refresh artwork" });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: "Failed to refresh artwork" });
         return;
       }
 
       switch (resolution.decision) {
         case "no_api_key":
-          toaster.toast({ title: "RomM Sync", body: "Set a SteamGridDB API key in settings first" });
+          toaster.toast({ title: "EmuDecky RomM Manager", body: "Set a SteamGridDB API key in settings first" });
           break;
         case "resolved": {
           const applied = await applyArtwork(romId, appId);
           if (applied === -1) {
-            toaster.toast({ title: "RomM Sync", body: "Set a SteamGridDB API key in settings first" });
+            toaster.toast({ title: "EmuDecky RomM Manager", body: "Set a SteamGridDB API key in settings first" });
           } else if (applied > 0) {
-            toaster.toast({ title: "RomM Sync", body: `Artwork refreshed (${applied}/4 images applied)` });
+            toaster.toast({ title: "EmuDecky RomM Manager", body: `Artwork refreshed (${applied}/4 images applied)` });
           } else {
-            toaster.toast({ title: "RomM Sync", body: "No artwork available for this game" });
+            toaster.toast({ title: "EmuDecky RomM Manager", body: "No artwork available for this game" });
           }
           break;
         }
@@ -691,7 +691,7 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
           break;
       }
     } catch {
-      toaster.toast({ title: "RomM Sync", body: "Failed to refresh artwork" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Failed to refresh artwork" });
     } finally {
       setActionPending(null);
     }
@@ -702,12 +702,12 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
     setActionPending("metadata");
     try {
       await getRomMetadata(info.romId);
-      toaster.toast({ title: "RomM Sync", body: "Metadata refreshed" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Metadata refreshed" });
       globalThis.dispatchEvent(
         new CustomEvent("romm_data_changed", { detail: { type: "metadata", rom_id: info.romId } }),
       );
     } catch {
-      toaster.toast({ title: "RomM Sync", body: "Failed to refresh metadata" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Failed to refresh metadata" });
     } finally {
       setActionPending(null);
     }
@@ -730,17 +730,17 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
           label = `${n} files updated`;
         }
         if (c > 0) label += `, ${c} conflict(s) need resolution`;
-        toaster.toast({ title: "RomM Sync", body: `Saves synced (${label})` });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: `Saves synced (${label})` });
         globalThis.dispatchEvent(
           new CustomEvent("romm_data_changed", { detail: { type: "save_sync", rom_id: info.romId } }),
         );
         // Refresh save sync status — last_sync_check_at was just set by the backend
         setInfo((prev) => ({ ...prev, saveSyncStatus: "synced" as const, saveSyncLabel: "Just now" }));
       } else {
-        toaster.toast({ title: "RomM Sync", body: result.message || "Save sync failed" });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: result.message || "Save sync failed" });
       }
     } catch {
-      toaster.toast({ title: "RomM Sync", body: "Save sync failed" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Save sync failed" });
     } finally {
       setActionPending(null);
     }
@@ -752,7 +752,7 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
     try {
       const result = await downloadAllFirmware(info.platformSlug);
       if (result.success) {
-        toaster.toast({ title: "RomM Sync", body: `BIOS downloaded (${result.downloaded ?? 0} files)` });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: `BIOS downloaded (${result.downloaded ?? 0} files)` });
         globalThis.dispatchEvent(
           new CustomEvent("romm_data_changed", { detail: { type: "bios", platform_slug: info.platformSlug } }),
         );
@@ -772,10 +772,10 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
           }
         }
       } else {
-        toaster.toast({ title: "RomM Sync", body: result.message || "BIOS download failed" });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: result.message || "BIOS download failed" });
       }
     } catch {
-      toaster.toast({ title: "RomM Sync", body: "BIOS download failed" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "BIOS download failed" });
     } finally {
       setActionPending(null);
     }
@@ -788,12 +788,12 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
       const result = await removeRom(info.romId);
       if (result.success) {
         globalThis.dispatchEvent(new CustomEvent("romm_rom_uninstalled", { detail: { rom_id: info.romId } }));
-        toaster.toast({ title: "RomM Sync", body: `${info.romName || "ROM"} uninstalled` });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: `${info.romName || "ROM"} uninstalled` });
       } else {
-        toaster.toast({ title: "RomM Sync", body: result.message || "Uninstall failed" });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: result.message || "Uninstall failed" });
       }
     } catch {
-      toaster.toast({ title: "RomM Sync", body: "Uninstall failed" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Uninstall failed" });
     } finally {
       setActionPending(null);
     }
@@ -816,17 +816,17 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
               try {
                 const result = await deleteLocalSaves(romId);
                 if (result.success) {
-                  toaster.toast({ title: "RomM Sync", body: result.message });
+                  toaster.toast({ title: "EmuDecky RomM Manager", body: result.message });
                   // Directly update PlaySection status — no local saves remain
                   setInfo((prev) => ({ ...prev, saveSyncStatus: "none" as const, saveSyncLabel: "No saves" }));
                   globalThis.dispatchEvent(
                     new CustomEvent("romm_data_changed", { detail: { type: "save_sync", rom_id: romId } }),
                   );
                 } else {
-                  toaster.toast({ title: "RomM Sync", body: result.message || "Failed to delete saves" });
+                  toaster.toast({ title: "EmuDecky RomM Manager", body: result.message || "Failed to delete saves" });
                 }
               } catch {
-                toaster.toast({ title: "RomM Sync", body: "Failed to delete saves" });
+                toaster.toast({ title: "EmuDecky RomM Manager", body: "Failed to delete saves" });
               } finally {
                 setActionPending(null);
               }
@@ -881,7 +881,7 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
     successBody: string,
   ) => {
     if (!result.success) {
-      toaster.toast({ title: "RomM Sync", body: result.message || "Failed to set core" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: result.message || "Failed to set core" });
       return;
     }
     // Installed + bound: confirm the re-baked launch_options landed before
@@ -891,12 +891,12 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
       if (!confirmed) {
         // Never toast success on an unconfirmed bake. Keep the DB row — a Steam
         // restart (or the next migration/re-sync) re-bakes from the override.
-        toaster.toast({ title: "RomM Sync", body: "Core saved — restart Steam to apply" });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: "Core saved — restart Steam to apply" });
         return;
       }
     }
     // Confirmed (or uninstalled/unbound: nothing to confirm) → success.
-    toaster.toast({ title: "RomM Sync", body: successBody });
+    toaster.toast({ title: "EmuDecky RomM Manager", body: successBody });
     await refreshCoreDisplay(romId, platformSlug);
   };
 
@@ -910,7 +910,7 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
       detach(debugLog(`handleChangeGameCore: result success=${result.success}`));
       await applyCoreResult(result, romId, platformSlug, `Core set to ${coreLabel}`);
     } catch {
-      toaster.toast({ title: "RomM Sync", body: "Failed to set core" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Failed to set core" });
     }
   };
 
@@ -924,7 +924,7 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
       detach(debugLog(`handleResetGameCore: result success=${result.success}`));
       await applyCoreResult(result, romId, platformSlug, "Now following the system core");
     } catch {
-      toaster.toast({ title: "RomM Sync", body: "Failed to reset core" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Failed to reset core" });
     }
   };
 

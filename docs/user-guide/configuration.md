@@ -1,7 +1,7 @@
 # Configuration
 
 All settings are accessible from the plugin's QAM panel. Open the Quick Access Menu (**...** button) and navigate to the
-decky-romm-sync plugin.
+EmuDecky RomM Manager plugin.
 
 ## Connection Settings
 
@@ -140,7 +140,7 @@ Settings.
 
 | Mode                      | Description                                                                                                                |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **Default** (Recommended) | Uses your global Steam Input settings. Works well with EmuDeck's default configuration.                                  |
+| **Default** (Recommended) | Uses your global Steam Input settings. Works well with EmuDeck's default configuration.                                    |
 | **Force On**              | Explicitly enables Steam Input wrapping. Normalizes the controller as standard XInput, which RetroArch autoconfig expects. |
 | **Force Off**             | Raw HID passthrough. Only for advanced users — may break RetroArch menu navigation.                                        |
 
@@ -201,7 +201,7 @@ use `sdl2` instead, which fixes controller navigation in RetroArch menus.
 
 Grab the latest release ZIP to install manually via Decky's **Install Plugin from ZIP**:
 
-[⬇ Download decky-romm-sync.zip](https://github.com/melikootje/Romm-emudecky/releases/latest/download/decky-romm-sync.zip)
+[⬇ Download romm-emudecky.zip](https://github.com/ricktap/romm-emudecky-ng/releases/latest/download/romm-emudecky.zip)
 
 For install instructions, see the [README](/README.md#from-zip-or-url).
 

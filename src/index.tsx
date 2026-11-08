@@ -242,7 +242,7 @@ export default definePlugin(() => {
         if (status.pending) {
           setSaveSortMigrationStatus(status);
           toaster.toast({
-            title: "RomM Sync",
+            title: "EmuDecky RomM Manager",
             body: "RetroArch save sorting changed. Go to Settings to migrate save files.",
           });
         }
@@ -307,7 +307,7 @@ export default definePlugin(() => {
     } else {
       body = summary ? `Sync complete — ${summary}.` : "Library up to date.";
     }
-    toaster.toast({ title: "RomM Sync", body });
+    toaster.toast({ title: "EmuDecky RomM Manager", body });
     // Defensive reset; sync_plan also resets at the start of the next run.
     resetSyncDelta();
 
@@ -517,7 +517,7 @@ export default definePlugin(() => {
         resumable: data.resumable ?? prev?.resumable ?? false,
       });
       toaster.toast({
-        title: "RomM Sync",
+        title: "EmuDecky RomM Manager",
         body: `Downloaded ${data.rom_name}`,
       });
 
@@ -576,7 +576,7 @@ export default definePlugin(() => {
     ]
   >("save_sort_changed", () => {
     toaster.toast({
-      title: "RomM Sync",
+      title: "EmuDecky RomM Manager",
       body: "RetroArch save sorting changed. Go to Settings to migrate save files.",
     });
   });
@@ -612,7 +612,7 @@ export default definePlugin(() => {
   );
 
   return {
-    name: "RomM Sync",
+    name: "EmuDecky RomM Manager",
     icon: <FaGamepad />,
     content: <QAMPanel />,
     alwaysRender: true,

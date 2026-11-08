@@ -156,7 +156,7 @@ class Plugin:
 
         # ── 6. Background tasks ─────────────────────────────────────────────
         self._migration_service.detect_save_sort_change()
-        decky.logger.info("RomM Sync plugin loaded")
+        decky.logger.info("EmuDecky RomM Manager plugin loaded")
 
     async def _unload(self):  # Decky lifecycle — must be async
         self._sync_service.shutdown()
@@ -164,7 +164,7 @@ class Plugin:
         await self._migration_service.shutdown()
         await self._session_lifecycle_service.shutdown()
         await self._cancel_playtime_flush_tasks()
-        decky.logger.info("RomM Sync plugin unloaded")
+        decky.logger.info("EmuDecky RomM Manager plugin unloaded")
 
     async def _cancel_playtime_flush_tasks(self):
         """Cancel and await any in-flight play-session flush tasks on unload.
@@ -183,7 +183,6 @@ class Plugin:
     # ── Callables ──────────────────────────────────────────────────────
     # All methods below are exposed to the frontend via Decky's callable()
     # framework, which requires `async def` even when no `await` is used.
-    # S7503 warnings are suppressed in sonar-project.properties (fp1).
 
     async def test_connection(self):
         return await self._connection_service.test_connection()

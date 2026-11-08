@@ -535,7 +535,10 @@ describe("VersionPicker — switching", () => {
       await clickRow(menu.container, "Game (Japan)");
     });
 
-    expect(toaster.toast).toHaveBeenCalledWith({ title: "RomM Sync", body: "Switched — re-switch if launch fails" });
+    expect(toaster.toast).toHaveBeenCalledWith({
+      title: "EmuDecky RomM Manager",
+      body: "Switched — re-switch if launch fails",
+    });
     expect(invalidateCachedGameDetail).toHaveBeenCalledWith(APP_ID);
     expect(dispatched.some((e) => e.detail?.type === "version_switched")).toBe(true);
   });
@@ -560,7 +563,10 @@ describe("VersionPicker — switching", () => {
 
       // A throw is treated like a failed confirm: warn + still complete the switch.
       expect(logErrorSpy).toHaveBeenCalledWith(expect.stringContaining("launch-options confirm threw"));
-      expect(toaster.toast).toHaveBeenCalledWith({ title: "RomM Sync", body: "Switched — re-switch if launch fails" });
+      expect(toaster.toast).toHaveBeenCalledWith({
+        title: "EmuDecky RomM Manager",
+        body: "Switched — re-switch if launch fails",
+      });
       expect(invalidateCachedGameDetail).toHaveBeenCalledWith(APP_ID);
       expect(dispatched.some((e) => e.detail?.type === "version_switched")).toBe(true);
     } finally {
@@ -593,7 +599,7 @@ describe("VersionPicker — switching", () => {
 
     // Short body (Steam truncates it to one line), backend detail in subtext (#1359).
     expect(toaster.toast).toHaveBeenCalledWith({
-      title: "RomM Sync",
+      title: "EmuDecky RomM Manager",
       body: "Could not switch version",
       subtext: "That version is bound to another shortcut.",
     });
@@ -608,7 +614,7 @@ describe("VersionPicker — switching", () => {
     const { menu } = await renderAndOpen();
     await clickRow(menu.container, "Game (Japan)");
 
-    expect(toaster.toast).toHaveBeenCalledWith({ title: "RomM Sync", body: "Could not switch version" });
+    expect(toaster.toast).toHaveBeenCalledWith({ title: "EmuDecky RomM Manager", body: "Could not switch version" });
     expect(invalidateCachedGameDetail).not.toHaveBeenCalled();
   });
 });
@@ -688,7 +694,7 @@ describe("VersionPicker — unsynced-saves soft-block", () => {
 
     expect(backend.switchVersion).toHaveBeenNthCalledWith(2, APP_ID, 2, true);
     expect(toaster.toast).toHaveBeenCalledWith({
-      title: "RomM Sync",
+      title: "EmuDecky RomM Manager",
       body: "Could not switch version",
       subtext: "That version is bound to another shortcut.",
     });
@@ -725,7 +731,10 @@ describe("VersionPicker — unsynced-saves soft-block", () => {
       await clickRow(menu.container, "Game (Japan)");
     });
 
-    expect(toaster.toast).toHaveBeenCalledWith({ title: "RomM Sync", body: "Couldn't sync saves — try again" });
+    expect(toaster.toast).toHaveBeenCalledWith({
+      title: "EmuDecky RomM Manager",
+      body: "Couldn't sync saves — try again",
+    });
     // The stranded version's status is refreshed so the conflict UI can surface.
     expect(backend.refreshSaveStatus).toHaveBeenCalledWith(1);
     expect(dispatched.some((e) => e.detail?.type === "version_switched")).toBe(false);
@@ -745,7 +754,10 @@ describe("VersionPicker — unsynced-saves soft-block", () => {
     const { menu } = await renderAndOpen();
     await clickRow(menu.container, "Game (Japan)");
 
-    expect(toaster.toast).toHaveBeenCalledWith({ title: "RomM Sync", body: "Resolve save conflicts first" });
+    expect(toaster.toast).toHaveBeenCalledWith({
+      title: "EmuDecky RomM Manager",
+      body: "Resolve save conflicts first",
+    });
     expect(backend.refreshSaveStatus).toHaveBeenCalledWith(1);
     expect(backend.switchVersion).toHaveBeenCalledTimes(1);
   });
@@ -763,7 +775,10 @@ describe("VersionPicker — unsynced-saves soft-block", () => {
       await clickRow(menu.container, "Game (Japan)");
     });
 
-    expect(toaster.toast).toHaveBeenCalledWith({ title: "RomM Sync", body: "Saves still unsynced — try again" });
+    expect(toaster.toast).toHaveBeenCalledWith({
+      title: "EmuDecky RomM Manager",
+      body: "Saves still unsynced — try again",
+    });
     expect(backend.refreshSaveStatus).toHaveBeenCalledWith(1);
     expect(dispatched.some((e) => e.detail?.type === "version_switched")).toBe(false);
   });
@@ -780,7 +795,10 @@ describe("VersionPicker — unsynced-saves soft-block", () => {
       await clickRow(menu.container, "Game (Japan)");
 
       // The abort toast still fires, and the rejected refresh is warned (not swallowed silently).
-      expect(toaster.toast).toHaveBeenCalledWith({ title: "RomM Sync", body: "Couldn't sync saves — try again" });
+      expect(toaster.toast).toHaveBeenCalledWith({
+        title: "EmuDecky RomM Manager",
+        body: "Couldn't sync saves — try again",
+      });
       expect(logWarnSpy).toHaveBeenCalledWith(expect.stringContaining("post-abort save-status refresh failed"));
     } finally {
       logWarnSpy.mockRestore();

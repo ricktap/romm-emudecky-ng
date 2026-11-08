@@ -3,12 +3,12 @@
 ## Overview
 
 The EmuDeck launch resolution system provides the bridge between the plugin's core/emulator selection logic and
-EmuDeck's per-system launcher scripts. While `ActiveCoreResolver` determines *which* emulator a game should use,
-the EmuDeck launch resolution system determines *how* to invoke that emulator through EmuDeck's launcher infrastructure.
+EmuDeck's per-system launcher scripts. While `ActiveCoreResolver` determines _which_ emulator a game should use, the
+EmuDeck launch resolution system determines _how_ to invoke that emulator through EmuDeck's launcher infrastructure.
 
 The key insight: EmuDeck uses per-system launcher scripts at `<storagePath>/Emulation/tools/launchers/` instead of a
-single monolithic launcher. Each system (NES, SNES, PS2, etc.) has its own launcher script that handles the
-appropriate emulator invocation for that system.
+single monolithic launcher. Each system (NES, SNES, PS2, etc.) has its own launcher script that handles the appropriate
+emulator invocation for that system.
 
 ## Architecture
 
@@ -72,6 +72,7 @@ class EmuDeckPathsAdapter:
 ```
 
 **Key Configuration:**
+
 - **Config location:** `~/.config/EmuDeck/settings.json`
 - **Primary setting:** `storagePath` — root of the Emulation directory tree
 - **Launcher scripts:** `<storagePath>/Emulation/tools/launchers/`
@@ -114,6 +115,7 @@ class EmuDeckLauncherAdapter:
 ```
 
 **Key Behaviors:**
+
 - Discovers launcher scripts by scanning `<storagePath>/Emulation/tools/launchers/*.sh`
 - Caches results for the session (launchers don't change during runtime)
 - Returns `None` for systems without a launcher script (triggers fallback behavior)
@@ -165,8 +167,8 @@ class LaunchResolverFn(Protocol):
 
 **File:** `py_modules/domain/emudeck_launch.py`
 
-The pure resolver builds the launch command without performing I/O. It takes pre-resolved paths and launcher
-information and constructs the command.
+The pure resolver builds the launch command without performing I/O. It takes pre-resolved paths and launcher information
+and constructs the command.
 
 ```python
 def resolve_launch_command(
@@ -222,6 +224,7 @@ SYSTEM_DEFAULT_LAUNCHERS: dict[str, str] = {
 ```
 
 **Design Decision:** The table is empty by default because:
+
 1. EmuDeck installations vary (different versions, custom configurations)
 2. Launcher scripts may be renamed or reorganized
 3. The disk-probe approach (`EmuDeckLauncherAdapter`) is more reliable than hardcoded paths
@@ -244,6 +247,7 @@ class EmuDeckConfigHealth(Enum):
 ```
 
 **Health Check Flow:**
+
 1. Check if `~/.config/EmuDeck/settings.json` exists
 2. Attempt to parse the JSON
 3. Validate required fields (especially `storagePath`)
@@ -273,11 +277,11 @@ The EmuDeck launch resolution integrates with the existing core selection system
 
 All three bake sites use the same `LaunchResolverFn`:
 
-| Bake Site | When It Runs | How It Resolves |
-|-----------|--------------|-----------------|
-| `SyncOrchestrator` → `_build_core_overrides` | Every sync (preview + apply) | Each ROM through `active_emulator_for_rom` → `LaunchResolverFn` |
-| `DownloadService` → `_resolve_bound_app_id` | On download-complete | ROM through `active_emulator_for_rom` → `LaunchResolverFn` |
-| `MigrationService` → `_build_relaunch_items` | On EmuDeck-home migration | Each relocated ROM through `active_emulator_for_rom` → `LaunchResolverFn` |
+| Bake Site                                    | When It Runs                 | How It Resolves                                                           |
+| -------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------- |
+| `SyncOrchestrator` → `_build_core_overrides` | Every sync (preview + apply) | Each ROM through `active_emulator_for_rom` → `LaunchResolverFn`           |
+| `DownloadService` → `_resolve_bound_app_id`  | On download-complete         | ROM through `active_emulator_for_rom` → `LaunchResolverFn`                |
+| `MigrationService` → `_build_relaunch_items` | On EmuDeck-home migration    | Each relocated ROM through `active_emulator_for_rom` → `LaunchResolverFn` |
 
 ### Example: Libretro Game
 
@@ -343,6 +347,7 @@ The EmuDeck launch resolution follows the launcher pure-exec wrapper model estab
 - The plugin bakes the complete command at sync/download time
 
 The key difference from the original RetroDECK model:
+
 - **RetroDECK:** `flatpak run net.retrodeck.retrodeck -e "<emulator_command>"`
 - **EmuDeck:** `<storagePath>/Emulation/tools/launchers/<system>.sh <args>`
 

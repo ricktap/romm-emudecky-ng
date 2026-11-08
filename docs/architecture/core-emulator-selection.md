@@ -11,8 +11,8 @@ which emulator a game uses, where that decision is stored, and how it is applied
 The central rule: **the read-path core equals the launched core.** Whatever core the plugin reports for a game — in the
 BIOS-requirement filter, the save-directory name, the save-sync core tag, the core-change warning, the game-detail badge
 — is the exact core that game will launch on. A single resolver guarantees that, and the launch command is baked from
-the same resolved emulator. The plugin **owns emulator selection end to end**: it reads EmuDeck/ES-DE configuration
-for the default emulator, but its own launches never depend on ES-DE's `gamelist.xml` — it neither reads nor writes that
+the same resolved emulator. The plugin **owns emulator selection end to end**: it reads EmuDeck/ES-DE configuration for
+the default emulator, but its own launches never depend on ES-DE's `gamelist.xml` — it neither reads nor writes that
 file. The **live `es_systems.xml` is the sole source** for the system-layer default and the picker's emulator list;
 there is no bundled snapshot (the curated `core_defaults.json` and its generator were deleted in #1210). See
 [ADR-0011](https://github.com/danielcopper/decky-romm-sync/blob/main/docs/adr/0011-per-game-core-override-in-db-applied-via-e-flag.md)
@@ -73,12 +73,11 @@ core **LABEL** the user picked (e.g. `"Beetle PSX HW"`), exactly as ES-DE displa
   clause**, so a re-sync never wipes a user's pin.
 
 The plugin stores the **deviation** (the LABEL, or `NULL`), not a resolved core. The default and system layers are owned
-by EmuDeck/ES-DE and change externally — an EmuDeck update can ship a new default emulator — so a stored resolved
-value would go stale. Storing only the deviation keeps the plugin authoritative over exactly the slice it owns and
-re-resolves the rest live. The LABEL is turned into an `EmulatorInvocation` (a libretro `.so` **or** a standalone
-command) through the live-`es_systems.xml` classified option list at use time
-(`domain.emulator_commands.label_to_invocation`) — so a per-game pin may name a standalone emulator, not only a libretro
-core (#1210).
+by EmuDeck/ES-DE and change externally — an EmuDeck update can ship a new default emulator — so a stored resolved value
+would go stale. Storing only the deviation keeps the plugin authoritative over exactly the slice it owns and re-resolves
+the rest live. The LABEL is turned into an `EmulatorInvocation` (a libretro `.so` **or** a standalone command) through
+the live-`es_systems.xml` classified option list at use time (`domain.emulator_commands.label_to_invocation`) — so a
+per-game pin may name a standalone emulator, not only a libretro core (#1210).
 
 ## Storage: the per-platform core is a LABEL in `settings.json`
 
@@ -238,10 +237,10 @@ and renders the invocation using EmuDeck's per-system launcher scripts:
 
 - `emulator is None` → the plain EmuDeck launcher invocation without emulator arguments.
 
-EmuDeck's launcher scripts resolve `%EMULATOR_*%` and `%ROM%` placeholders at launch, so ROM paths with spaces or
-parens are handled. The launcher scripts are located at `<storagePath>/Emulation/tools/launchers/` and are discovered
-by the `EmuDeckLauncherAdapter` (see [EmuDeck Launch Resolution](emudeck-launch-resolution.md)). The plugin bakes the
-resolved launcher script path and arguments, making the launch independent of ES-DE's gamelist lookup (see
+EmuDeck's launcher scripts resolve `%EMULATOR_*%` and `%ROM%` placeholders at launch, so ROM paths with spaces or parens
+are handled. The launcher scripts are located at `<storagePath>/Emulation/tools/launchers/` and are discovered by the
+`EmuDeckLauncherAdapter` (see [EmuDeck Launch Resolution](emudeck-launch-resolution.md)). The plugin bakes the resolved
+launcher script path and arguments, making the launch independent of ES-DE's gamelist lookup (see
 [Why the plugin always bakes the core, never the gamelist](#why-the-plugin-always-bakes-the-core-never-the-gamelist)).
 
 **Always `-e`.** Per
@@ -252,7 +251,8 @@ The plain launcher invocation is **not** the "no override" case any more; it is 
 the resolver yields `None` (a platform with no resolvable default at all). Baking the default for every ROM is what lets
 the plugin own launch selection completely: a launch without the baked launcher would let EmuDeck consult the gamelist,
 re-coupling the plugin to ES-DE's state. The cost is that a EmuDeck update changing a platform's default core needs a
-**Force Full Sync** to re-bake — see [A frozen default needs a Force Full Sync](#a-frozen-default-needs-a-force-full-sync).
+**Force Full Sync** to re-bake — see
+[A frozen default needs a Force Full Sync](#a-frozen-default-needs-a-force-full-sync).
 
 ### The three bake sites
 
@@ -264,7 +264,7 @@ emulator** through the same `ActiveCoreResolver.active_emulator_for_rom` seam an
 | -------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `SyncOrchestrator` → `_build_core_overrides` | every sync (preview + apply)             | each ROM through `active_emulator_for_rom` → `{rom_id: EmulatorInvocation}` for the bake |
 | `DownloadService` → `_resolve_bound_app_id`  | on download-complete (install/reinstall) | the ROM through `active_emulator_for_rom` in the same flow                               |
-| `MigrationService` → `_build_relaunch_items` | on EmuDeck-home migration              | each relocated ROM through `active_emulator_for_rom`                                     |
+| `MigrationService` → `_build_relaunch_items` | on EmuDeck-home migration                | each relocated ROM through `active_emulator_for_rom`                                     |
 
 The download-complete bake is the one that re-applies a pin after reinstall — the exact path `roms` storage was chosen
 to protect. Each site bakes `-e` for every ROM that resolves to a concrete emulator (libretro or standalone), and the
@@ -288,8 +288,7 @@ and never a disc index.
 
 - **`NULL` = no selection** → the ROM follows the **default**: the install's `.m3u` when `file_path` is one (the
   in-emulator disc-swap default), else the first enumerated disc.
-- It anchors on `roms`, not `rom_installs`, so the pick **survives uninstall/reinstall and EmuDeck-home migration**
-  (per
+- It anchors on `roms`, not `rom_installs`, so the pick **survives uninstall/reinstall and EmuDeck-home migration** (per
   [ADR-0007](https://github.com/danielcopper/decky-romm-sync/blob/main/docs/adr/0007-rom-retention-identity-anchor.md))
   — the disc folder is gone while uninstalled, but the basename re-resolves the moment it returns.
 - Mutations go through the verb-named aggregate methods `Rom.pin_selected_disc(filename)` (rejects a blank filename) and
@@ -476,9 +475,9 @@ ES-DE stores core choices in `gamelist.xml` — a per-game `<altemulator>` eleme
 `<alternativeEmulator>`. The plugin does **not** use that file for its own launches at all (it neither reads nor writes
 it), for reasons grounded in on-device testing:
 
-1. **EmuDeck's gamelist lookup is metacharacter-fragile.** When the plugin's Steam shortcut launches a ROM with a
-   plain `flatpak run` command, EmuDeck's launcher scripts match the ROM path against the gamelist using an **awk `~`
-   regex**. Any regex metacharacter in the filename (`(USA)`, `(Disc 1)`, `[!]`, …) breaks the match, and the per-game
+1. **EmuDeck's gamelist lookup is metacharacter-fragile.** When the plugin's Steam shortcut launches a ROM with a plain
+   `flatpak run` command, EmuDeck's launcher scripts match the ROM path against the gamelist using an **awk `~` regex**.
+   Any regex metacharacter in the filename (`(USA)`, `(Disc 1)`, `[!]`, …) breaks the match, and the per-game
    `<altemulator>` is silently dropped. This is upstream bug
    [#210](https://github.com/danielcopper/decky-romm-sync/issues/210) /
    [RetroDECK#1358](https://github.com/RetroDECK/RetroDECK/issues/1358). (ES-DE's _own_ UI resolves `<altemulator>`
@@ -509,10 +508,10 @@ per-platform core once through the System-page Emulator Core picker (the menu bu
 
 ### A frozen default needs a Force Full Sync
 
-Because the es_systems default is baked literally into every shortcut, a EmuDeck update that ships a **new default
-core for a platform** does **not** take effect on a normal sync — a normal sync skips platforms whose ROM set is
-unchanged, so the previously-baked default survives. A **Force Full Sync** re-bakes every shortcut and picks up the new
-default. A core the user sets through the plugin (per-game pin or per-platform picker) re-bakes immediately, so only an
+Because the es_systems default is baked literally into every shortcut, a EmuDeck update that ships a **new default core
+for a platform** does **not** take effect on a normal sync — a normal sync skips platforms whose ROM set is unchanged,
+so the previously-baked default survives. A **Force Full Sync** re-bakes every shortcut and picks up the new default. A
+core the user sets through the plugin (per-game pin or per-platform picker) re-bakes immediately, so only an
 externally-changed EmuDeck default carries this caveat.
 
 ## EmuDeck is the V1 target

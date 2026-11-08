@@ -47,7 +47,7 @@ export const MigrationBlockedPage: FC<MigrationBlockedPageProps> = ({ migration 
       if (result.success) {
         clearMigration();
         toaster.toast({
-          title: "RomM Sync",
+          title: "EmuDecky RomM Manager",
           body: result.message || "Migration complete.",
         });
       }
@@ -80,7 +80,7 @@ export const MigrationBlockedPage: FC<MigrationBlockedPageProps> = ({ migration 
                 if (result.success) {
                   clearMigration();
                   toaster.toast({
-                    title: "RomM Sync",
+                    title: "EmuDecky RomM Manager",
                     body: "Migration dismissed.",
                   });
                 }

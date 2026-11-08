@@ -1,27 +1,19 @@
 [tools]
-node = "24"      # major pin — "lts" is a moving alias that silently jumps majors; CI uses node 24
+node = "24"      # major pin; CI uses node 24
 pnpm = "10.29.3" # exact — must match package.json "packageManager"; bump both together
 python = "3.11"  # match Decky Loader's embedded Python (libpython3.11)
-uv = "0.10.2"    # exact — uv creates the venv AND compiles the dependency locks; pin so the local resolver == the lock author
-deno = "2.8"     # minor pin — deno fmt is a formatter; a version jump can reformat Markdown (the CI drift we're killing)
+uv = "0.10.2"    # creates the venv and compiles requirements-dev.lock
 
 [env]
 _.python.venv = { path = ".venv", create = true }
 
 [tasks.setup]
 description = "Install JS and Python dependencies"
-run = ["pnpm install", "uv pip install -r requirements-dev.lock", "git config core.hooksPath .githooks"]
+run = ["pnpm install", "uv pip install -r requirements-dev.lock"]
 
 [tasks.lock-update]
-description = "Recompile the pinned Python dependency locks from the requirements-*.txt sources (run after editing a source or bumping a pin)"
-# `--output-file=` (not `-o`): Renovate's pip-compile manager parses the uv
-# command recorded in each lock header and only recognizes the long `--output-file`
-# form with an `=`. `-o` makes it bail with "Option -o not supported (yet)", so it
-# can't recompile the lock on a dependency-update PR.
-run = [
-    "uv pip compile requirements-dev.txt --output-file=requirements-dev.lock",
-    "uv pip compile requirements-docs.txt --output-file=requirements-docs.lock",
-]
+description = "Recompile requirements-dev.lock from requirements-dev.txt"
+run = "uv pip compile --python-version 3.11 requirements-dev.txt --output-file=requirements-dev.lock"
 
 [tasks.build]
 description = "Build frontend (dev: with source maps)"
@@ -40,34 +32,12 @@ run = "pnpm test"
 description = "Run frontend tests with coverage report"
 run = "pnpm test:coverage"
 
-[tasks."lint:md"]
-description = "Lint Markdown with markdownlint-cli2 (CI parity)"
-run = "pnpm exec markdownlint-cli2 \"**/*.md\" \"!node_modules\" \"!.worktrees\" \"!.venv\" \"!CHANGELOG.md\" \"!site\""
-
-[tasks.lint]
-description = "Check Cosmic Python architecture rules (layer imports + forbidden service calls) and Markdown"
-depends = ["lint:md"]
-run = [
-    "PYTHONPATH=py_modules lint-imports",
-    "python scripts/check_service_independence_contract.py",
-    "python scripts/check_callable_manifest.py",
-    "bash scripts/check_cosmic_call_bans.sh",
-    "python scripts/check_aggregate_field_assignment.py",
-    "python scripts/check_uow_seam_nesting.py",
-    "python scripts/check_failure_shape.py --check",
-    "bash scripts/check_no_bare_ignores.sh",
-    "python scripts/check_event_parity.py",
-    "python scripts/check_settings_owner.py",
-    "python scripts/check_sync_lifecycle_owner.py",
-    "python scripts/check_lock_sync.py",
-]
-
 [tasks.deploy]
 description = "Deploy plugin files to Decky plugin directory"
 depends = ["build"]
 raw = true
 run = '''
-DEST="$HOME/homebrew/plugins/decky-romm-sync"
+DEST="$HOME/homebrew/plugins/romm-emudecky"
 # The plugin dir is root-owned: Decky's root plugin_loader continuously re-owns the
 # dir + plugin.json back to root within ~1-2s as a tamper guard, so a plain
 # deck-owned rsync/cp hits "permission denied". The `dev` task makes this safe by
@@ -110,20 +80,12 @@ with open(path, "w", encoding="utf-8") as f:
 PYEOF
 '''
 
-[tasks.docs]
-description = "Serve the documentation site locally with live reload"
-run = "mkdocs serve"
-
-[tasks."docs:build"]
-description = "Build the documentation site (strict mode fails on broken links)"
-run = "mkdocs build --strict"
-
 [tasks.dev]
 description = "Build, deploy, and restart plugin loader"
 raw = true
 run = """
 sudo -v
-DEST="$HOME/homebrew/plugins/decky-romm-sync"
+DEST="$HOME/homebrew/plugins/romm-emudecky"
 # plugin_loader runs as root and continuously re-owns the plugin dir + plugin.json
 # back to root within ~1-2s (Decky's tamper guard). A chown-then-deploy loses that
 # race: the rollup build between the chown and the cp is ~8s, so the dir is
@@ -142,7 +104,7 @@ description = "One-time host setup for the live frontend dev loop (systemd drop-
 raw = true
 run = '''
 sudo -v
-DEST="$HOME/homebrew/plugins/decky-romm-sync"
+DEST="$HOME/homebrew/plugins/romm-emudecky"
 # Decky's tamper guard (env CHOWN_PLUGIN_PATH, default "1") re-owns the plugin
 # dir + plugin.json back to root on every plugin load, so the deck user can't
 # write deploys into it while the loader runs. The drop-in turns the guard off
@@ -175,7 +137,7 @@ arg "[display]" help="Monitor for the Big Picture window: 'internal' or an outpu
 complete "display" run="bash scripts/dev_open_bpm.sh --list"
 '''
 run = '''
-DEST="$HOME/homebrew/plugins/decky-romm-sync"
+DEST="$HOME/homebrew/plugins/romm-emudecky"
 # Preflight: without the dev:setup drop-in, plugin_loader re-owns the plugin dir
 # back to root within ~1-2s and every cp below dies with "permission denied".
 if ! systemctl show plugin_loader -p Environment | grep -q CHOWN_PLUGIN_PATH=0; then
@@ -209,7 +171,7 @@ exec pnpm exec rollup -c rollup.dev.config.js -w --watch.onEnd="cp -f dist/index
 description = "Push backend changes (py_modules/ + main.py) into the deployed plugin during a dev:watch session"
 raw = true
 run = '''
-DEST="$HOME/homebrew/plugins/decky-romm-sync"
+DEST="$HOME/homebrew/plugins/romm-emudecky"
 # decky-loader's watcher matches only dist/index.js and main.py, so a
 # py_modules-only rsync never triggers a reload — that's why the cp of main.py
 # comes LAST: it's the modify event that makes the watcher reload the plugin

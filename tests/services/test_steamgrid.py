@@ -1,4 +1,3 @@
-from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 import asyncio
 import http.client
 import os
@@ -21,6 +20,7 @@ from domain.rom import Rom
 from lib.errors import SgdbApiError, SteamGridDirMissingError
 from services.library import LibraryService, LibraryServiceConfig
 from services.steamgrid import SteamGridService, SteamGridServiceConfig
+from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 
 
 @pytest.fixture

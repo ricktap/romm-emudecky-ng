@@ -134,7 +134,7 @@ Again, standalone emulator formats that don't apply to EmuDeck's RetroArch-based
 
 ## Implementation Decision
 
-For decky-romm-sync (EmuDeck-only):
+For EmuDecky RomM Manager (EmuDeck-only):
 
 | Extension                      | Include?                          | Reason                                                       |
 | ------------------------------ | --------------------------------- | ------------------------------------------------------------ |

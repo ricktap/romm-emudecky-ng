@@ -70,8 +70,6 @@ class EmulatorInvocation:
         return cls(kind="direct", label=label, command=command, launcher=launcher)
 
 
-
-
 def direct_launch_args(command: str) -> str:
     """Recover a standalone command's middle launcher args for the ``direct`` bake.
 

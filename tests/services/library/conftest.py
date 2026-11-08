@@ -8,7 +8,6 @@ under ``tests/services/library/`` consume the same ``plugin`` fixture
 so coverage of the façade integration and the sub-service internals
 sits on top of an identical setup.
 """
-from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 
 import asyncio
 from unittest.mock import MagicMock
@@ -32,6 +31,7 @@ from services.artwork import ArtworkService, ArtworkServiceConfig
 from services.library import LibraryService, LibraryServiceConfig
 from services.metadata import MetadataService, MetadataServiceConfig
 from services.shortcut_removal import ShortcutRemovalService, ShortcutRemovalServiceConfig
+from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 from tests.services.library._helpers import rebind_loop
 
 
