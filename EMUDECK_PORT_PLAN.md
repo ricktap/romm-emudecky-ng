@@ -14,7 +14,7 @@
 | Versions        | Focus                                                                                                  |
 | --------------- | ------------------------------------------------------------------------------------------------------ |
 | up to **0.75**  | **Nintendo Switch only**: Eden / Ryujinx / yuzu launch, adoption, downloads, Switch save sync, Switch firmware/keys |
-| **0.40.0**      | Rust backend rewrite (GitHub milestone "0.40.0"), still Switch-only                                      |
+| **0.40.0**      | Rust backend rewrite (GitHub milestone "0.40.0"), still Switch-only. It is built on the long-running `rust` branch and swapped in all at once (no hybrid releases); `main` gets only bugfixes until then. Tests are ported to Rust, with the Python tests as the spec |
 | 0.75 → **0.90** | add the other systems back (RetroArch, PS2 / GC / PS1, Wii U / Vita, …)                                  |
 | 0.90 → **1.0.0**| prepare for the official Decky plugin store                                                              |
 
@@ -317,7 +317,7 @@ the plugin process. Only what sits behind the socket changes later.
 **Accept:** Eden, Ryujinx and yuzu each launch a Switch game (one single-file, one folder game) from Steam on the first
 try. Changing a game's emulator or launch file re-bakes the shortcut. The contract tests pass through the shim.
 
-**Status:** implemented in v0.33.0; the on-device acceptance test is open. Review fixes:
+**Status:** accepted on the Deck (v0.33.1, 2026-11-09). Eden, Ryujinx and yuzu all launch Switch games from Steam (single-file and folder), and the launch-file override works. Review fixes:
 
 - The shim installs its forwarders at import time and gates calls on backend readiness, because Decky serves frontend
   calls in parallel with `_main`.
