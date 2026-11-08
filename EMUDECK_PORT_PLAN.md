@@ -217,6 +217,11 @@ game counted as installed only when this plugin downloaded it itself.
 
 ### Phase 1.6 — Self-update from GitHub releases (proposed 2026-11-08)
 
+**Status (2026-11-08): implemented, needs on-device check.** Backend `check_for_update(force)` callable
+(`services/update.py`, `domain/self_update.py`, `adapters/github_releases.py`); QAM `UpdateBanner` + Settings
+"Updates" section; Decky handoff in `src/utils/selfUpdate.ts`. Not yet verified on a Deck: that
+`window.DeckyBackend.call("utilities/install_plugin", …)` opens Decky's modal and replaces the install in place.
+
 Installing every release by URL again is tedious. Decky's own update badge only works for plugins in the selected
 store, and a custom store would **replace** the official one for the user, so neither fits. The established community
 pattern (decky-nexus, deckyemu, Decky-Metadata) is an in-plugin check plus Decky's own installer:

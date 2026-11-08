@@ -134,6 +134,7 @@ class Plugin:
         self._launch_gate_service = services["launch_gate_service"]
         self._session_lifecycle_service = services["session_lifecycle_service"]
         self._relaunch_options_resolver = services["relaunch_options_resolver"]
+        self._update_service = services["update_service"]
 
         # ── 4b. Legacy credential migration ─────────────────────────────────
         # Upgrade a stored-password install to a Client API Token. The
@@ -158,6 +159,8 @@ class Plugin:
 
         # ── 6. Background tasks ─────────────────────────────────────────────
         self._migration_service.detect_save_sort_change()
+        # One throttled update check in the background — never blocks startup.
+        self._update_service.schedule_background_check()
         decky.logger.info("EmuDecky RomM Manager plugin loaded")
 
     async def _unload(self):  # Decky lifecycle — must be async
@@ -166,6 +169,7 @@ class Plugin:
         await self._migration_service.shutdown()
         await self._session_lifecycle_service.shutdown()
         await self._cancel_playtime_flush_tasks()
+        await self._update_service.shutdown()
         decky.logger.info("EmuDecky RomM Manager plugin unloaded")
 
     async def _cancel_playtime_flush_tasks(self):
@@ -230,6 +234,9 @@ class Plugin:
 
     async def get_settings(self):
         return self._settings_service.get_settings()
+
+    async def check_for_update(self, force):
+        return await self._update_service.check_for_update(bool(force))
 
     async def get_retrodeck_status(self):
         """Report RetroDECK path-resolution health for the frontend banner.

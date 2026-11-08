@@ -15,3 +15,4 @@ export * from "./achievements";
 export * from "./migration";
 export * from "./devices";
 export * from "./retrodeck";
+export * from "./update";

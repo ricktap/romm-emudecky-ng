@@ -45,6 +45,7 @@ import { setDownloads } from "../utils/downloadStore";
 import { showModal } from "@decky/ui";
 import * as syncManager from "../utils/syncManager";
 import * as connectionState from "../utils/connectionState";
+import { resetUpdateState } from "../utils/updateStore";
 import type {
   MigrationStatus,
   SaveSortMigrationStatus,
@@ -53,6 +54,7 @@ import type {
   SyncPreviewSummary,
   DownloadItem,
   PluginSettings,
+  UpdateCheckSuccess,
 } from "../types";
 
 // -----------------------------------------------------------------------------
@@ -609,6 +611,54 @@ describe("MainPage", () => {
 
       expect(container.textContent).toContain("RetroArch save sorting changed");
       expect(container.textContent).toContain("7 save file(s) to migrate");
+    });
+  });
+
+  describe("self-update banner", () => {
+    const updateInfo = (update_available: boolean): UpdateCheckSuccess => ({
+      success: true,
+      current_version: "0.32.0",
+      latest_version: update_available ? "0.33.0" : "0.32.0",
+      update_available,
+      notes: "Notes",
+      asset_url: "https://github.com/ricktap/romm-emudecky-ng/releases/download/v0.33.0/romm-emudecky-ng.zip",
+      sha256: "ab".repeat(32),
+      html_url: "https://github.com/ricktap/romm-emudecky-ng/releases/tag/v0.33.0",
+      plugin_name: "EmuDecky RomM+",
+      checked_at: "2026-01-01T00:00:00+00:00",
+    });
+
+    beforeEach(() => resetUpdateState());
+    afterEach(() => resetUpdateState());
+
+    it("runs a non-forced check on mount and shows the banner when an update is available", async () => {
+      vi.mocked(backend.checkForUpdate).mockResolvedValue(updateInfo(true));
+      const { container } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      expect(backend.checkForUpdate).toHaveBeenCalledWith(false);
+      expect(container.textContent).toContain("Update available: v0.33.0");
+      expect(buttonByExactText(container, "Update")).not.toBeNull();
+    });
+
+    it("hides the banner when already up to date", async () => {
+      vi.mocked(backend.checkForUpdate).mockResolvedValue(updateInfo(false));
+      const { container } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      expect(container.textContent).not.toContain("Update available");
+      expect(buttonByExactText(container, "Update")).toBeNull();
+    });
+
+    it("hides the banner when the check fails", async () => {
+      vi.mocked(backend.checkForUpdate).mockResolvedValue({
+        success: false,
+        reason: "server_unreachable",
+        message: "Could not reach GitHub",
+        current_version: "0.32.0",
+        checked_at: "2026-01-01T00:00:00+00:00",
+      });
+      const { container } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      expect(container.textContent).not.toContain("Update available");
     });
   });
 

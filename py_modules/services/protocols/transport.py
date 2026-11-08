@@ -1,7 +1,8 @@
 """External system client Protocols.
 
 Domain-oriented interfaces for the HTTP and IPC surfaces the plugin
-talks to: RomM's REST API, SteamGridDB's REST API, and the Steam
+talks to: RomM's REST API, SteamGridDB's REST API, the GitHub release
+feed, and the Steam
 client's local IPC. Each Protocol declares the semantic operations
 services need; concrete implementations live in adapters and own the
 raw transport (HTTP requests, file writes, Steam IPC calls).
@@ -432,5 +433,17 @@ class SteamGridDbApi(Protocol):
 
         Raises ``lib.errors.SgdbApiError`` on non-2xx HTTP responses
         (e.g. 401/403 for an invalid key).
+        """
+        ...
+
+
+class ReleaseFeedApi(Protocol):
+    """Read the plugin's latest published release (GitHub REST API)."""
+
+    def fetch_latest_release(self) -> dict[str, Any]:
+        """Return the raw latest-release JSON object.
+
+        Raises :class:`lib.errors.ReleaseFeedError` (``kind`` =
+        ``unreachable`` / ``rate_limited`` / ``bad_response``) on failure.
         """
         ...

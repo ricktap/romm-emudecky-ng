@@ -26,6 +26,7 @@ from fakes.fake_migration_file_store import FakeMigrationFileStore
 from fakes.fake_path_exists_reader import FakePathExistsReader
 from fakes.fake_platform_core_reader import FakePlatformCoreReader
 from fakes.fake_plugin_metadata_reader import FakePluginMetadataReader
+from fakes.fake_release_feed_api import FakeReleaseFeedApi
 from fakes.fake_retrodeck_paths import FakeRetroDeckPaths
 from fakes.fake_rom_file_store import FakeRomFileStore
 from fakes.fake_save_file_store import FakeSaveFileStore
@@ -182,6 +183,22 @@ class TestBootstrap:
         )
         assert result.adapters.sgdb_adapter._user_agent == "romm-emudecky-ng/1.2.3"
 
+    def test_user_agent_threaded_to_github_release_adapter(self, tmp_path):
+        """The self-update check sends the same ``romm-emudecky-ng/<version>`` UA."""
+        import json
+
+        plugin_dir = tmp_path / "plugin"
+        plugin_dir.mkdir()
+        (plugin_dir / "package.json").write_text(json.dumps({"version": "1.2.3"}))
+        result = bootstrap(
+            settings_dir=str(tmp_path / "settings"),
+            runtime_dir=str(tmp_path / "runtime"),
+            plugin_dir=str(plugin_dir),
+            user_home=str(tmp_path / "home"),
+            logger=logging.getLogger("test"),
+        )
+        assert result.adapters.release_api._user_agent == "romm-emudecky-ng/1.2.3"
+
     def test_user_agent_falls_back_when_package_json_missing(self, tmp_path):
         """When ``package.json`` is absent, the adapter's documented
         fallback (``0.0.0``) feeds into the UA string."""
@@ -268,6 +285,7 @@ class TestWireServices:
             "list_rom_dir_files": MagicMock(return_value=[]),
             "settings_persister": MagicMock(),
             "core_info_provider": FakeCoreInfoProvider(),
+            "release_api": FakeReleaseFeedApi(),
             "log_debug": MagicMock(),
             "plugin_metadata": FakePluginMetadataReader(version="0.14.0"),
             "uow_factory": FakeUnitOfWorkFactory(),
@@ -292,6 +310,7 @@ class TestWireServices:
                 save_file_store=deps["save_file_store"],
                 path_probe=deps["path_probe"],
                 core_info_provider=deps["core_info_provider"],
+                release_api=deps["release_api"],
             ),
             stores=StateBundle(
                 settings=deps["settings"],
@@ -376,7 +395,8 @@ class TestWireServices:
     def test_returns_expected_services(self, tmp_path):
         deps = self._make_deps(tmp_path)
         result = wire_services(self._make_config(deps))
-        assert len(result) == 23
+        assert len(result) == 24
+        assert "update_service" in result
         assert "migration_service" in result
         assert "game_detail_service" in result
         assert "rom_removal_service" in result

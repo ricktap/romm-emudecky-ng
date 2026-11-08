@@ -1,6 +1,7 @@
 import { callable } from "@decky/api";
 import { detach } from "../utils/detach";
 import type {
+  UpdateCheckResult,
   PluginSettings,
   SyncStats,
   SyncProgress,
@@ -640,3 +641,7 @@ export const savesRollbackToVersion = callable<[number, string, number], Rollbac
 // Achievements callables
 export const getAchievements = callable<[number], AchievementList>("get_achievements");
 export const getAchievementProgress = callable<[number], AchievementProgress>("get_achievement_progress");
+
+// Self-update: checks GitHub for a newer release (throttled to every 6 h unless
+// force=true). Never installs — see utils/selfUpdate.ts for the Decky handoff.
+export const checkForUpdate = callable<[boolean], UpdateCheckResult>("check_for_update");
