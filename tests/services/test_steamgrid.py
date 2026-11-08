@@ -6,6 +6,7 @@ import pytest
 
 # conftest.py patches decky before this import; use _make_testable_plugin for test-only attrs
 from conftest import _make_testable_plugin
+from fakes.fake_install_adopter import FakeInstallAdopter
 from fakes.fake_active_core_resolver import FakeActiveCoreResolver
 from fakes.fake_disc_resolver import FakeDiscResolver
 from fakes.fake_settings_persister import FakeSettingsPersister
@@ -65,6 +66,7 @@ def plugin(sgdb_artwork_cache, fake_romm_api, fake_steamgrid_db_api, uow):
     p._settings_persister = FakeSettingsPersister()
     p._sync_service = LibraryService(
         config=LibraryServiceConfig(
+            install_adopter=FakeInstallAdopter(),
             romm_api=p._romm_api,
             steam_config=steam_config,
             settings=p.settings,
@@ -975,6 +977,7 @@ class TestDebugLoggerProtocolSeam:
 
         p._sync_service = LibraryService(
             config=LibraryServiceConfig(
+                install_adopter=FakeInstallAdopter(),
                 romm_api=p._romm_api,
                 steam_config=steam_config,
                 settings=p.settings,

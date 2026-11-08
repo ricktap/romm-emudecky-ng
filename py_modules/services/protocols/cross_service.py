@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from domain.disc_selection import Disc
     from domain.emudeck_launch import EmuDeckLaunchResolution
+    from domain.install_layout import AdoptionCandidate
     from domain.rom_install import RomInstall
     from domain.save_layout import SaveLayout
     from domain.shortcut_data import EmulatorInvocation
@@ -207,6 +208,36 @@ class ActiveDownloadRomIdsFn(Protocol):
     """
 
     def __call__(self) -> set[int]: ...
+
+
+class InstallAdopter(Protocol):
+    """Adoption of ROM files already on disk, consumed by the library sync.
+
+    The composition root satisfies this with ``InstallAdoptionService``.
+    ``plan_adoptions`` probes the filesystem (no writes, no UoW held while
+    probing) and returns the ROMs whose files sit exactly where a download would
+    put them; ``commit_adoptions`` writes their ``RomInstall`` rows in one short
+    write UoW (after the ROM rows exist) and returns the adopted rom ids. Both
+    are synchronous — the caller offloads them via ``run_in_executor``.
+    """
+
+    def plan_adoptions(self, roms: list[dict[str, Any]]) -> list[AdoptionCandidate]: ...
+
+    def commit_adoptions(self, candidates: list[AdoptionCandidate]) -> list[int]: ...
+
+
+class InstallAdoptionSchedulerFn(Protocol):
+    """Fire-and-forget single-ROM adoption check consumed by GameDetailService.
+
+    The composition root satisfies this with
+    ``InstallAdoptionService.schedule_adoption_check``. Called when a game page
+    reports a ROM as not installed; runs the check in the background and, on
+    adoption, emits ``download_complete`` (``adopted: true``) so the page and
+    the shortcut's launch options update through the download-complete flow.
+    Never raises.
+    """
+
+    def __call__(self, rom_id: int) -> None: ...
 
 
 class AchievementsReader(Protocol):

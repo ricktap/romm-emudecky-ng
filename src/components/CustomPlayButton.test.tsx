@@ -23,7 +23,7 @@ import { CustomPlayButton } from "./CustomPlayButton";
 import { emitDeckyEvent, deckyEventListenerCount } from "../test-utils/decky-api-mock";
 import * as backend from "../api/backend";
 import type { CachedGameDetail } from "../api/backend";
-import type { DownloadFailedEvent, DownloadProgressEvent } from "../types";
+import type { DownloadCompleteEvent, DownloadFailedEvent, DownloadProgressEvent } from "../types";
 
 // Stub the cached-detail store: synchronous Promise.resolve so the initial
 // useEffect settles within a single waitFor tick. The default test-setup
@@ -179,6 +179,48 @@ describe("CustomPlayButton — download_failed listener", () => {
 
     unmount();
     expect(deckyEventListenerCount("download_failed")).toBe(0);
+  });
+});
+
+describe("CustomPlayButton — download_complete listener", () => {
+  beforeEach(() => {
+    vi.mocked(getCachedGameDetail).mockReset();
+  });
+
+  const complete = (overrides: Partial<DownloadCompleteEvent> = {}): DownloadCompleteEvent => ({
+    rom_id: 42,
+    rom_name: "Test ROM",
+    platform_name: "GBA",
+    file_path: "/roms/gba/test.gba",
+    app_id: 100,
+    launch_options: "LAUNCH",
+    ...overrides,
+  });
+
+  it("an adopted ROM (files already on disk) flips Download straight to Play", async () => {
+    mockCachedDetail({ rom_id: 42, installed: false });
+    const { findByText, queryByText } = render(<CustomPlayButton appId={100} />);
+    await findByText("Download");
+
+    act(() => {
+      emitDeckyEvent<[DownloadCompleteEvent]>("download_complete", complete({ adopted: true }));
+    });
+
+    expect(await findByText("Play")).toBeInTheDocument();
+    expect(queryByText("Download")).toBeNull();
+  });
+
+  it("ignores an adoption for a different rom_id", async () => {
+    mockCachedDetail({ rom_id: 42, installed: false });
+    const { findByText, queryByText } = render(<CustomPlayButton appId={100} />);
+    await findByText("Download");
+
+    act(() => {
+      emitDeckyEvent<[DownloadCompleteEvent]>("download_complete", complete({ rom_id: 7, adopted: true }));
+    });
+
+    expect(await findByText("Download")).toBeInTheDocument();
+    expect(queryByText("Play")).toBeNull();
   });
 });
 

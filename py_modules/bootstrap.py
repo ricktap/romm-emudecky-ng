@@ -56,6 +56,7 @@ from services.cores import CoreService, CoreServiceConfig
 from services.disc import DiscService, DiscServiceConfig
 from services.disc_launch_resolver import DiscLaunchResolver, DiscLaunchResolverConfig
 from services.downloads import DownloadService, DownloadServiceConfig
+from services.install_adoption import InstallAdoptionService, InstallAdoptionServiceConfig
 from services.firmware import FirmwareService, FirmwareServiceConfig
 from services.game_detail import GameDetailService, GameDetailServiceConfig
 from services.launch_gate import LaunchGateService, LaunchGateServiceConfig
@@ -599,29 +600,6 @@ def wire_services(cfg: WiringConfig) -> dict[str, Any]:
         ),
     )
 
-    sync_service = LibraryService(
-        config=LibraryServiceConfig(
-            romm_api=cfg.adapters.romm_api,
-            steam_config=cfg.adapters.steam_config,
-            settings=cfg.stores.settings,
-            loop=cfg.runtime.loop,
-            logger=cfg.runtime.logger,
-            plugin_dir=cfg.runtime.plugin_dir,
-            emit=cfg.runtime.emit,
-            clock=cfg.runtime.clock,
-            uuid_gen=cfg.runtime.uuid_gen,
-            sleeper=cfg.runtime.sleeper,
-            settings_persister=cfg.callbacks.settings_persister,
-            log_debug=cfg.callbacks.log_debug,
-            artwork=artwork_service,
-            uow_factory=cfg.callbacks.uow_factory,
-            active_core=active_core_resolver,
-            disc_resolver=disc_launch_resolver,
-            launch_resolver=cfg.callbacks.launch_resolver,
-        ),
-    )
-    pending_sync_binding.set(lambda: sync_service.pending_sync)
-
     download_service = DownloadService(
         config=DownloadServiceConfig(
             romm_api=cfg.adapters.romm_api,
@@ -655,6 +633,54 @@ def wire_services(cfg: WiringConfig) -> dict[str, Any]:
     # Close the download↔removal cycle: DownloadService's sibling supersede now
     # resolves the live remover through this binding (#1298).
     rom_remover_binding.set(lambda: rom_removal_service.remove_rom)
+
+    # Adopts ROM files already on disk (copied by hand / an older plugin) as
+    # installs: during library sync (the orchestrator plans + commits) and when
+    # a not-installed game page opens (the game-detail read schedules a
+    # background check). Built after DownloadService (its active-download set
+    # guards adoption) and before LibraryService / GameDetailService.
+    install_adoption_service = InstallAdoptionService(
+        config=InstallAdoptionServiceConfig(
+            romm_api=cfg.adapters.romm_api,
+            file_reader=cfg.adapters.download_file_store,
+            resolve_system=cfg.adapters.http_adapter.resolve_system,
+            retrodeck_paths=cfg.callbacks.retrodeck_paths,
+            m3u_support=cfg.callbacks.m3u_support,
+            disc_resolver=disc_launch_resolver,
+            relaunch_items=relaunch_options_resolver,
+            active_downloads=download_service.active_download_rom_ids,
+            uow_factory=cfg.callbacks.uow_factory,
+            loop=cfg.runtime.loop,
+            logger=cfg.runtime.logger,
+            clock=cfg.runtime.clock,
+            emit=cfg.runtime.emit,
+        ),
+    )
+
+    sync_service = LibraryService(
+        config=LibraryServiceConfig(
+            romm_api=cfg.adapters.romm_api,
+            steam_config=cfg.adapters.steam_config,
+            settings=cfg.stores.settings,
+            loop=cfg.runtime.loop,
+            logger=cfg.runtime.logger,
+            plugin_dir=cfg.runtime.plugin_dir,
+            emit=cfg.runtime.emit,
+            clock=cfg.runtime.clock,
+            uuid_gen=cfg.runtime.uuid_gen,
+            sleeper=cfg.runtime.sleeper,
+            settings_persister=cfg.callbacks.settings_persister,
+            log_debug=cfg.callbacks.log_debug,
+            artwork=artwork_service,
+            uow_factory=cfg.callbacks.uow_factory,
+            active_core=active_core_resolver,
+            disc_resolver=disc_launch_resolver,
+            launch_resolver=cfg.callbacks.launch_resolver,
+            install_adopter=install_adoption_service,
+        ),
+    )
+    pending_sync_binding.set(lambda: sync_service.pending_sync)
+
 
     firmware_service = FirmwareService(
         config=FirmwareServiceConfig(
@@ -712,6 +738,7 @@ def wire_services(cfg: WiringConfig) -> dict[str, Any]:
             bios_checker=firmware_service,
             achievements=achievements_service,
             active_core=active_core_resolver,
+            adoption_scheduler=install_adoption_service.schedule_adoption_check,
         ),
     )
 
@@ -841,4 +868,5 @@ def wire_services(cfg: WiringConfig) -> dict[str, Any]:
         "launch_gate_service": launch_gate_service,
         "session_lifecycle_service": session_lifecycle_service,
         "relaunch_options_resolver": relaunch_options_resolver,
+        "install_adoption_service": install_adoption_service,
     }

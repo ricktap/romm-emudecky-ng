@@ -65,6 +65,13 @@ export interface DownloadCompleteEvent {
   launch_options: string;
   /** Whether the just-finished transfer was resumable (carried for store parity). */
   resumable?: boolean;
+  /**
+   * `true` when no download ran: the ROM's files were already on disk exactly
+   * where a download would put them (RomM file name + size) and were adopted as
+   * installed. Launch options are applied the same way; the download queue and
+   * the "Downloaded" toast are skipped.
+   */
+  adopted?: boolean;
 }
 
 export interface DownloadFailedEvent {

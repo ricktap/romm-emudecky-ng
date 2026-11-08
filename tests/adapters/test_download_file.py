@@ -28,6 +28,30 @@ class TestExists:
         assert adapter.exists(str(tmp_path / "missing.rom")) is False
 
 
+class TestRegularFileSize:
+    def test_size_of_regular_file(self, adapter, tmp_path):
+        f = tmp_path / "game.gba"
+        f.write_bytes(b"12345")
+        assert adapter.regular_file_size(str(f)) == 5
+
+    def test_none_for_missing(self, adapter, tmp_path):
+        assert adapter.regular_file_size(str(tmp_path / "nope")) is None
+
+    def test_none_for_directory(self, adapter, tmp_path):
+        assert adapter.regular_file_size(str(tmp_path)) is None
+
+
+class TestIsDir:
+    def test_true_for_directory(self, adapter, tmp_path):
+        assert adapter.is_dir(str(tmp_path)) is True
+
+    def test_false_for_file_and_missing(self, adapter, tmp_path):
+        f = tmp_path / "x"
+        f.write_bytes(b"")
+        assert adapter.is_dir(str(f)) is False
+        assert adapter.is_dir(str(tmp_path / "missing")) is False
+
+
 class TestRemove:
     def test_removes_existing(self, adapter, tmp_path):
         f = tmp_path / "a.rom"

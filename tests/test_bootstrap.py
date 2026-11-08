@@ -376,7 +376,7 @@ class TestWireServices:
     def test_returns_expected_services(self, tmp_path):
         deps = self._make_deps(tmp_path)
         result = wire_services(self._make_config(deps))
-        assert len(result) == 22
+        assert len(result) == 23
         assert "migration_service" in result
         assert "game_detail_service" in result
         assert "rom_removal_service" in result
@@ -392,6 +392,11 @@ class TestWireServices:
         assert "launch_gate_service" in result
         assert "session_lifecycle_service" in result
         assert "relaunch_options_resolver" in result
+        assert "install_adoption_service" in result
+        # The library sync and the game-detail read share the one adoption service.
+        adopter = result["install_adoption_service"]
+        assert result["sync_service"]._orchestrator._install_adopter is adopter
+        assert result["game_detail_service"]._adoption_scheduler == adopter.schedule_adoption_check
         deps["loop"].close()
 
     def test_pending_sync_binding_observes_library_rebinds(self, tmp_path):

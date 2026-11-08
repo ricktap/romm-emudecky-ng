@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         ActiveCoreReader,
         BiosChecker,
         Clock,
+        InstallAdoptionSchedulerFn,
         UnitOfWorkFactory,
     )
 
@@ -59,7 +60,9 @@ class GameDetailServiceConfig:
     ``AchievementsReader``, ``ActiveCoreReader``) GameDetailService consults to
     assemble the game-detail payload. The active-core resolver answers "which
     ``.so`` will this ROM launch with?" so the core-aware BIOS filter keys off
-    the per-game pin, not a platform default.
+    the per-game pin, not a platform default. The adoption scheduler starts a
+    background check for a not-installed ROM whose files may already be on disk
+    (an adoption announces itself via ``download_complete``).
     """
 
     settings: dict[str, Any]
@@ -69,6 +72,7 @@ class GameDetailServiceConfig:
     bios_checker: BiosChecker
     achievements: AchievementsReader
     active_core: ActiveCoreReader
+    adoption_scheduler: InstallAdoptionSchedulerFn
 
 
 class GameDetailService:
@@ -82,6 +86,7 @@ class GameDetailService:
         self._bios_checker = config.bios_checker
         self._achievements = config.achievements
         self._active_core = config.active_core
+        self._adoption_scheduler = config.adoption_scheduler
 
     @staticmethod
     def _resolve_rom_file(install: RomInstall | None, rom: Rom) -> str:
@@ -211,6 +216,11 @@ class GameDetailService:
 
         installed = install is not None
         rom_file = self._resolve_rom_file(install, rom)
+        if not installed:
+            # The ROM's files may already be on disk (copied by hand, or from an
+            # older plugin). Check in the background so this read stays offline
+            # and instant; an adoption flips the page via ``download_complete``.
+            self._adoption_scheduler(rom_id)
 
         # Save sync
         save_sync_enabled = bool(self._settings.get("save_sync_enabled", False))

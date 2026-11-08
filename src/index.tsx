@@ -506,22 +506,27 @@ export default definePlugin(() => {
   const downloadCompleteListener = addEventListener<[DownloadCompleteEvent]>(
     "download_complete",
     (data: DownloadCompleteEvent) => {
-      const prev = getDownloadState().find((d) => d.rom_id === data.rom_id);
-      updateDownload({
-        rom_id: data.rom_id,
-        rom_name: data.rom_name,
-        platform_name: data.platform_name,
-        file_name: prev?.file_name ?? "",
-        status: "completed",
-        progress: 1,
-        bytes_downloaded: prev?.bytes_downloaded ?? 0,
-        total_bytes: prev?.total_bytes ?? 0,
-        resumable: data.resumable ?? prev?.resumable ?? false,
-      });
-      toaster.toast({
-        title: "EmuDecky RomM Manager",
-        body: `Downloaded ${data.rom_name}`,
-      });
+      // An adopted ROM (files already on disk, nothing downloaded) never went
+      // through the queue: no queue entry, no "Downloaded" toast — only the
+      // launch-options update below applies.
+      if (!data.adopted) {
+        const prev = getDownloadState().find((d) => d.rom_id === data.rom_id);
+        updateDownload({
+          rom_id: data.rom_id,
+          rom_name: data.rom_name,
+          platform_name: data.platform_name,
+          file_name: prev?.file_name ?? "",
+          status: "completed",
+          progress: 1,
+          bytes_downloaded: prev?.bytes_downloaded ?? 0,
+          total_bytes: prev?.total_bytes ?? 0,
+          resumable: data.resumable ?? prev?.resumable ?? false,
+        });
+        toaster.toast({
+          title: "EmuDecky RomM Manager",
+          body: `Downloaded ${data.rom_name}`,
+        });
+      }
 
       // The ROM is now installed — its shortcut's launch options must carry the
       // full launch command (was "" while uninstalled). The backend resolved
@@ -614,7 +619,7 @@ export default definePlugin(() => {
   );
 
   return {
-    name: "EmuDecky RomMM",
+    name: "EmuDecky RomM+",
     icon: <FaGamepad />,
     content: <QAMPanel />,
     alwaysRender: true,

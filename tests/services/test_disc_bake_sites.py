@@ -23,6 +23,7 @@ import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fakes.fake_install_adopter import FakeInstallAdopter
 from fakes.fake_active_core_resolver import FakeActiveCoreResolver
 from fakes.fake_disc_resolver import FakeDiscResolver
 from fakes.fake_unit_of_work import FakeUnitOfWork, FakeUnitOfWorkFactory
@@ -96,6 +97,7 @@ class TestSyncOrchestratorBakeSite:
 
         return SyncOrchestrator(
             config=SyncOrchestratorConfig(
+                install_adopter=FakeInstallAdopter(),
                 settings={},
                 loop=MagicMock(),
                 logger=logging.getLogger("test_disc_bake"),

@@ -101,6 +101,13 @@ leaves your existing install intact. If the cancel happens to land just as the d
 
 Downloaded ROMs are stored in your EmuDeck ROMs directory (e.g. `<storagePath>/Emulation/roms/gba/`).
 
+**Games already on your device are detected as installed.** If a game's file is already in the EmuDeck ROMs folder —
+copied there by hand, or downloaded earlier by another tool — exactly where this plugin would download it (the
+platform's folder, with RomM's file name) and with exactly the size RomM reports, it counts as installed without
+downloading it again. This is checked during a library sync and when you open the game's page (the button switches to
+**Play** a moment after the page opens). Multi-file games are detected only when every file RomM lists is present with
+the right size. Renamed copies are not detected — download those through the plugin, or rename them to RomM's file name.
+
 **Only one version of a game is downloaded at a time.** If you tap **Download** on a version while another version of
 the same game (its [sibling group](#versions)) is already on disk, the plugin removes the old install first and then
 downloads the new one — no prompt. This keeps a multi-version game to a single copy on disk. Your **save files are never

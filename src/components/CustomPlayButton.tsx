@@ -266,9 +266,14 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
       "download_complete",
       (evt: DownloadCompleteEvent) => {
         if (evt.rom_id !== romIdRef.current) return;
-        // Brief completion flash before transitioning to Play
         setDlProgress(null);
         setActionPending(false);
+        // Files already on disk were adopted — nothing downloaded, go straight to Play.
+        if (evt.adopted) {
+          setState("play");
+          return;
+        }
+        // Brief completion flash before transitioning to Play
         setState("dl_complete");
         transitionTimerRef.current = setTimeout(() => setState("play"), 1100);
       },

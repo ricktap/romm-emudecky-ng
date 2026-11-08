@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         DebugLogger,
         DiscResolver,
         EventEmitter,
+        InstallAdopter,
         LaunchResolverFn,
         RommLibraryApi,
         SettingsPersister,
@@ -59,7 +60,8 @@ class LibraryServiceConfig:
     shared per-ROM ``active_core`` resolver (used to bake each ROM's full
     active core into ``launch_options`` at sync) and the shared ``disc_resolver``
     (used to bake each multi-disc ROM's selected disc into ``launch_options`` at
-    sync).
+    sync), and the install adopter (ROM files already on disk are adopted as
+    installs during sync).
     """
 
     romm_api: RommLibraryApi
@@ -79,6 +81,7 @@ class LibraryServiceConfig:
     active_core: ActiveCoreReader
     disc_resolver: DiscResolver
     launch_resolver: LaunchResolverFn
+    install_adopter: InstallAdopter
 
 
 class LibraryService:
@@ -142,6 +145,7 @@ class LibraryService:
                 active_core=config.active_core,
                 disc_resolver=config.disc_resolver,
                 launch_resolver=config.launch_resolver,
+                install_adopter=config.install_adopter,
             )
         )
 
