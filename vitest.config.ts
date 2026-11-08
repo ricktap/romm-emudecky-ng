@@ -20,7 +20,7 @@ export default defineConfig({
         "src/**/*.{test,spec}.{ts,tsx}",
         "src/test-setup.ts",
         "src/test-utils/**",
-        // Aligned with sonar-project.properties `sonar.coverage.exclusions`.
+        // Generated, ambient-type, and Steam-runtime-only files with no testable logic.
         "src/types/**",
         "src/index.tsx",
         "src/patches/**",

@@ -81,5 +81,4 @@ area:ci:
   - changed-files:
       - any-glob-to-any-file:
           - '.github/**'
-          - 'sonar-project.properties'
           - 'scripts/**'

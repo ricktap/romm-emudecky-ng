@@ -9,7 +9,7 @@ handles settings, sync, install/uninstall, downloads, and BIOS/firmware manageme
 ## Fork context — read first
 
 - **Fork chain:** `danielcopper/decky-romm-sync` (RetroDECK, upstream) → `melikootje/Romm-emudecky` (started the EmuDeck
-  port) → `ricktap/romm-emudecky-ng` (this repo, default branch `emudeck-port`).
+  port) → `ricktap/romm-emudecky-ng` (this repo, default branch `main`).
 - **Roadmap = [`EMUDECK_PORT_PLAN.md`](EMUDECK_PORT_PLAN.md).** It is the single source of truth for scope, phase order,
   settled decisions, and open questions. Upstream's GitHub Projects board does not apply here.
 - **Target machines:** a Steam Deck (SteamOS, internal + SD storage) **and** two Bazzite PCs. Never assume a Deck:
@@ -154,8 +154,6 @@ Roadmap, phase status, and open decisions: [`EMUDECK_PORT_PLAN.md`](EMUDECK_PORT
 
 ## Code Quality
 
-- **SonarCloud**: CI-based analysis on every PR + push to main. Quality Gate enforces 80% coverage on new code, 0 bugs,
-  0 vulnerabilities.
 - **Ruff**: Python linting in CI.
 - **basedpyright**: Type checking in CI.
 - **import-linter**: Layer boundary enforcement in CI (services ↛ adapters, adapters ↛ services, services independent).
@@ -183,7 +181,8 @@ Roadmap, phase status, and open decisions: [`EMUDECK_PORT_PLAN.md`](EMUDECK_PORT
   `mise run setup` install from the lock) and can leave the lock silently violating the source (the #1113/#1114/#1115
   drift); this gate forces the regeneration into the same PR. It checks satisfaction, not "is it the newest", so it is
   deterministic and offline — an unrelated transitive upstream release never flaps it.
-- **pytest-cov**: Branch coverage reported to SonarCloud.
+- **pytest-cov / vitest coverage**: Branch coverage printed in the CI log (no external analysis service — SonarCloud was
+  removed in this fork; leftover `NOSONAR` comments in code are inert).
 
 ## Invariant register — cross-cutting safety rules
 
@@ -311,14 +310,14 @@ state that _does_ live in SQLite:
 **Vendored deps (`_vendor/`)**: `[ours]` Decky Loader has no plugin-level package manager, so third-party runtime deps
 are vendored under `py_modules/_vendor/<package>/` and imported as `from _vendor import <package>`. Only adapters import
 from `_vendor.*`; services/domain/lib stay third-party-free. The whole `_vendor/` namespace is excluded from ruff,
-basedpyright, and Sonar (analysis + coverage) so any future vendored package is automatically out of scope — it's not
-our code, we don't lint or coverage-track it, but we may patch it (e.g. fix self-imports broken by the move into
-`_vendor/`). Ruff's isort lists `_vendor` under `known-third-party` so the imports group alongside other third-party
-deps. `import-linter` enforces a `domain-stdlib-only` contract that forbids `domain` from importing `_vendor.*` (domain
-stays stdlib-only); no other layer forbids `_vendor`, since adapters legitimately import it. Every vendored package
-ships its upstream `LICENSE` (the release zip redistributes `_vendor/`, and MIT/BSD-style licenses require preserving
-the copyright notice on redistribution) and a provenance entry in `_vendor/README.md` — upstream URL, pinned
-version/commit, and the list of local patches — so updating a vendored dep is a deliberate diff, not "diff and pray".
+basedpyright, and coverage so any future vendored package is automatically out of scope — it's not our code, we don't
+lint or coverage-track it, but we may patch it (e.g. fix self-imports broken by the move into `_vendor/`). Ruff's isort
+lists `_vendor` under `known-third-party` so the imports group alongside other third-party deps. `import-linter`
+enforces a `domain-stdlib-only` contract that forbids `domain` from importing `_vendor.*` (domain stays stdlib-only); no
+other layer forbids `_vendor`, since adapters legitimately import it. Every vendored package ships its upstream
+`LICENSE` (the release zip redistributes `_vendor/`, and MIT/BSD-style licenses require preserving the copyright notice
+on redistribution) and a provenance entry in `_vendor/README.md` — upstream URL, pinned version/commit, and the list of
+local patches — so updating a vendored dep is a deliberate diff, not "diff and pray".
 
 **Process boundaries — `main.py` vs `bootstrap.py`**: `[ours]` `main.py` owns the Decky lifecycle (`_main`, `_unload`)
 and the callable surface (one `async def` method per `@callable` exposed to the frontend). `bootstrap.py` owns adapter
@@ -393,8 +392,8 @@ Full convention paragraph lives in the `lib/list_result.py` module docstring.
 The full Cosmic Python migration (umbrella [#277](https://github.com/danielcopper/decky-romm-sync/issues/277)) is
 **complete**: every backend service has I/O behind Protocol-typed adapters, Clock/UuidGen/Sleeper injected, pure logic
 in `domain/`, and ctors decomposed via frozen `*ServiceConfig` dataclasses. The blow-by-blow (Waves 1–4 + the saves
-vertical) lives in closed issues #294–#340 and the git log; the only deferred item is #259 (SonarCloud arch rules,
-blocked on SonarCloud Python support). The separate SQLite persistence epic (#271) is ongoing — tracked via the
+vertical) lives in closed issues #294–#340 and the git log; SonarCloud was dropped in this fork, so upstream's deferred
+#259 (SonarCloud arch rules) no longer applies. The separate SQLite persistence epic (#271) is ongoing — tracked via the
 Aggregates section above + `docs/architecture/database-design.md`.
 
 **Why that order** (kept as the playbook for future verticals): cross-cutting Protocols (Clock/UuidGen/Sleeper, #294)

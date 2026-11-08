@@ -24,24 +24,19 @@ jobs:
       version: ${{ steps.release.outputs.version }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      # Mint a GitHub App installation token so release-please's PR/branch
-      # pushes are authored by the App, not GITHUB_TOKEN. Pushes made with
-      # GITHUB_TOKEN do not trigger workflows (anti-recursion), which left
-      # the release PR's required status checks stuck "Expected" and
-      # unmergeable. An App token makes those checks run automatically.
-      # Scope it to exactly what release-please needs (contents + PRs).
-      - uses: actions/create-github-app-token@v3
-        id: app-token
-        with:
-          client-id: ${{ secrets.RELEASE_PLEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-
+      # release-please never publishes on its own: each push to main only
+      # updates a standing "chore(main): release x.y.z" PR carrying the version
+      # bump + CHANGELOG entry. Merging that PR is the deliberate release step;
+      # only then does release_created flip and the zip get built and attached.
+      # Uses GITHUB_TOKEN (requires the repo setting "Allow GitHub Actions to
+      # create and approve pull requests"). Pushes made with GITHUB_TOKEN don't
+      # trigger workflows, so CI does not auto-run on the release PR itself —
+      # it only bumps versions/changelog; every change in it already passed CI
+      # on its own PR.
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         id: release
         with:
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 

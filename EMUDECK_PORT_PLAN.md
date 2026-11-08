@@ -5,7 +5,7 @@
 > 2026-11-08). Where the brief and the code disagreed, the code was checked and the disagreement is resolved in §3.
 >
 > Fork chain: `danielcopper/decky-romm-sync` (RetroDECK) → `melikootje/Romm-emudecky` (started the EmuDeck port) →
-> `ricktap/romm-emudecky-ng` (this repo, default branch `emudeck-port`).
+> `ricktap/romm-emudecky-ng` (this repo, default branch `main`).
 
 ---
 
@@ -46,7 +46,7 @@ conventions. Never hardcode `/home/deck`.
 
 The brief was written from a **deployed build**. The repo has moved since then: melikootje's last two commits added
 `EmuDeckPathsAdapter`, `EmuDeckLauncherAdapter`, and `domain/emudeck_launch.py`. Status of each brief claim against the
-current `emudeck-port` HEAD:
+then-current `emudeck-port` HEAD (`160d806`, the branch is now `main`):
 
 | Brief claim                                                        | Reality in code                                                                                                                                                                                                                                                                                                                                                                                      |
 | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

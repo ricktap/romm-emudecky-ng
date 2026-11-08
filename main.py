@@ -183,7 +183,6 @@ class Plugin:
     # ── Callables ──────────────────────────────────────────────────────
     # All methods below are exposed to the frontend via Decky's callable()
     # framework, which requires `async def` even when no `await` is used.
-    # S7503 warnings are suppressed in sonar-project.properties (fp1).
 
     async def test_connection(self):
         return await self._connection_service.test_connection()
