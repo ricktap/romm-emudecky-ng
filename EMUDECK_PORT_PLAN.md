@@ -1,1154 +1,332 @@
-# EmuDeck Port Plan for `decky-romm-sync`
+# EmuDeck Port Plan — `ricktap/Romm-emudecky`
 
-> Target: fork `danielcopper/decky-romm-sync` so RomM Sync uses an existing EmuDeck installation instead of RetroDECK.
+> **This is the single roadmap for this fork.** It replaces both the upstream roadmap (danielcopper's GitHub Projects
+> board) and the earlier draft of this file. Source brief: Patrick's "RomM Sync Plugin EmuDeck Fix Plan" (Obsidian,
+> 2026-11-08). Where the brief and the code disagreed, the code was checked and the disagreement is resolved in §3.
 >
-> Strategy: preserve the RomM, Steam shortcut, artwork, download queue, persistence, metadata, and UI architecture. Replace the host-emulation integration layer behind explicit adapters/resolvers. Ship ROM sync + launch first; defer full save-sync parity until emulator-specific save adapters exist.
+> Fork chain: `danielcopper/decky-romm-sync` (RetroDECK) → `melikootje/Romm-emudecky` (started the EmuDeck port) →
+> `ricktap/Romm-emudecky` (this repo, default branch `emudeck-port`).
 
 ---
 
-## 1. Goal
+## 1. Goal and target environment
 
-Build an EmuDeck-backed fork that can:
+A Decky Loader plugin that brings a self-hosted RomM library onto **EmuDeck** machines: browse the library from the QAM,
+install/uninstall individual games, get a Steam shortcut that **launches on the first try**, sync saves (including
+standalone emulators), and download firmware/BIOS/keys that RomM already hosts.
 
-1. Connect to RomM and sync selected platforms into Steam.
-2. Download ROMs into the active EmuDeck `Emulation/roms/<system>` tree.
-3. Download supported BIOS files into the active EmuDeck `Emulation/bios` tree.
-4. Create/update Steam shortcuts using the plugin's existing shortcut management.
-5. Launch games through EmuDeck-managed launcher scripts or validated emulator commands.
-6. Preserve existing artwork, metadata, version switching, uninstall, and download-queue behavior.
-7. Detect EmuDeck configuration and storage-path changes safely.
-8. Add save sync incrementally after launch behavior is stable.
+**Target machines — all three must behave identically:**
 
----
+| Machine            | OS                              | Notes                                        |
+| ------------------ | ------------------------------- | -------------------------------------------- |
+| Steam Deck         | SteamOS                         | internal storage and SD card (`storagePath`) |
+| Bazzite box #1, #2 | Fedora Atomic / uBlue (Bazzite) | Decky Loader + EmuDeck + Steam Big Picture   |
 
-## 2. Scope
+Nothing may assume "this is a Deck". Everything is derived from `$HOME`, `~/.config/EmuDeck/settings.json`, and EmuDeck
+conventions. Never hardcode `/home/deck`.
 
-### MVP — required
+**EmuDeck facts the plugin relies on** (verify on-device before encoding new ones):
 
-- EmuDeck installation detection.
-- `storagePath` parsing from `~/.config/EmuDeck/settings.json`.
-- ROM root resolution.
-- BIOS root resolution.
-- RomM platform → EmuDeck system folder mapping.
-- ROM download/install/uninstall.
-- Steam shortcut generation.
-- A launch resolver that uses EmuDeck-managed launchers.
-- A health banner when EmuDeck is missing, configuration is unreadable, or the storage root is unavailable.
-- Existing sync, metadata, artwork, download queue, and version switching kept functional.
-- Unit tests for path resolution, launch resolution, and platform mapping.
-
-### Post-MVP
-
-- Per-platform emulator selection.
-- Per-game emulator selection.
-- Dynamic discovery from EmuDeck/SRM configuration.
-- Full save-sync parity for standalone emulators.
-- EmuDeck storage migration UX.
-- Multi-device save-location normalization.
-- Emulator-specific BIOS/firmware workflows beyond simple file placement.
-
-### Explicit non-goals for the first release
-
-- Reimplementing EmuDeck.
-- Calling every emulator binary directly.
-- Maintaining a second copy of EmuDeck's full emulator command database.
-- Full save support for all standalone emulators on day one.
-- Supporting Windows/macOS in the first EmuDeck fork release.
+- `~/.config/EmuDeck/settings.json` → `storagePath` is the **parent** of `Emulation/` (e.g. `/home/deck`,
+  `/run/media/mmcblk0p1`). Missing or unparseable file = visible hard error, **never** a silent fallback to
+  `~/Emulation`.
+- ROMs: `<storagePath>/Emulation/roms/<system>/` (ES-DE system names, e.g. `switch`).
+- BIOS: `<storagePath>/Emulation/bios/` (+ per-emulator subfolders).
+- EmuDeck launcher scripts: `<storagePath>/Emulation/tools/launchers/<name>.sh`.
+- Standalone emulators are host-native AppImages in `~/Applications/` (`Eden.AppImage`, `yuzu.AppImage`; Ryujinx is
+  `~/Applications/publish/Ryujinx` + `Ryujinx.sh`). No flatpak sandbox.
+- ES-DE ships `es_find_rules.xml` / `es_systems.xml` with emulator definitions and command templates. This includes Eden
+  (`%EMULATOR_EDEN% -f -g %ROM%`, staticpath `~/Applications/Eden*.AppImage`).
+- A launch shape that works on the Deck today (hand-made shortcut): `Exe=~/Applications/Eden.AppImage`,
+  `LaunchOptions=vblank_mode=0 %command% -f -g "'<rom>'"`.
 
 ---
 
-## 3. Architectural rule
+## 2. Where the code actually is (verified 2026-11-08)
 
-Do not spread `if emudeck` checks throughout services.
+The brief was written from a **deployed build**. The repo has moved since then: melikootje's last two commits added
+`EmuDeckPathsAdapter`, `EmuDeckLauncherAdapter`, and `domain/emudeck_launch.py`. Status of each brief claim against the
+current `emudeck-port` HEAD:
 
-The current project already has the right separation:
+| Brief claim                                                        | Reality in code                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Download queue is memory-only; restarts lose partial downloads     | **True, and worse.** `DownloadService.cleanup_leftover_tmp_files()` **deletes** every `.tmp` on startup (`services/downloads.py:221`). HTTP Range resume and in-session pause/resume already work.                                                                                                                                                                                                   |
+| ES-DE install probe only knows RetroDECK paths                     | **True.** `adapters/es_de_config.py` maps `/app/…` and `/var/{data,config}/…` to RetroDECK locations. It never expands host `~/…` globs against the real home.                                                                                                                                                                                                                                       |
+| Shortcuts fall back to an empty `LaunchOptions`                    | **True, but the cause is now different.** `resolve_emudeck_invocation` returns `needs_setup` for **every** standalone emulator, because the per-system launcher map in `adapters/emudeck_launchers.py` is still commented out (deliberately: "don't commit guessed launcher names"). RetroArch resolves to `<launchers>/retroarch.sh -L <cores>/<core>.so`, which has not been verified on a device. |
+| `rom-launcher` relies on a `binfmt_misc` handler                   | **Not true of the current wrapper.** `bin/rom-launcher` is a pure `exec "$@"` (ADR-0009). With empty launch options it exits with a usage error, which is the "does nothing" symptom. The real bug is the unresolved invocation (row above). See D2.                                                                                                                                                 |
+| Shortcuts must be edited in `shortcuts.vdf` with the `vdf` package | **The plugin does not write `shortcuts.vdf`.** Shortcuts are created and updated live through `SteamClient.Apps.AddShortcut` / `SetAppLaunchOptions` from the frontend (`src/utils/steamShortcuts.ts`). No Steam restart is needed. See D1.                                                                                                                                                          |
+| Per-game emulator override must be built                           | **Mostly exists.** `roms.emulator_override` column, `RomRepository.set_emulator_override`, `CoreChangeModal`, ADR-0011. Still missing: options gated on EmuDeck detection, and standalone choices that actually render.                                                                                                                                                                              |
+| Download queue UI must be built                                    | **Partly exists.** `src/components/DownloadQueue.tsx` already has pause/resume/cancel. Still missing: persistence, reorder, speed/ETA.                                                                                                                                                                                                                                                               |
+| Firmware API needed                                                | **Exists.** `RommApi.list_firmware()` / `download_firmware()` and `services/firmware.py` (BIOS status + download). Downloads are a plain byte copy that bypasses the queue, and nothing is filtered per platform in the API call.                                                                                                                                                                    |
+| Save sync only works for RetroArch                                 | **True.** `domain/save_layout.py` models RetroArch layouts only. There is no `SaveLocationProvider`. Nothing knows Eden/yuzu/Ryujinx save locations.                                                                                                                                                                                                                                                 |
+| Single `romm_url` setting                                          | **True.** Also, the token is bound to one origin (`romm_api_token_origin`, CLAUDE.md "Token-host binding"), so a second URL needs design work. See D6.                                                                                                                                                                                                                                               |
 
-```text
-services
-  ↓ Protocols
-adapters / host integration
-  ↓
-RetroDECK today
-EmuDeck in the fork
-```
-
-Preserve that pattern.
-
-The port should replace host-specific implementations at the composition root instead of rewriting business services.
-
-Primary seam:
-
-```text
-py_modules/bootstrap.py
-```
-
-Current host-specific dependencies to replace or generalize include:
-
-```text
-py_modules/adapters/retrodeck_paths.py
-py_modules/lib/retrodeck_health.py
-py_modules/adapters/es_de_config.py
-py_modules/adapters/retroarch_config.py
-py_modules/adapters/retroarch_core_info.py
-py_modules/domain/shortcut_data.py
-py_modules/services/migration.py
-py_modules/services/protocols/paths.py
-main.py
-```
+Local dev note: this Mac has no `mise` and no `.venv`, so the test baseline still has to be recorded (Phase 0).
 
 ---
 
-## 4. Target design
+## 3. Decisions
 
-### 4.1 Host paths
+### Settled
 
-Create:
+- **D1 — Shortcuts stay on the SteamClient API. Do not write `shortcuts.vdf`.** The live API is instant and needs no
+  Steam restart. It cannot corrupt other people's shortcuts the way a whole-file rewrite can, and the whole frontend is
+  built around it. The brief's vdf procedure (round-trip check, backup, entry-count check) **does** stay as the
+  mandatory recipe for any future direct vdf write. `adapters/steam_config.py` already edits `localconfig.vdf` and
+  `screenshots.vdf` with the vendored `vdf` package, and those writes must follow it too.
+- **D5 — Download concurrency: one active download, reorder = "move to front / runs next".** A parallel downloader with
+  bandwidth splitting is a possible later step.
+- **Architecture rule (kept from the original plan):** no `if emudeck` branches in services. Host-specific logic lives
+  in adapters and `domain/emudeck_launch.py`. `bootstrap.py` is the only place where the choice is made.
+- **One launch resolver:** every path that writes `launch_options` (sync, download-complete, version switch, core or
+  emulator change, disc change, relaunch re-bake) goes through `resolve_emulator_invocation` →
+  `resolve_emudeck_invocation`. A per-game override is just another input to that resolver.
+- **No guessed paths, no guessed saves.** Unreadable EmuDeck config is a visible health failure. Save sync is offered
+  only where a verified `SaveLocationProvider` exists.
 
-```text
-py_modules/adapters/emudeck_paths.py
-py_modules/lib/emudeck_health.py
-```
-
-Suggested interface:
-
-```python
-class EmuDeckPaths(Protocol):
-    def emulation_root(self) -> str: ...
-    def roms_path(self) -> str: ...
-    def bios_path(self) -> str: ...
-    def tools_path(self) -> str: ...
-    def launchers_path(self) -> str: ...
-    def config_path(self) -> str: ...
-    def config_health(self) -> EmuDeckConfigHealth: ...
-```
-
-Resolution source:
-
-```text
-~/.config/EmuDeck/settings.json
-```
-
-Read:
-
-```json
-{
-  "storagePath": "..."
-}
-```
-
-Derive:
-
-```text
-<storagePath>/Emulation
-<storagePath>/Emulation/roms
-<storagePath>/Emulation/bios
-<storagePath>/Emulation/tools
-<storagePath>/Emulation/tools/launchers
-```
-
-Required behavior:
-
-- Cache settings briefly, similar to the current RetroDECK adapter.
-- Expand `$HOME`, `~`, and environment variables.
-- Distinguish:
-  - config absent;
-  - config unreadable;
-  - `storagePath` missing;
-  - Emulation root missing;
-  - root unavailable/unmounted;
-  - OK.
-- Never silently write to a guessed path when a configured external/SD storage root is unavailable.
-
-Suggested health enum:
-
-```text
-ABSENT
-UNREADABLE
-INVALID
-ROOT_MISSING
-OK
-```
+- **D2 — `rom-launcher` stays the shortcut Exe (decided 2026-11-08).** Steam derives the appId from `exe + name`, so
+  switching emulator only changes `launch_options`. The appId stays the same and artwork, collections, playtime and the
+  rom↔appId binding all survive. The wrapper did not cause the failure the brief saw; the empty launch options did (§2).
+  The brief's working shape becomes `Exe=rom-launcher`,
+  `LaunchOptions=vblank_mode=0 %command% <home>/Applications/Eden.AppImage -f -g "<rom>"`. Steam's `VAR=val %command%`
+  syntax sets the env var, and the wrapper execs the rest. Without `%command%`, Steam would pass `vblank_mode=0` to the
+  wrapper as a plain argument, which breaks `exec`. Verify on-device in Phase 2.
+- **D3 — RetroDECK support is dropped entirely (decided 2026-11-08).** Remove the RetroDECK probes (`es_de_config`
+  sandbox mapping), the flatpak invocation leftovers, `adapters/retrodeck_paths.py` and `lib/retrodeck_health.py` once
+  their EmuDeck replacements cover every caller. Do not add a RetroDECK fallback anywhere, and do not keep compatibility
+  shims for it.
+- **D4 — Standalone emulators are invoked directly, through `rom-launcher` (decided 2026-11-08).** The chain is always
+  Steam → `rom-launcher` → emulator binary (e.g. `~/Applications/Eden.AppImage -f -g "<rom>"`). EmuDeck's
+  `tools/launchers/*.sh` scripts are **not** in the launch chain for standalone emulators. They are only an extra "is it
+  installed" signal. Keep one verified table per emulator (binary location/glob + args template, seeded from ES-DE's
+  find rules and command templates) and fill it only from on-device checks. RetroArch's route (EmuDeck `retroarch.sh` vs
+  the RetroArch binary directly) is checked the same way in Phase 2.
+- **D6 — The token is bound to both configured origins (decided 2026-11-08).** Both URLs point at the same RomM server,
+  so one token is valid on both. Store `romm_api_token_origins: [internal, external]`, stamped at sign-in from the two
+  URLs the user typed. The bearer is sent only to one of those origins, so the "never leak the token to a foreign host"
+  guarantee still holds. Device-id forgetting triggers only when **neither** origin matches the previous set.
+- **D7 — Firmware lands in the plugin's own store, then is hard-linked into EmuDeck (decided 2026-11-08).**
+  - Downloads go to a plugin-owned firmware store under the plugin data dir (`DECKY_PLUGIN_RUNTIME_DIR/firmware/…`).
+    That store is the canonical copy and the source for re-linking.
+  - The file is then hard-linked into `<Emulation>/bios/<emulator-subdir>/` (exact subfolders for Eden/yuzu/Ryujinx keys
+    and firmware are checked on-device).
+  - Hard links only work within one filesystem. When EmuDeck lives on the SD card or another drive, `link()` fails with
+    `EXDEV`. **To verify in Phase 7:** is a copy fallback acceptable (doubles disk use), or should the store live on the
+    same filesystem as `<Emulation>` (e.g. `<storagePath>/…/.romm-sync/firmware`)? Never fall back to a symlink without
+    checking that each emulator follows it.
+  - Never auto-install into the emulator. Tell the user it still has to be installed from the emulator's own UI.
 
 ---
 
-## 5. Platform mapping
+## 4. Phases
 
-Do not assume RomM platform slugs equal EmuDeck directory names.
+Each phase is shippable and testable on real hardware before the next one starts. Every phase updates the docs it
+touches in the same PR (CLAUDE.md docs rule). Build order follows the brief.
 
-Keep the existing normalization concept:
+### Phase 0 — Baseline (½ day)
 
-```text
-RomM slug/fs_slug
-        ↓
-local system identity
-        ↓
-EmuDeck ROM subfolder
-```
+- [x] Local baseline recorded and made green (`chore/green-baseline`, 2026-11-08).
+- [ ] Deploy the current HEAD to the Deck. Confirm the plugin loads and that the EmuDeck path health reads correctly on
+      internal storage **and** on SD.
 
-Refactor terminology where practical:
+**Green baseline (2026-11-08, macOS / Apple Silicon).** Every CI gate passes locally:
 
-```text
-resolve_system(...)
-```
+- pytest: 4922 passed, coverage 95% (branch).
+- vitest: 1669 passed, coverage 92.8% statements / 88.5% branches.
+- ruff check + format, basedpyright (0 errors), lint-imports (8 contracts), and every `scripts/check_*` gate.
+- pnpm lint (1 `exhaustive-deps` warning), prettier, typecheck, build, size (639.9 of 650 kB — tight; watch it in Phases
+  4/7).
+- `deno fmt --check`.
 
-may remain as the public seam, but comments/docs should say "local system folder" rather than "RetroDECK system".
+Toolchain: Python 3.11.14 (`uv venv --python 3.11`, deps from `requirements-dev.lock`), pnpm 10.29.3, Node 24.22.2 for
+tests, deno 2.9.8. Without mise, run the frontend tests with `npx -y node@24 node_modules/vitest/vitest.mjs run`. **Node
+≥ 25 breaks 23 `sessionManager` tests**: Node's built-in `localStorage` shadows happy-dom's. Stay on the pinned Node 24
+(or pass `NODE_OPTIONS=--no-experimental-webstorage`).
 
-Audit:
+What it took to get green (inherited issues, not regressions):
 
-```text
-defaults/config.json
-py_modules/adapters/romm/http.py
-docs/adr/0010-normalize-romm-slug-to-retrodeck-system.md
-```
+- ruff import-sort / unused-import / line-length and `ruff format` on melikootje's EmuDeck commits.
+- `deno fmt` on 7 docs from the rebrand commit.
+- `check_settings_owner.py`: added a documented `FOREIGN_SETTINGS_READERS` allowlist. `adapters/emudeck_paths.py` reads
+  EmuDeck's own `settings.json` (same filename, different file).
+- `check_cosmic_call_bans.sh` / `check_no_bare_ignores.sh`: grep only `*.py`. Before, a local `__pycache__` `.pyc` file
+  made them fail.
+- Two tests that only passed on Linux or with a specific checkout name. `test_persistence` now detects a directory fd
+  with `os.fstat` instead of `/proc`, and the rom-launcher exe test compares against `DECKY_PLUGIN_DIR` instead of
+  requiring the folder to be named `decky-romm-sync`.
 
-Create a compatibility test table covering at least:
+### Phase 1 — Durable download queue (brief §5.1) — _highest priority_
 
-```text
-dc                  -> dreamcast
-psx                 -> psx
-ps2                 -> ps2
-ps3                 -> ps3
-ngp                 -> ngp
-neo-geo-pocket      -> ngp
-gc                  -> gc
-wii                 -> wii
-n3ds                -> n3ds
-nds                 -> nds
-psp                 -> psp
-saturn              -> saturn
-snes                -> snes
-gba                 -> gba
-```
+- New SQLite aggregate `DownloadJob`, added via a `sqlite_migrations` step, a repository, and `UnitOfWork` per
+  `docs/architecture/database-design.md`. Columns: `rom_id` / `firmware_id` (kind discriminator), `target_path`,
+  `tmp_path`, `total_size`, `bytes_downloaded`, `status` (`queued` / `downloading` / `paused` / `failed` / `completed`),
+  `range_supported`, `sibling_group_key`, `position` (queue order), `created_at`, `updated_at`. Verb-named mutations
+  (`enqueue`, `record_progress`, `pause`, `resume`, `fail`, `complete`, `move_to_front`).
+- Write progress at most every ~N MB or ~5 s. Do not write per chunk, to spare the SSD.
+- **Startup reconciliation replaces `cleanup_leftover_tmp_files` blanket deletion:**
+  - a `.tmp` that has a live job row → stat the real size, correct `bytes_downloaded`, and mark it resumable;
+  - an orphan `.tmp` with no job row → delete it (today's behaviour).
+- After reconciling, auto-resume in the background with a visible "Resuming…" state.
+- Existing HTTP Range logic (`adapters/romm/http.py`, `_range_supported`) is reused unchanged.
+- **Accept:** kill `plugin_loader` (and separately power off) mid-transfer on a multi-GB ROM. After restart the download
+  continues near where it stopped, and the user only had to reopen the QAM.
 
-Acceptance rule:
+### Phase 2 — EmuDeck install detection + launch resolution (brief §5.2)
 
-> Every platform enabled in the UI must resolve to the exact EmuDeck ROM directory the installed EmuDeck setup expects.
+- `es_de_config` probe: add host-native resolution. Expand `~` against the real `$HOME` and match `staticpath` globs.
+  Use `<Emulation>/tools/launchers/<name>.sh` as a second "installed" signal. Remove the RetroDECK branches (D3).
+- Fill in the verified emulator invocation table (D4: direct binary through `rom-launcher`). Start with **Eden, yuzu,
+  Ryujinx**, then one RetroArch system (SNES/GBA), PS2 (PCSX2), and GC/Wii (Dolphin) from the original plan's validation
+  set. Only values confirmed on a real EmuDeck install go in the table.
+- Support an env prefix (`vblank_mode=0`) in the rendered invocation (D2 detail).
+- Unresolvable cases surface as `needs_setup` / `launcher_missing` in the game-detail UI. They are never silently empty.
+- **Profile the sluggishness here** (brief §5.5.4): time the QAM library render and game-detail open; check for
+  per-render probes and slow SQLite paths. Fix what is found before Phase 4.
+- **Accept:** a never-before-synced game gets a shortcut that launches on the first try under Eden, yuzu and Ryujinx,
+  plus the RetroArch/PS2/GC set. Paths with spaces and special characters work. Version switch and reinstall re-bake
+  correctly. Repeat on one Bazzite box.
 
-Unknown platform behavior:
+### Phase 3 — Internal/external RomM URL fallback (brief §2)
 
-- Preserve the safe verbatim fallback only if it remains inside the ROM root.
-- Keep the existing path traversal guard.
+- Settings `romm_url_internal`, `romm_url_external` (either may be empty). Settings migration from `romm_url` →
+  `romm_url_internal`.
+- Connection policy lives in the HTTP adapter layer. Try internal with a short **connect** timeout (a few seconds, not a
+  short read timeout, so slow responses are not misread as failures). Fall back to external only on a genuine connect
+  failure. Cache the winner for a short TTL and re-probe when the cached choice fails.
+- Token binding per D6. Update CLAUDE.md "Token-host binding" and `docs/architecture/backend-architecture.md` in the
+  same PR.
+- **Accept:** on LAN the internal URL is used; with internal unreachable the external URL takes over automatically; the
+  token is never sent to an unlisted origin.
 
----
+### Phase 4 — Install/uninstall UX + Downloads view (brief §5.5, §5.7)
 
-## 6. Launch architecture
+- **Install** (per game): enqueue via Phase 1 → land in the EmuDeck roms folder → bake the shortcut (Phase 2) → state
+  "Installed — launchable from your Steam Library".
+- **Uninstall** (per game): remove the files and clear or retire the shortcut in one action. No orphan in either
+  direction. Audit `rom_removal` + `shortcut_removal` for this.
+- **Sync** stays a separate action that refreshes listing, metadata and artwork only. Audit that it never implicitly
+  downloads or deletes.
+- **Downloads view:** extend `DownloadQueue.tsx` with speed, ETA, move-to-front/reorder, and state read from the
+  persisted queue, so it is correct right after a QAM or plugin reopen.
+- **Accept:** install → play → uninstall round trip leaves no file and no stray shortcut. The queue reorders and
+  survives restart.
 
-This is the core porting task.
+### Phase 5 — Per-game emulator override on EmuDeck (brief §5.6)
 
-### Current model
+- Reuse ADR-0011's `emulator_override` + `CoreChangeModal`. Choices come **only** from emulators that Phase 2 detection
+  reports as installed.
+- Changing the override triggers the existing re-bake via `relaunch_options_resolver` (observe its UoW-ordering rule,
+  #1154). With D2 = keep wrapper, the appId stays the same.
+- Per-platform default choice (original plan Milestone 6) comes along for free if the existing per-platform core
+  preference is wired to the same detection.
+- **Accept:** Zelda: Echoes of Wisdom overridden to Ryujinx launches in Ryujinx; other Switch games stay on Eden; an
+  uninstalled emulator can't be picked.
 
-The current implementation assumes one RetroDECK Flatpak invocation:
+### Phase 6 — Save sync for standalone emulators (brief §5.4) — _needs an ADR first_
 
-```text
-flatpak run net.retrodeck.retrodeck ...
-```
+This is the most design-heavy phase. Write an ADR before coding.
 
-and can pass ES-DE emulator overrides into that sandbox.
+- **`SaveLocationProvider` Protocol** (from the original plan):
+  `locations_for(system, emulator_id, rom) ->
+  list[SaveLocation]`. RetroArch becomes the first implementation
+  (wrapping today's `save_layout`). Eden, yuzu and Ryujinx follow. The provider is selected by the **resolved emulator**
+  (including the per-game override), never by system alone (stop condition).
+- **Open design questions the ADR must answer:**
+  - _Title ID source._ Switch saves are keyed by title ID (yuzu/Eden:
+    `nand/user/save/0000000000000000/<profile>/<TITLEID>/`). Options: RomM metadata, parse it from the XCI/NSP header,
+    or a user-confirmed mapping.
+  - _Ryujinx layout._ `~/.config/Ryujinx/bis/user/save/<index>/` is keyed by an index in `saveMeta` / `imkvdb`, not by
+    title ID. That needs a reader for the index.
+  - _Directory saves._ Switch saves are directories, while the sync engine (`services/saves/`) is file-oriented. Do we
+    archive the folder into one blob or sync each file? This interacts with RomM's slot/version model and with
+    ADR-0017's `compute_sync_action` authority.
+  - _Profiles._ Which emulator user profile is synced.
+- Also bring RetroArch-on-EmuDeck save sync to parity first (original plan Milestone 7, step 1): `retroarch_config` /
+  `retroarch_core_info` must read EmuDeck's RetroArch config.
+- Until a provider exists for the resolved emulator, show save sync as unsupported for that game. Never guess.
+- **Accept (per emulator):** in-game save → exit → the correct save (checked by timestamp and content) is on RomM;
+  restore on a second machine (Bazzite) works; conflict path works.
 
-That model must not survive in the EmuDeck fork.
+### Phase 7 — Firmware/BIOS browser (brief §5.3)
 
-### New model
+- Per-platform list from `/api/firmware` (filter by `platform_id`) showing file name and human-readable size. Several
+  firmware versions per platform are fine.
+- Downloads go through the **Phase 1 queue** (job kind = firmware), not the current direct byte copy.
+- Landing per D7: plugin firmware store → hard link into the EmuDeck bios subfolder, with the cross-filesystem case
+  settled on-device. Show explicit copy for Switch-style emulators: "Saved to … — install it from Eden's or Ryujinx's
+  own Install Firmware menu."
+- Original plan Milestone 5 still applies to classic BIOS: verify PS1, PS2, Dreamcast and one special-subfolder case.
 
-Use an explicit host launch plan:
+### Phase 8 — Health, migration UX, wording, polish
 
-```python
-@dataclass(frozen=True)
-class EmulatorInvocation:
-    kind: str
-    label: str | None = None
-    executable: str | None = None
-    args: tuple[str, ...] = ()
-```
-
-Recommended `kind` values for MVP:
-
-```text
-emudeck_launcher
-retroarch
-standalone
-```
-
-Prefer:
-
-```text
-Emulation/tools/launchers/<launcher>.sh
-```
-
-when EmuDeck provides a launcher for the emulator.
-
-Example conceptual launch:
-
-```text
-/path/to/Emulation/tools/launchers/pcsx2-qt.sh "/path/to/game.iso"
-```
-
-### New modules
-
-Create:
-
-```text
-py_modules/adapters/emudeck_launchers.py
-py_modules/domain/emudeck_launch.py
-```
-
-Suggested responsibilities:
-
-#### `EmuDeckLauncherAdapter`
-
-- Locate launcher directory from `EmuDeckPaths`.
-- Check whether a launcher exists and is executable/readable.
-- Resolve a logical emulator ID to a launcher path.
-- Return structured data; do not build shell strings.
-
-#### `domain/emudeck_launch.py`
-
-- Build a safe argv-like launch description.
-- Quote only at the final Steam launch-options boundary.
-- Keep ROM paths data, not shell fragments.
-- Never interpolate server-controlled names into trusted command text.
-
-### MVP launcher mapping
-
-Start with a small explicit table for common systems. Keep it isolated in one module/config file.
-
-Example shape:
-
-```python
-SYSTEM_DEFAULT_LAUNCHERS = {
-    "ps2": "pcsx2-qt.sh",
-    "gc": "dolphin.sh",
-    "wii": "dolphin.sh",
-    "psp": "ppsspp.sh",
-}
-```
-
-Do not commit guessed launcher names without verifying them on a real EmuDeck installation.
-
-For systems using RetroArch, determine the most stable EmuDeck-provided launcher route and use that instead of hardcoding RetroArch Flatpak internals.
-
-### Launch fallback order
-
-For MVP:
-
-```text
-1. Per-game explicit launcher override, if valid
-2. Per-platform launcher override, if valid
-3. Verified system default launcher
-4. Fail launch resolution visibly
-```
-
-Do not fall back to a RetroDECK command.
-
-A missing launcher should produce a clear state such as:
-
-```text
-needs_setup
-launcher_missing
-```
+- EmuDeck health banner (absent / unreadable / invalid / root missing). The backend health states already exist in
+  `lib/emudeck_health.py`.
+- Replace the RetroDECK-home migration UX with "EmuDeck storage path changed": detect it, warn, verify installed paths,
+  and offer rescan/rebind. Do not move files automatically yet.
+- Remove all remaining RetroDECK wording from the UI. Rename `RetroDeckPaths` → `EmulationPaths` and friends once
+  behaviour is covered by tests (original plan §12).
+- Put an honest support matrix in the README covering systems, emulators and save sync per emulator.
 
 ---
 
-## 7. Shortcut generation changes
+## 5. Kept from the original plan
 
-Primary file:
-
-```text
-py_modules/domain/shortcut_data.py
-```
-
-Tasks:
-
-1. Remove:
-   - `net.retrodeck.retrodeck`
-   - `RETRODECK_INVOCATION`
-   - RetroDECK sandbox core directory constants
-   - `flatpak run --command=... net.retrodeck.retrodeck`
-2. Replace the renderer with a host-neutral function.
-3. Keep existing escaping/path safety guarantees.
-4. Keep the existing `rom-launcher` wrapper unless a real reason is found to remove it.
-5. Ensure version switching and reinstall paths re-bake launch options using the same resolver.
-
-Required invariant:
-
-> Every code path that creates or updates `launch_options` must use one shared EmuDeck launch resolver.
-
-Search for all calls to:
-
-```text
-resolve_emulator_invocation
-build_launch_options
-launch_options
-```
-
-and route them through the same implementation.
+- **Platform mapping:** RomM slug → local system folder, normalized once (ADR-0010). Acceptance rule: every platform
+  enabled in the UI resolves to the exact EmuDeck roms directory. The compatibility table to test (`dc→dreamcast`,
+  `psx`, `ps2`, `ps3`, `ngp` / `neo-geo-pocket→ngp`, `gc`, `wii`, `n3ds`, `nds`, `psp`, `saturn`, `snes`, `gba`,
+  **`switch`**) still needs a test file. Unknown slugs keep the verbatim fallback only inside the ROM root, with the
+  traversal guard (`safe_join`).
+- **BIOS vocabulary is separate from ROM-system normalization.**
+- **Contract fakes** for `EmulationPaths`, the launch resolver, and `SaveLocationProvider`. Services run against fakes.
+- **Stop conditions:** pause and redesign if any of these happen. Launcher names differ across EmuDeck versions;
+  regenerated launcher scripts invalidate stored paths; a service needs to know the host; more than one module builds
+  emulator commands; save paths are inferred from system alone; external-storage failure leads to writes on internal
+  storage; re-bake logic diverges between install, reinstall, core change and version switch.
 
 ---
 
-## 8. Emulator discovery roadmap
+## 6. Test matrix (on hardware)
 
-### Phase A — fixed verified defaults
-
-One launcher per supported system.
-
-Goal: working ROM sync and launch.
-
-### Phase B — discover installed launchers
-
-Scan:
-
-```text
-Emulation/tools/launchers
-```
-
-Expose only installed/valid launchers.
-
-Add a resolver table:
-
-```text
-system -> allowed emulator IDs -> launcher script
-```
-
-### Phase C — dynamic EmuDeck/SRM integration
-
-Investigate using:
-
-- EmuDeck settings;
-- Steam ROM Manager parser definitions;
-- EmuDeck-generated launcher metadata;
-- installed emulator state.
-
-Goal:
-
-```text
-system
-  -> available emulator choices
-  -> default emulator
-  -> verified launch command
-```
-
-Only begin Phase C after the MVP launch path is stable.
+| Case                     | Deck internal | Deck SD | Bazzite #1 | Bazzite #2 |
+| ------------------------ | :-----------: | :-----: | :--------: | :--------: |
+| EmuDeck detected         |       ✓       |    ✓    |     ✓      |     ✓      |
+| Download + resume        |       ✓       |    ✓    |     ✓      |            |
+| Eden / yuzu / Ryujinx    |       ✓       |    ✓    |     ✓      |            |
+| RetroArch system         |       ✓       |         |     ✓      |            |
+| Uninstall leaves nothing |       ✓       |    ✓    |            |            |
+| URL fallback             |       ✓       |         |     ✓      |            |
+| Switch save round-trip   |       ✓       |         |     ✓      |            |
+| SD ejected → no writes   |      n/a      |    ✓    |    n/a     |    n/a     |
 
 ---
 
-## 9. BIOS plan
+## 7. Non-goals
 
-### MVP
-
-Replace the BIOS root provider only.
-
-Current services should receive:
-
-```text
-EmuDeckPaths.bios_path()
-```
-
-Audit all BIOS placement rules because EmuDeck has both:
-
-```text
-Emulation/bios
-Emulation/bios/<system-specific-subdir>
-```
-
-Keep the existing separate BIOS vocabulary principle.
-
-Do not reuse ROM-system normalization blindly for BIOS paths.
-
-Test at least:
-
-```text
-PS1
-PS2
-Dreamcast
-Nintendo DS
-Switch-family special folders
-```
-
-For firmware that must be installed through an emulator UI or API, mark it unsupported in MVP rather than pretending that copying a file is sufficient.
+- Auto-installing firmware or keys into Ryujinx/Eden/yuzu. There is no safe CLI/API for it; the plugin stops at "the
+  file is on disk".
+- Any content source other than the user's own RomM instance.
+- Reimplementing EmuDeck, or keeping a second full copy of its emulator database.
+- Windows/macOS.
+- Writing `shortcuts.vdf` directly (D1). If that ever becomes necessary, the brief's vdf safety recipe is mandatory.
 
 ---
 
-## 10. Save sync plan
-
-Do not block the MVP on complete save-sync parity.
-
-### Step 1 — RetroArch only
-
-Make existing RetroArch save support work against EmuDeck's RetroArch installation/configuration.
-
-Change:
-
-```text
-py_modules/adapters/retroarch_config.py
-py_modules/adapters/retroarch_core_info.py
-```
-
-to discover EmuDeck's actual RetroArch config/core metadata paths.
-
-Acceptance criteria:
-
-- active RetroArch save layout is read correctly;
-- content-dir saves are detected;
-- sort-by-content and sort-by-core behavior is respected;
-- core canonical names resolve correctly.
-
-### Step 2 — emulator-specific adapters
-
-Introduce:
-
-```python
-class SaveLocationProvider(Protocol):
-    def locations_for(self, system: str, emulator_id: str, rom: RomIdentity) -> list[SaveLocation]: ...
-```
-
-Then implement incrementally:
-
-```text
-RetroArchSaveLocationProvider
-DolphinSaveLocationProvider
-PCSX2SaveLocationProvider
-PPSSPPSaveLocationProvider
-RPCS3SaveLocationProvider
-...
-```
-
-Each adapter needs tests with real EmuDeck path conventions.
-
-### Safety rule
-
-Until a provider exists for the active emulator:
-
-- show save sync as unsupported for that game;
-- do not guess;
-- do not upload arbitrary emulator directories;
-- do not silently use RetroArch rules for standalone emulators.
-
----
-
-## 11. Migration and health behavior
-
-### MVP
-
-Disable or remove RetroDECK-specific migration UX.
-
-Replace the user-facing concept with:
-
-```text
-EmuDeck storage path changed
-```
-
-Track the last valid Emulation root.
-
-Detect:
-
-```text
-old: /home/deck/Emulation
-new: /run/media/.../Emulation
-```
-
-For the first release, prefer:
-
-- detect and warn;
-- verify existing installed ROM paths;
-- offer rescan/rebind behavior;
-
-before implementing automatic file movement.
-
-Automatic movement is a later phase.
-
-### Files to audit
-
-```text
-py_modules/services/migration.py
-py_modules/domain/migration_paths.py
-py_modules/adapters/migration_file.py
-py_modules/lib/migration_gate.py
-src/components/MigrationBlockedPage.tsx
-src/components/MigrationBlockedCard.tsx
-docs/user-guide/retrodeck-path-migration.md
-```
-
----
-
-## 12. Rename/generalize plan
-
-Avoid a giant rename in the first commit.
-
-### First pass
-
-Introduce EmuDeck implementations while keeping service-facing protocol names temporarily if that reduces churn.
-
-Example:
-
-```text
-RetroDeckPaths Protocol
-```
-
-can initially be replaced by:
-
-```text
-HostEmulationPaths
-```
-
-only after the adapter works.
-
-### Recommended eventual terminology
-
-```text
-RetroDeckPaths        -> EmulationPaths
-retrodeck_paths       -> emulation_paths
-retrodeck_home        -> emulation_root
-RetroDeckConfigHealth -> EmulationConfigHealth
-```
-
-Do terminology cleanup after behavior is covered by tests.
-
----
-
-## 13. File-by-file worklist
-
-### Create
-
-```text
-py_modules/adapters/emudeck_paths.py
-py_modules/adapters/emudeck_launchers.py
-py_modules/lib/emudeck_health.py
-py_modules/domain/emudeck_launch.py
-
-tests/adapters/test_emudeck_paths.py
-tests/adapters/test_emudeck_launchers.py
-tests/domain/test_emudeck_launch.py
-tests/integration/test_emudeck_download_path.py
-```
-
-### Modify
-
-```text
-py_modules/bootstrap.py
-py_modules/services/protocols/paths.py
-py_modules/services/downloads.py
-py_modules/services/rom_removal.py
-py_modules/services/firmware.py
-py_modules/domain/shortcut_data.py
-py_modules/adapters/retroarch_config.py
-py_modules/adapters/retroarch_core_info.py
-main.py
-src/api/backend.ts
-src/utils/retrodeckHealth.ts
-src/types/retrodeck.ts
-src/types/index.ts
-src/components/MainPage.tsx
-src/components/DangerZone.tsx
-README.md
-plugin.json
-```
-
-### Audit before deciding to keep/replace
-
-```text
-py_modules/adapters/es_de_config.py
-py_modules/domain/emulator_commands.py
-py_modules/services/active_core_resolver.py
-py_modules/services/cores.py
-py_modules/services/relaunch_options_resolver.py
-py_modules/services/version_switch.py
-py_modules/services/saves/
-py_modules/services/migration.py
-```
-
-### Remove or archive only after replacements exist
-
-```text
-py_modules/adapters/retrodeck_paths.py
-py_modules/lib/retrodeck_health.py
-docs/user-guide/retrodeck-path-migration.md
-```
-
----
-
-## 14. Milestones
-
-## Milestone 0 — fork and baseline
-
-Deliverables:
-
-- fork builds unchanged;
-- test suite passes before modifications;
-- local Decky dev deployment works;
-- create `emudeck-port` branch.
-
-Exit criteria:
-
-```text
-baseline tests green
-plugin loads
-existing RetroDECK behavior reproducible
-```
-
----
-
-## Milestone 1 — EmuDeck path adapter
-
-Deliverables:
-
-- parse EmuDeck settings;
-- resolve Emulation root;
-- resolve ROM, BIOS, tools, launcher roots;
-- health states;
-- unit tests.
-
-Exit criteria:
-
-```text
-EmuDeck internal storage detected
-EmuDeck SD/external storage detected
-missing settings handled
-bad JSON handled
-missing storagePath handled
-unmounted root handled
-no guessed write path used
-```
-
----
-
-## Milestone 2 — ROM download integration
-
-Deliverables:
-
-- downloads go to EmuDeck ROM folders;
-- cleanup scans EmuDeck ROM/BIOS roots;
-- uninstall removes only plugin-owned installs;
-- installed path persistence works.
-
-Exit criteria:
-
-```text
-single-file ROM download works
-ZIP/multi-file ROM works
-M3U path behavior still passes tests
-cancel/pause/resume behavior still passes
-uninstall works
-path traversal tests remain green
-```
-
----
-
-## Milestone 3 — launch MVP
-
-Deliverables:
-
-- verified launcher mapping;
-- EmuDeck launcher adapter;
-- new launch renderer;
-- Steam shortcuts launch real games.
-
-Start with 3 systems:
-
-```text
-one RetroArch-backed system
-one simple standalone emulator
-one folder/multi-file-sensitive system
-```
-
-Suggested validation set:
-
-```text
-SNES or GBA
-PS2
-GameCube or Wii
-```
-
-Exit criteria:
-
-```text
-shortcut launches from Game Mode
-paths with spaces work
-special characters do not break argv handling
-missing launcher is surfaced clearly
-reinstall re-bakes launch command
-version switch re-bakes launch command
-```
-
----
-
-## Milestone 4 — library UX cleanup
-
-Deliverables:
-
-- RetroDECK wording removed from visible UI;
-- EmuDeck health banner;
-- requirements/docs updated;
-- settings and danger-zone text updated.
-
-Exit criteria:
-
-```text
-no visible RetroDECK requirement text
-no RetroDECK health terminology
-plugin clearly reports EmuDeck configuration failures
-```
-
----
-
-## Milestone 5 — BIOS MVP
-
-Deliverables:
-
-- BIOS root switched;
-- placement rules audited;
-- unsupported firmware types marked honestly.
-
-Exit criteria:
-
-```text
-PS1 BIOS verified
-PS2 BIOS verified
-Dreamcast BIOS verified
-special-subfolder test verified
-```
-
----
-
-## Milestone 6 — emulator selection
-
-Deliverables:
-
-- launcher discovery;
-- per-platform launcher choice;
-- per-game launcher choice;
-- persisted labels/IDs survive restart.
-
-Exit criteria:
-
-```text
-invalid launcher cannot be selected
-missing launcher degrades visibly
-platform choice fans out to shortcuts
-game override wins over platform default
-```
-
----
-
-## Milestone 7 — save sync
-
-Deliverables:
-
-- RetroArch save sync first;
-- standalone emulator providers incrementally.
-
-Exit criteria per emulator:
-
-```text
-local path discovery test
-upload test
-download test
-conflict test
-multiple-slot test where applicable
-storagePath relocation test
-```
-
----
-
-## 15. Testing strategy
-
-### Unit tests
-
-Cover:
-
-- settings parsing;
-- path expansion;
-- health classification;
-- system mapping;
-- launcher mapping;
-- launcher existence;
-- launch option escaping;
-- missing launcher behavior;
-- ROM path safety;
-- BIOS path resolution.
-
-### Contract tests
-
-Create fake implementations for:
-
-```text
-EmulationPaths
-LauncherResolver
-SaveLocationProvider
-```
-
-Run existing services against fakes so host integration stays isolated.
-
-### Integration tests on a Steam Deck
-
-Use a disposable RomM test library.
-
-Test matrix:
-
-| Case | Internal storage | SD/external |
-|---|---:|---:|
-| Detect EmuDeck | ✓ | ✓ |
-| Download ROM | ✓ | ✓ |
-| Launch RetroArch system | ✓ | ✓ |
-| Launch standalone system | ✓ | ✓ |
-| Uninstall | ✓ | ✓ |
-| BIOS download | ✓ | ✓ |
-| Storage unavailable | n/a | ✓ |
-| Reinsert storage | n/a | ✓ |
-
-### Regression requirement
-
-Before merging each milestone:
-
-```text
-existing non-host-specific tests must stay green
-```
-
----
-
-## 16. Recommended commit sequence
-
-Keep commits small enough to review and revert.
-
-```text
-1. test: lock baseline behavior before EmuDeck port
-2. feat: add EmuDeck settings and path adapter
-3. refactor: generalize host path protocol
-4. feat: route ROM and BIOS roots through EmuDeck paths
-5. test: add EmuDeck download destination coverage
-6. feat: add EmuDeck launcher adapter
-7. refactor: replace RetroDECK shortcut renderer
-8. feat: add initial verified system launcher map
-9. test: cover launch rebakes and version switching
-10. feat: add EmuDeck config health surface
-11. chore: remove RetroDECK user-facing wording
-12. docs: add EmuDeck setup and supported-system matrix
-```
-
-Do not combine save-sync work into these commits.
-
----
-
-## 17. Tomorrow: first working session
-
-### Task 1 — baseline
-
-```bash
-git clone <your-fork-url>
-cd decky-romm-sync
-git checkout -b emudeck-port
-```
-
-Run the project's documented install, lint, type-check, and test commands.
-
-Record:
-
-```text
-Python version
-Node version
-package manager version
-test count
-current failures, if any
-```
-
-Do not begin the port until the baseline is understood.
-
-### Task 2 — build the path adapter first
-
-Implement only:
-
-```text
-py_modules/adapters/emudeck_paths.py
-py_modules/lib/emudeck_health.py
-tests/adapters/test_emudeck_paths.py
-```
-
-Test fixtures:
-
-```text
-valid internal settings.json
-valid SD-card settings.json
-missing file
-malformed JSON
-storagePath missing
-Emulation root missing
-```
-
-Do not touch launch logic on the first pass.
-
-### Task 3 — wire paths in bootstrap
-
-Replace construction of:
-
-```text
-RetroDeckPathsAdapter
-```
-
-with the new EmuDeck path implementation.
-
-At this point, keep protocol renaming minimal.
-
-### Task 4 — make one ROM download land correctly
-
-Pick one simple single-file platform.
-
-Success condition:
-
-```text
-RomM download
-    ↓
-<storagePath>/Emulation/roms/<system>/<rom file>
-```
-
-Verify:
-
-- file exists;
-- install record stores correct path;
-- uninstall removes the file;
-- unrelated ROMs remain untouched.
-
-### Task 5 — end the day with a narrow PR/commit
-
-Ideal first-day result:
-
-```text
-EmuDeck settings detected
-ROM root resolved
-BIOS root resolved
-health states tested
-one ROM can download to the right folder
-```
-
-Do not start save-sync work on day one.
-
----
-
-## 18. Definition of MVP done
-
-The EmuDeck fork is MVP-ready when all of the following are true:
-
-- Plugin starts without RetroDECK installed.
-- Plugin requires and detects EmuDeck.
-- Internal and SD/external `storagePath` layouts work.
-- Library sync creates Steam entries.
-- ROM downloads go to correct EmuDeck folders.
-- At least the initially supported system matrix launches reliably from Game Mode.
-- Uninstall removes only plugin-managed ROM installs.
-- Artwork and metadata still work.
-- Version switching still produces correct launch options.
-- BIOS downloads work for the explicitly supported BIOS matrix.
-- Unsupported save-sync cases are disabled or clearly marked, never guessed.
-- CI is green.
-- README contains an honest supported-system and supported-save-sync matrix.
-
----
-
-## 19. Key design decisions to preserve
-
-1. **One normalization boundary.** Convert RomM platform identity into local system identity once.
-2. **One launch resolver.** Every shortcut creation/re-bake path uses the same resolver.
-3. **No guessed paths.** Missing or unreadable EmuDeck config is a visible health failure.
-4. **No guessed saves.** Save sync is enabled only when a verified provider exists.
-5. **Reuse EmuDeck's launchers.** Do not duplicate emulator-specific boot logic unnecessarily.
-6. **Keep services host-agnostic.** EmuDeck details belong in adapters/domain launch resolution.
-7. **Ship narrow compatibility first.** A small verified system matrix is better than broad unreliable support.
-
----
-
-## 20. First issues to create
-
-### Issue 1 — EmuDeck path adapter
-
-**Goal:** Read EmuDeck `storagePath` and expose Emulation roots with health classification.
-
-### Issue 2 — Generalize host path protocol
-
-**Goal:** Remove RetroDECK naming from service-facing path seams without changing service behavior.
-
-### Issue 3 — EmuDeck download destinations
-
-**Goal:** Route ROM and BIOS downloads to EmuDeck roots and preserve install/uninstall safety.
-
-### Issue 4 — EmuDeck launcher resolver
-
-**Goal:** Resolve supported systems to verified EmuDeck launcher scripts.
-
-### Issue 5 — Replace RetroDECK launch rendering
-
-**Goal:** Build Steam launch options from EmuDeck launcher invocations.
-
-### Issue 6 — EmuDeck health UI
-
-**Goal:** Replace RetroDECK config-health types, backend callables, and UI banner text.
-
-### Issue 7 — RetroArch save support on EmuDeck
-
-**Goal:** Discover EmuDeck RetroArch config/core metadata and restore RetroArch save-sync parity.
-
----
-
-## 21. Stop conditions
-
-Pause and redesign instead of adding hacks if any of these happen:
-
-- launcher names differ unpredictably across EmuDeck versions;
-- launcher scripts are regenerated in a way that invalidates stored paths;
-- a service needs to know whether the host is RetroDECK or EmuDeck;
-- multiple modules independently build emulator commands;
-- save paths are being inferred from ROM system alone;
-- external storage failure causes fallback writes into internal storage;
-- Steam shortcut re-bake logic diverges between install, reinstall, core change, and version switch.
-
-These are architecture failures, not edge cases.
-
----
-
-## 22. Recommended first release support statement
-
-Use an explicit matrix in the README:
-
-```text
-ROM library sync: supported
-ROM downloads: supported
-Steam shortcut creation: supported
-Artwork/metadata: supported
-BIOS download: supported for listed systems
-Emulator selection: limited to listed systems/emulators
-Save sync: RetroArch only initially
-Standalone-emulator save sync: not yet supported
-Automatic EmuDeck storage migration: not yet supported
-```
-
-That keeps the first release useful without claiming parity that has not been verified.
-
----
-
-## 23. Immediate next implementation target
-
-Start with this dependency chain:
-
-```text
-EmuDeck settings.json
-        ↓
-EmuDeckPathsAdapter
-        ↓
-bootstrap.py
-        ↓
-DownloadService
-        ↓
-one ROM written to correct EmuDeck system folder
-```
-
-Only after that works, continue with:
-
-```text
-EmuDeck launcher directory
-        ↓
-EmuDeckLauncherAdapter
-        ↓
-shared launch resolver
-        ↓
-shortcut_data.py
-        ↓
-one game launched successfully from Game Mode
-```
-
-That is the shortest path to proving the fork architecture.
+## 8. Docs cleanup tracker
+
+The docs are cleaned up phase by phase, with each doc rewritten in the PR that changes the behaviour it describes.
+Current RetroDECK mention counts (`grep -ic`):
+
+| Doc                                                       | Count | Rewrite in                  |
+| --------------------------------------------------------- | ----: | --------------------------- |
+| `docs/architecture/config-source-parsers.md`              |    38 | Phase 2                     |
+| `docs/architecture/save-file-sync-architecture.md`        |    26 | Phase 6                     |
+| `docs/architecture/core-emulator-selection.md`            |     5 | Phase 2 / 5                 |
+| `docs/architecture/save-sync-coverage.md`                 |     2 | Phase 6                     |
+| `docs/architecture/database-design.md`                    |     2 | Phase 1                     |
+| `docs/user-guide/retrodeck-path-migration.md`             |     — | Phase 8 (replace)           |
+| `docs/user-guide/{save-sync,bios-management}.md`, `index` |   1–2 | Phases 6 / 7                |
+| `docs/adr/*`                                              |  many | **Do not edit** (see below) |
+
+ADRs are historical records of upstream decisions. Leave them as they are. When this fork changes a decision, add a new
+ADR that supersedes the old one and link back to it (e.g. "ADR-0023: EmuDeck host-native install probe, supersedes the
+RetroDECK parts of ADR-0020").

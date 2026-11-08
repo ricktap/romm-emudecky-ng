@@ -1,10 +1,12 @@
 # Romm-emudecky
 
-> **Fork** of [danielcopper/decky-romm-sync](https://github.com/danielcopper/decky-romm-sync) — ported from RetroDECK to EmuDeck.
+> **Fork** of [danielcopper/decky-romm-sync](https://github.com/danielcopper/decky-romm-sync) (via
+> [melikootje/Romm-emudecky](https://github.com/melikootje/Romm-emudecky)) — ported from RetroDECK to EmuDeck. Roadmap:
+> [`EMUDECK_PORT_PLAN.md`](EMUDECK_PORT_PLAN.md).
 
 A [Decky Loader](https://decky.xyz/) plugin that syncs your self-hosted [RomM](https://github.com/rommapp/romm) library
-into Steam as non-steam shortcuts. Games appear directly in your Steam library, launch through
-EmuDeck, and keep their saves in sync across devices through your RomM server.
+into Steam as non-steam shortcuts. Games appear directly in your Steam library, launch through EmuDeck, and keep their
+saves in sync across devices through your RomM server.
 
 ## Features
 
@@ -19,8 +21,8 @@ EmuDeck, and keep their saves in sync across devices through your RomM server.
 - **Controller friendly** — Full gamepad navigation throughout the plugin UI
 - **Steam Input config** — Per-shortcut Steam Input mode (Default / Force On / Force Off)
 - **EmuDeck path migration** — Move your EmuDeck installation between storage locations without re-syncing
-- **EmuDeck health diagnostics** — Detects misconfigured input drivers and EmuDeck configuration issues that break
-  menu navigation
+- **EmuDeck health diagnostics** — Detects misconfigured input drivers and EmuDeck configuration issues that break menu
+  navigation
 
 ## Screenshots
 
@@ -53,13 +55,12 @@ search for **RomM Sync**, and install. No Developer Mode required.
 This is the current method while v1.0 is in progress. It requires **Developer Mode** in Decky Loader (Decky settings →
 gear icon → toggle **Developer Mode**).
 
-1. Download the latest `decky-romm-sync.zip` from the
-   [releases page](https://github.com/melikootje/Romm-emudecky/releases)
+1. Download the latest `decky-romm-sync.zip` from the [releases page](https://github.com/ricktap/Romm-emudecky/releases)
 2. In Decky settings → **Developer** tab → **Install Plugin from ZIP** (or **from URL** with the
-   [latest release link](https://github.com/melikootje/Romm-emudecky/releases/latest/download/decky-romm-sync.zip))
+   [latest release link](https://github.com/ricktap/Romm-emudecky/releases/latest/download/decky-romm-sync.zip))
 
 > Full step-by-step instructions, including first-time setup, are in
-> [Getting Started](https://melikootje.github.io/Romm-emudecky/user-guide/getting-started/).
+> [Getting Started](https://ricktap.github.io/Romm-emudecky/user-guide/getting-started/).
 
 ## Quick start
 
@@ -68,18 +69,18 @@ gear icon → toggle **Developer Mode**).
 3. In **Platforms**, enable the platforms you want to sync
 4. Hit **Sync Library** — your ROMs appear as non-steam shortcuts
 
-See the [User Guide](https://melikootje.github.io/Romm-emudecky/user-guide/syncing-your-library/) for syncing
-details, [save sync](https://melikootje.github.io/Romm-emudecky/user-guide/save-sync/), and
-[BIOS management](https://melikootje.github.io/Romm-emudecky/user-guide/bios-management/).
+See the [User Guide](https://ricktap.github.io/Romm-emudecky/user-guide/syncing-your-library/) for syncing details,
+[save sync](https://ricktap.github.io/Romm-emudecky/user-guide/save-sync/), and
+[BIOS management](https://ricktap.github.io/Romm-emudecky/user-guide/bios-management/).
 
 ## Contributing
 
 Build from source, run the tests, and read the architecture reference on the documentation site:
 
-- [Development setup](https://melikootje.github.io/Romm-emudecky/contributing/development/)
-- [Frontend dev loop](https://melikootje.github.io/Romm-emudecky/contributing/frontend-dev-loop/) — live-reload the
-  UI into a windowed Big Picture on the Deck, no Game Mode switching
-- [Backend architecture](https://melikootje.github.io/Romm-emudecky/architecture/backend-architecture/)
+- [Development setup](https://ricktap.github.io/Romm-emudecky/contributing/development/)
+- [Frontend dev loop](https://ricktap.github.io/Romm-emudecky/contributing/frontend-dev-loop/) — live-reload the UI into
+  a windowed Big Picture on the Deck, no Game Mode switching
+- [Backend architecture](https://ricktap.github.io/Romm-emudecky/architecture/backend-architecture/)
 
 ## Acknowledgments
 
@@ -87,6 +88,8 @@ This plugin stands on the shoulders of some great projects:
 
 - [danielcopper/decky-romm-sync](https://github.com/danielcopper/decky-romm-sync) — the upstream project this is forked
   from. Its RetroDECK integration was the foundation; this fork replaces the host layer with EmuDeck.
+- [melikootje/Romm-emudecky](https://github.com/melikootje/Romm-emudecky) — started the EmuDeck port (EmuDeck path and
+  launcher adapters) that this fork continues.
 - [RomM](https://github.com/rommapp/romm) — the self-hosted ROM manager at the heart of this plugin. RomM provides the
   library, metadata, cover art, and save file storage that makes the entire sync experience possible
 - [EmuDeck](https://www.emudeck.com/) — the all-in-one emulation solution for Steam Deck that bundles ES-DE, RetroArch,

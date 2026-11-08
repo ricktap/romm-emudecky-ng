@@ -1,9 +1,26 @@
-# decky-romm-sync — Decky Loader Plugin
+# Romm-emudecky — Decky Loader Plugin (EmuDeck fork of decky-romm-sync)
 
 ## What This Is
 
 A Decky Loader plugin that syncs a self-hosted RomM library into Steam as Non-Steam shortcuts. Games launch via
-RetroDECK. The QAM panel handles settings, sync, downloads, and BIOS management.
+**EmuDeck**-installed emulators (host-native AppImages / EmuDeck launcher scripts — no flatpak sandbox). The QAM panel
+handles settings, sync, install/uninstall, downloads, and BIOS/firmware management.
+
+## Fork context — read first
+
+- **Fork chain:** `danielcopper/decky-romm-sync` (RetroDECK, upstream) → `melikootje/Romm-emudecky` (started the EmuDeck
+  port) → `ricktap/Romm-emudecky` (this repo, default branch `emudeck-port`).
+- **Roadmap = [`EMUDECK_PORT_PLAN.md`](EMUDECK_PORT_PLAN.md).** It is the single source of truth for scope, phase order,
+  settled decisions, and open questions. Upstream's GitHub Projects board does not apply here.
+- **Target machines:** a Steam Deck (SteamOS, internal + SD storage) **and** two Bazzite PCs. Never assume a Deck:
+  derive everything from `$HOME` and `~/.config/EmuDeck/settings.json` (`storagePath` is the _parent_ of `Emulation/`),
+  never hardcode `/home/deck`. A missing/unreadable EmuDeck config is a visible health failure, never a silent fallback
+  to `~/Emulation`.
+- **Issue refs:** `#NNN` numbers in this file, in code comments, and in `docs/adr/` refer to **upstream**
+  (`danielcopper/decky-romm-sync`) issues unless stated otherwise.
+- **RetroDECK leftovers:** much of the code and docs still say "RetroDECK" (e.g. the `RetroDeckPaths` Protocol, which
+  `EmuDeckPathsAdapter` implements under a transitional name). Treat that as naming debt scheduled in the plan, not as a
+  target to support. ADRs are historical and are never edited — a changed decision gets a new superseding ADR.
 
 ## Documentation
 
@@ -13,7 +30,7 @@ Documentation-debt-as-a-separate-follow-up-issue is forbidden — those follow-u
 a change needs docs, the default is "yes, it does." Enforced in CI by `.github/workflows/docs-check.yml`.
 
 The docs live in `docs/` and are the canonical source for architecture, file structure, and feature documentation. Built
-with **Material for MkDocs** and published to GitHub Pages (<https://danielcopper.github.io/decky-romm-sync/>) by
+with **Material for MkDocs** and published to GitHub Pages (<https://ricktap.github.io/Romm-emudecky/>) by
 `.github/workflows/docs.yml` on every push to `main`. Layout mirrors the three nav tabs: `docs/user-guide/` (end users),
 `docs/architecture/` (how it works), `docs/contributing/` (dev setup). The old GitHub Wiki is retired — it only
 redirects to the published site. Preview locally with `mise run docs`.
@@ -54,12 +71,14 @@ silent omission. The CI check enforces this.
   corrupting Steam's in-memory shortcut state (a restart clears it).
 - **Launcher + launch_options model**: `bin/rom-launcher` (renamed from `bin/romm-launcher`, #778) is a pure `exec "$@"`
   wrapper — no state, no path resolution, no emulator knowledge. The Steam shortcut's `launch_options` carries the FULL
-  launch command (`flatpak run net.retrodeck.retrodeck "<rom-path>"`) for installed ROMs, or `""` (placeholder) for
-  uninstalled. The emulator invocation is a build-time variable (`resolve_emulator_invocation`, RetroDECK today — the
-  #129 seam). The old `romm:<rom_id>` marker is GONE: ownership is detected by the **exe path** (`…/bin/rom-launcher`);
-  rom_id↔appId comes from the backend `get_app_id_rom_id_map()` (`roms.shortcut_app_id`). launch_options is written at
-  sync (installed ROMs), at download-complete, and re-resolved on RetroDECK-home migration (`migration_relaunch_options`
-  event). See [ADR-0009](docs/adr/0009-launcher-pure-exec-wrapper-baked-launch-options.md).
+  launch command (an EmuDeck emulator invocation + `"<rom-path>"`, built by `resolve_emulator_invocation` →
+  `domain/emudeck_launch.resolve_emudeck_invocation` — the one shared launch resolver) for installed ROMs, or `""`
+  (placeholder) for uninstalled / unresolvable (`needs_setup` / `launcher_missing`, which the UI must surface). The old
+  `romm:<rom_id>` marker is GONE: ownership is detected by the **exe path** (`…/bin/rom-launcher`); rom_id↔appId comes
+  from the backend `get_app_id_rom_id_map()` (`roms.shortcut_app_id`). launch_options is written at sync (installed
+  ROMs), at download-complete, and re-resolved on emulation-root migration (`migration_relaunch_options` event). Keep
+  the wrapper as the shortcut exe: switching emulator then changes only `launch_options`, so the appId is stable (see
+  plan decision D2). See [ADR-0009](docs/adr/0009-launcher-pure-exec-wrapper-baked-launch-options.md).
 - **RomM minimum version**: Requires RomM >= 4.9.0. Hard-rejected in `test_connection()` — plugin is inert until server
   is updated. `_MIN_REQUIRED_VERSION` tuple in `main.py`. The 4.9.0 floor is the release that ships RomM's Device Sync
   (`negotiate`) save-sync transport (#1234 / ADR-0016); bumped from 4.8.1 as a breaking change while still beta.
@@ -108,8 +127,8 @@ silent omission. The CI check enforces this.
 
 ## Current State
 
-Latest release and shipped features: see `git tag --sort=-v:refname` and GitHub Releases. Roadmap and open work:
-[GitHub Projects board](https://github.com/users/danielcopper/projects/2).
+Roadmap, phase status, and open decisions: [`EMUDECK_PORT_PLAN.md`](EMUDECK_PORT_PLAN.md). Upstream release history:
+`git tag --sort=-v:refname`.
 
 ## Development
 
@@ -576,4 +595,4 @@ isn't earning its coverage.
   the next unblocked task before the lead can shut them down and spawn a dedicated agent.
 - **Preserve context.** Avoid back-and-forth code changes in the main conversation. Get alignment first, then implement
   cleanly in one pass (via agents).
-- Refer to the [GitHub Projects board](https://github.com/users/danielcopper/projects/2) for the roadmap.
+- Refer to [`EMUDECK_PORT_PLAN.md`](EMUDECK_PORT_PLAN.md) for the roadmap; update its phase status when a phase lands.
