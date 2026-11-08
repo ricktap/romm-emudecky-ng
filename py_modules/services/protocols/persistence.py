@@ -19,7 +19,7 @@ class SettingsPersister(Protocol):
 
 
 class PluginMetadataReader(Protocol):
-    """Read plugin install metadata from ``package.json``.
+    """Read plugin install metadata from ``package.json`` / ``plugin.json``.
 
     Owns the one-shot read of the plugin's ``package.json`` at startup
     so ``bootstrap`` does not perform raw ``open()`` calls. The plugin
@@ -35,5 +35,13 @@ class PluginMetadataReader(Protocol):
         Falls back to ``"0.0.0"`` when the file is missing, unreadable,
         malformed, or has no ``version`` field — bootstrap must not
         abort on a metadata read.
+        """
+        ...
+
+    def read_plugin_name(self, plugin_dir: str) -> str:
+        """Return ``plugin.json`` ``"name"`` — the name Decky identifies the install by.
+
+        Falls back to ``""`` when the file is missing, unreadable,
+        malformed, or has no string ``name``.
         """
         ...

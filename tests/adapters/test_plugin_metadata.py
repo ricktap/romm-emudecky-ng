@@ -61,3 +61,28 @@ class TestPluginMetadataAdapter:
 
         adapter = PluginMetadataAdapter()
         assert adapter.read_version(str(plugin_dir)) == empty_value
+
+
+class TestReadPluginName:
+    def test_reads_plugin_json_name(self, tmp_path):
+        (tmp_path / "plugin.json").write_text(json.dumps({"name": "EmuDecky RomM+"}))
+        assert PluginMetadataAdapter().read_plugin_name(str(tmp_path)) == "EmuDecky RomM+"
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        assert PluginMetadataAdapter().read_plugin_name(str(tmp_path)) == ""
+
+    @pytest.mark.parametrize("content", ["{broken", "[1, 2]", json.dumps({"name": 7}), json.dumps({})])
+    def test_malformed_or_missing_name_returns_empty(self, tmp_path, content):
+        (tmp_path / "plugin.json").write_text(content)
+        assert PluginMetadataAdapter().read_plugin_name(str(tmp_path)) == ""
+
+    def test_real_plugin_json_name_is_the_pinned_install_name(self):
+        """Decky's installer matches the installed plugin by this exact name.
+
+        Changing it breaks self-update for every existing install — this pin
+        makes a rename a deliberate, visible test change.
+        """
+        import os
+
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        assert PluginMetadataAdapter().read_plugin_name(repo_root) == "EmuDecky RomM+"

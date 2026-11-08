@@ -17,6 +17,7 @@ a pytest ``tmp_path`` and wires the **real** services via the real
   seed library/saves/server state and inject failures without HTTP).
 * ``sgdb_adapter`` → :class:`FakeSteamGridDbApi` (the SteamGridDB
   network transport).
+* ``release_api`` → :class:`FakeReleaseFeedApi` (the GitHub release feed).
 * ``clock`` / ``uuid_gen`` / ``sleeper`` → the deterministic fakes from
   ``tests.fakes.system_time`` so timestamped responses are assertable.
 * ``http_adapter.with_retry`` → a single-attempt pass-through so a
@@ -46,6 +47,7 @@ from bootstrap import (
     bootstrap,
     wire_services,
 )
+from fakes.fake_release_feed_api import FakeReleaseFeedApi
 from fakes.fake_romm_api import FakeRommApi
 from fakes.fake_steamgrid_db_api import FakeSteamGridDbApi
 from fakes.system_time import FakeClock, FakeSleeper, FakeUuidGen
@@ -86,6 +88,7 @@ _BOUND_SERVICE_ATTRS = {
     "_launch_gate_service": "launch_gate_service",
     "_session_lifecycle_service": "session_lifecycle_service",
     "_relaunch_options_resolver": "relaunch_options_resolver",
+    "_update_service": "update_service",
 }
 
 
@@ -116,6 +119,8 @@ class ContractHarness:
     # swaps a controllable fake onto ``plugin._migration_service._retrodeck_paths``
     # to drive RetroDECK-home changes through detection.
     retrodeck_paths: Any
+    # The fake GitHub release feed the update service reads (outer network edge).
+    release_feed: Any
 
 
 def _single_attempt_pass_through(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -156,12 +161,14 @@ def build_contract_harness(tmp_path: Any) -> ContractHarness:
     #    is neutralised so failure-injection tests don't sleep.
     fake_romm = FakeRommApi()
     fake_sgdb = FakeSteamGridDbApi()
+    fake_release_feed = FakeReleaseFeedApi()
     real_http = result.adapters.http_adapter
     real_http.with_retry = _single_attempt_pass_through  # type: ignore[method-assign]
     patched_adapters = dataclasses.replace(
         result.adapters,
         romm_api=fake_romm,
         sgdb_adapter=fake_sgdb,
+        release_api=fake_release_feed,
     )
 
     # Deterministic time/uuid/sleep seams so timestamped responses assert cleanly.
@@ -230,4 +237,5 @@ def build_contract_harness(tmp_path: Any) -> ContractHarness:
         tmp_path=tmp_path,
         uow_factory=result.callbacks.uow_factory,
         retrodeck_paths=result.callbacks.retrodeck_paths,
+        release_feed=fake_release_feed,
     )

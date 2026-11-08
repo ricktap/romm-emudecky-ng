@@ -90,6 +90,9 @@ vi.mock("./settings/AdvancedSection", () => ({
     return createElement("div", { "data-testid": "advanced-section" });
   },
 }));
+vi.mock("./settings/UpdatesSection", () => ({
+  UpdatesSection: () => createElement("div", { "data-testid": "updates-section" }),
+}));
 vi.mock("./settings/LibrarySection", async (importOriginal) => {
   // Keep the real AUTO_REGION / DEFAULT_REGION_LABEL constants (SettingsPage
   // imports them), but stub the component to capture props.

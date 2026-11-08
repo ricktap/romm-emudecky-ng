@@ -49,6 +49,7 @@ def plugin():
     p._playtime_service = MagicMock()
     p._launch_gate_service = MagicMock()
     p._session_lifecycle_service = MagicMock()
+    p._update_service = MagicMock()
     return p
 
 
@@ -109,6 +110,13 @@ class TestSettingsCallableDelegation:
         result = await plugin.get_settings()
         plugin._settings_service.get_settings.assert_called_once_with()
         assert result == {"romm_url": "x"}
+
+    @pytest.mark.asyncio
+    async def test_check_for_update_delegates_with_bool_force(self, plugin):
+        plugin._update_service.check_for_update = AsyncMock(return_value={"success": True})
+        result = await plugin.check_for_update(1)
+        plugin._update_service.check_for_update.assert_awaited_once_with(True)
+        assert result == {"success": True}
 
     @pytest.mark.asyncio
     async def test_get_whitelist_settings_delegates(self, plugin):
@@ -806,8 +814,10 @@ class TestUnloadHook:
         plugin._download_service.shutdown = AsyncMock()
         plugin._migration_service.shutdown = AsyncMock()
         plugin._session_lifecycle_service.shutdown = AsyncMock()
+        plugin._update_service.shutdown = AsyncMock()
         await plugin._unload()
         plugin._sync_service.shutdown.assert_called_once_with()
         plugin._download_service.shutdown.assert_awaited_once_with()
         plugin._migration_service.shutdown.assert_awaited_once_with()
         plugin._session_lifecycle_service.shutdown.assert_awaited_once_with()
+        plugin._update_service.shutdown.assert_awaited_once_with()

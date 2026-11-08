@@ -107,6 +107,7 @@ from services.protocols.repositories import (
     SyncRunRepository,
 )
 from services.protocols.transport import (
+    ReleaseFeedApi,
     RommAchievementsApi,
     RommApi,
     RommConnectionApi,
@@ -126,6 +127,7 @@ from services.protocols.transport import (
 from services.protocols.uow import UnitOfWork, UnitOfWorkFactory
 
 __all__ = [
+    "ReleaseFeedApi",
     "AchievementsReader",
     "ActiveCoreReader",
     "ActiveDownloadRomIdsFn",

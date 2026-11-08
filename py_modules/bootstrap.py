@@ -23,6 +23,7 @@ from adapters.emudeck_launchers import EmuDeckLauncherAdapter
 from adapters.emudeck_paths import EmuDeckPathsAdapter
 from adapters.es_de_config import CoreResolver
 from adapters.firmware_file import FirmwareFileAdapter
+from adapters.github_releases import GitHubReleasesAdapter
 from adapters.hostname import HostnameAdapter
 from adapters.machine_id import MachineIdAdapter
 from adapters.migration_file import MigrationFileAdapter
@@ -72,6 +73,7 @@ from services.settings import SettingsService, SettingsServiceConfig
 from services.shortcut_removal import ShortcutRemovalService, ShortcutRemovalServiceConfig
 from services.startup_healing import StartupHealingService, StartupHealingServiceConfig
 from services.steamgrid import SteamGridService, SteamGridServiceConfig
+from services.update import UpdateService, UpdateServiceConfig
 from services.version_switch import VersionSwitchService, VersionSwitchServiceConfig
 
 if TYPE_CHECKING:
@@ -97,6 +99,7 @@ if TYPE_CHECKING:
         PathExistsReader,
         PlatformCoreReader,
         PluginMetadataReader,
+        ReleaseFeedApi,
         RetroArchSaveLayoutProvider,
         RetroDeckPaths,
         RomFileStore,
@@ -134,6 +137,7 @@ class AdapterBundle:
     save_file_store: SaveFileStore
     path_probe: PathExistsReader
     core_info_provider: CoreInfoProvider
+    release_api: ReleaseFeedApi
 
 
 @dataclass(frozen=True)
@@ -357,6 +361,7 @@ def bootstrap(
     romm_api = RommApiAdapter(http_adapter)
     steam_config = SteamConfigAdapter(user_home=user_home, logger=logger)
     sgdb_adapter = SteamGridDbAdapter(settings=settings, logger=logger, user_agent=user_agent)
+    release_api = GitHubReleasesAdapter(user_agent=user_agent, logger=logger)
     cover_art_file_store = CoverArtFileStoreAdapter()
     sgdb_artwork_cache = SgdbArtworkCacheAdapter(runtime_dir=runtime_dir)
     download_file_store = DownloadFileAdapter()
@@ -385,6 +390,7 @@ def bootstrap(
         save_file_store=save_file_store,
         path_probe=path_probe,
         core_info_provider=core_resolver,
+        release_api=release_api,
     )
     stores = StateBundle(
         settings=settings,
@@ -845,6 +851,19 @@ def wire_services(cfg: WiringConfig) -> dict[str, Any]:
         ),
     )
 
+    # Self-update check (never installs — the frontend hands the validated
+    # release to Decky's own installer, which asks the user to confirm).
+    update_service = UpdateService(
+        config=UpdateServiceConfig(
+            release_api=cfg.adapters.release_api,
+            plugin_metadata=cfg.callbacks.plugin_metadata,
+            plugin_dir=cfg.runtime.plugin_dir,
+            clock=cfg.runtime.clock,
+            loop=cfg.runtime.loop,
+            logger=cfg.runtime.logger,
+        ),
+    )
+
     return {
         "save_sync_service": save_sync_service,
         "playtime_service": playtime_service,
@@ -869,4 +888,5 @@ def wire_services(cfg: WiringConfig) -> dict[str, Any]:
         "session_lifecycle_service": session_lifecycle_service,
         "relaunch_options_resolver": relaunch_options_resolver,
         "install_adoption_service": install_adoption_service,
+        "update_service": update_service,
     }

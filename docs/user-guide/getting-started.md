@@ -38,13 +38,13 @@ Before installing the plugin, you need:
    The URL for the latest release follows this pattern:
 
    ```text
-   https://github.com/ricktap/romm-emudecky-ng/releases/download/romm-emudecky-ng-v{VERSION}/romm-emudecky-ng.zip
+   https://github.com/ricktap/romm-emudecky-ng/releases/download/v{VERSION}/romm-emudecky-ng.zip
    ```
 
    For example, for v0.26.1:
 
    ```text
-   https://github.com/ricktap/romm-emudecky-ng/releases/download/romm-emudecky-ng-v0.26.1/romm-emudecky-ng.zip
+   https://github.com/ricktap/romm-emudecky-ng/releases/download/v0.26.1/romm-emudecky-ng.zip
    ```
 
 6. Decky downloads and installs the plugin automatically — no restart needed
@@ -62,6 +62,27 @@ Any direct URL to the zip file works (GitHub releases, a self-hosted mirror, etc
 2. Extract the zip to `~/homebrew/plugins/` on your device (via SSH, file manager, or USB)
 3. Restart Decky Loader — either reboot, or run `sudo systemctl restart plugin_loader` via SSH
 4. The plugin appears in your QAM under the Decky tab
+
+### Updating
+
+You only install by URL once. After that the plugin checks GitHub for a newer release by itself:
+
+- **When:** shortly after the plugin starts, then at most every 6 hours (sooner after a failed check). Opening the QAM
+  reuses the last result, so it never spams GitHub.
+- **Where it shows:** an **Update available: vX.Y.Z** card at the top of the plugin's QAM page, with the release notes
+  (long notes behind **Show release notes**) and an **Update** button.
+- **Installing:** **Update** hands the release to Decky Loader's own installer. Decky shows its usual install
+  confirmation — nothing changes until you confirm. Decky then downloads the zip, checks its SHA-256 checksum, replaces
+  the plugin and reloads it. Your settings, library database and downloads are kept (they live outside the plugin
+  folder).
+- **Manual check:** **Settings → Updates** shows the installed version and the result of the last check. **Check for
+  updates** checks right away.
+- **If Decky can't start the update** (for example after a Decky Loader change), the card says _Couldn't start the
+  update — download vX.Y.Z_ and offers a **Download** button that opens the release page; install that zip by URL as
+  above.
+
+Only full releases are offered (no pre-releases), and only a `romm-emudecky-ng.zip` from this project's GitHub
+releases with a published checksum is accepted. The plugin never installs anything without your confirmation.
 
 ## First-Time Setup
 

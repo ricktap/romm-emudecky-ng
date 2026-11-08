@@ -49,6 +49,8 @@ import { WarningCard } from "./WarningCard";
 import { MigrationBlockedPage } from "./MigrationBlockedPage";
 import { SettingsResetBanner } from "./SettingsResetBanner";
 import { PlaytimeScopeBanner } from "./PlaytimeScopeBanner";
+import { UpdateBanner } from "./UpdateBanner";
+import { getUpdateState, onUpdateStateChange, refreshUpdateState } from "../utils/updateStore";
 import type {
   SyncProgress,
   SyncStage,
@@ -236,6 +238,7 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
   const [migration, setMigration] = useState<MigrationStatus>(getMigrationState());
   const [settingsReset, setSettingsReset] = useState(getSettingsResetState());
   const [playtimeScope, setPlaytimeScope] = useState(getPlaytimeScopeState());
+  const [updateState, setUpdateState] = useState(getUpdateState());
   const [saveSortMigration, setSaveSortMigration] = useState(getSaveSortMigrationState());
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -330,6 +333,11 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
     // self-clears once a scoped token is minted, so we re-read it on every mount.
     fetchPlaytimeScopeState().catch((e) => logError(`Failed to check playtime scope notice: ${e}`));
 
+    // Self-update notice. Non-forced: the backend reuses its last check for up
+    // to 6 h, so opening the QAM does not hit GitHub every time. Failures fold
+    // into the store (never reject).
+    refreshUpdateState(false).catch(() => undefined);
+
     // Backend is authoritative for in-flight sync state. Seed the module
     // store from get_sync_status() so a QAM close/reopen recovers the live
     // run rather than guessing from the event-fed store alone.
@@ -372,6 +380,7 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
     const unsubMigration = onMigrationChange(() => setMigration(getMigrationState()));
     const unsubSettingsReset = onSettingsResetChange(() => setSettingsReset(getSettingsResetState()));
     const unsubPlaytimeScope = onPlaytimeScopeChange(() => setPlaytimeScope(getPlaytimeScopeState()));
+    const unsubUpdate = onUpdateStateChange(() => setUpdateState(getUpdateState()));
     const unsubSaveSort = onSaveSortMigrationChange(() => setSaveSortMigration(getSaveSortMigrationState()));
     return () => {
       cancelled = true;
@@ -380,6 +389,7 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
       unsubMigration();
       unsubSettingsReset();
       unsubPlaytimeScope();
+      unsubUpdate();
       unsubSaveSort();
       if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);
       if (downloadPollRef.current) clearInterval(downloadPollRef.current);
@@ -717,6 +727,7 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
     <>
       {settingsReset.pending && <SettingsResetBanner backedUpTo={settingsReset.backedUpTo} />}
       {playtimeScope.pending && <PlaytimeScopeBanner />}
+      {updateState.info?.update_available && <UpdateBanner info={updateState.info} />}
       <PanelSection title="Status">
         {retrodeckBanner && (
           <PanelSectionRow>

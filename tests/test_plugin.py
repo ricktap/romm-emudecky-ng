@@ -724,6 +724,8 @@ _MIGRATION_BLOCKED_WHITELIST: set[str] = {
     "sign_out",
     "save_server_url",
     "get_settings",
+    # Self-update check — reads GitHub + plugin metadata, never RetroDECK state.
+    "check_for_update",
     "get_whitelist_settings",
     "update_whitelist_settings",
     "save_collection_platform_groups",
@@ -960,6 +962,7 @@ class TestMainStartupOrdering:
 
         connection_service = MagicMock()
         connection_service.migrate_legacy_credentials = AsyncMock()
+        update_service = MagicMock()
 
         wired_services = {
             "save_sync_service": save_sync_service,
@@ -984,6 +987,7 @@ class TestMainStartupOrdering:
             "launch_gate_service": MagicMock(),
             "session_lifecycle_service": MagicMock(),
             "relaunch_options_resolver": MagicMock(),
+            "update_service": update_service,
         }
 
         bootstrap_result = BootstrapResult(
@@ -1001,6 +1005,7 @@ class TestMainStartupOrdering:
                 save_file_store=MagicMock(),
                 path_probe=MagicMock(),
                 core_info_provider=MagicMock(),
+                release_api=MagicMock(),
             ),
             stores=StateBundle(
                 settings={},
@@ -1040,6 +1045,8 @@ class TestMainStartupOrdering:
         assert call_order.index("detect_retrodeck_path_change") < call_order.index("prune_stale_installed_roms")
         # The durable download queue is restored on startup (replaces the old blanket tmp wipe).
         download_service.reconcile_persisted_downloads.assert_called_once_with()
+        # One throttled self-update check is scheduled in the background (never awaited).
+        update_service.schedule_background_check.assert_called_once_with()
 
 
 class TestCancelCallablesNotBlockedByMigration:

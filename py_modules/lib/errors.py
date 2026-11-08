@@ -16,6 +16,20 @@ class SgdbApiError(Exception):
         self.status_code = status_code
 
 
+class ReleaseFeedError(Exception):
+    """Raised by the GitHub release-feed adapter when the latest release can't be read.
+
+    ``kind`` is one of ``"unreachable"`` (network/timeout/5xx/other HTTP),
+    ``"rate_limited"`` (HTTP 403/429), or ``"bad_response"`` (non-JSON body).
+    Wraps urllib errors so services never import urllib.
+    """
+
+    def __init__(self, kind: str, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.status_code = status_code
+
+
 class SteamGridDirMissingError(Exception):
     """Raised when the Steam grid directory cannot be located.
 

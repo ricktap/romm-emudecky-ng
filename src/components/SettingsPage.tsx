@@ -46,6 +46,7 @@ import { SaveSyncSection } from "./settings/SaveSyncSection";
 import { RegisteredDevicesSection } from "./settings/RegisteredDevicesSection";
 import { ControllerSection } from "./settings/ControllerSection";
 import { AdvancedSection } from "./settings/AdvancedSection";
+import { UpdatesSection } from "./settings/UpdatesSection";
 import { LibrarySection, AUTO_REGION, DEFAULT_REGION_LABEL } from "./settings/LibrarySection";
 import { showPreferredRegionModal } from "./settings/PreferredRegionModal";
 
@@ -595,6 +596,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
         libraryRegions={libraryRegions}
         onPreferredRegionChange={handlePreferredRegionChange}
       />
+
+      <UpdatesSection />
 
       <AdvancedSection logLevel={logLevel} onLogLevelChange={handleLogLevelChange} />
     </>
