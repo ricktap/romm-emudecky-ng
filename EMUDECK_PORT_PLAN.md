@@ -120,7 +120,7 @@ Local dev note: this Mac has no `mise` and no `.venv`, so the test baseline stil
   folder `~/homebrew/plugins/romm-emudecky`, User-Agent `romm-emudecky/<version>`, the device client name registered on
   RomM, and the `localStorage` key. Upstream issue links, CHANGELOG history, ADRs, SQL migrations and the old
   `romm-sync:playtime` server note keep their old names. The slug is a play on Decky Loader + EmuDeck. The GitHub repo
-  is `ricktap/romm-emudecky-ng` (renamed from `Romm-emudecky`; docs site `ricktap.github.io/romm-emudecky-ng`), and its
+  is `ricktap/romm-emudecky-ng` (renamed from `Romm-emudecky`), and its
   README heading is "EmuDecky RomM Manager - Decky Loader Plugin". Everywhere else, including the QAM, toasts, docs and
   store, the name is just "EmuDecky RomM Manager". README and store description say the plugin is unofficial and not
   affiliated with EmuDeck or RomM.
@@ -132,40 +132,30 @@ Local dev note: this Mac has no `mise` and no `.venv`, so the test baseline stil
 
 ## 4. Phases
 
-Each phase is shippable and testable on real hardware before the next one starts. Every phase updates the docs it
-touches in the same PR (CLAUDE.md docs rule). Build order follows the brief.
+Each phase is shippable and testable on real hardware before the next one starts. Build order follows the brief.
 
 ### Phase 0 — Baseline (½ day)
 
-- [x] Local baseline recorded and made green (`chore/green-baseline`, 2026-11-08).
+- [x] Green baseline, then the repo slimmed down to tests + release only (2026-11-08).
 - [ ] Deploy the current HEAD to the Deck. Confirm the plugin loads and that the EmuDeck path health reads correctly on
       internal storage **and** on SD.
 
-**Green baseline (2026-11-08, macOS / Apple Silicon).** Every CI gate passes locally:
+**Baseline (2026-11-08):** 4813 Python tests and 1669 frontend tests pass (frontend on Node 24 and 25), and `pnpm build`
+works. Python 3.11 (`uv venv --python 3.11`), pnpm 10.29.3.
 
-- pytest: 4922 passed, coverage 95% (branch).
-- vitest: 1669 passed, coverage 92.8% statements / 88.5% branches.
-- ruff check + format, basedpyright (0 errors), lint-imports (8 contracts), and every `scripts/check_*` gate.
-- pnpm lint (1 `exhaustive-deps` warning), prettier, typecheck, build, size (639.9 of 650 kB — tight; watch it in Phases
-  4/7).
-- `deno fmt --check`.
+**Repo simplification (2026-11-08):** CI is now two workflows. `test.yml` runs both test suites on every push to any
+branch. `release.yml` builds and publishes a release when a `v*` tag is pushed, with notes generated from the commits
+since the previous tag.
 
-Toolchain: Python 3.11.14 (`uv venv --python 3.11`, deps from `requirements-dev.lock`), pnpm 10.29.3, deno 2.9.8. The
-frontend suite passes on both Node 24 (the pin) and Node 25. Node ≥ 25 ships a built-in global `localStorage` that
-shadowed happy-dom's and broke 23 `sessionManager` tests. `vitest.config.ts` now passes `--no-experimental-webstorage`
-to the test workers, so no local flag is needed.
+Removed:
 
-What it took to get green (inherited issues, not regressions):
+- all linters, formatters and type-check gates (ruff, basedpyright, import-linter, eslint, prettier, deno fmt,
+  markdownlint, size-limit), the pre-commit hook, and the `scripts/check_*` architecture gates;
+- release-please, renovate, the labeler, PR-title / issue-assign / docs-check workflows, issue templates and
+  CODEOWNERS;
+- SonarCloud, and the MkDocs site build and deploy (`docs/` stays as plain Markdown).
 
-- ruff import-sort / unused-import / line-length and `ruff format` on melikootje's EmuDeck commits.
-- `deno fmt` on 7 docs from the rebrand commit.
-- `check_settings_owner.py`: added a documented `FOREIGN_SETTINGS_READERS` allowlist. `adapters/emudeck_paths.py` reads
-  EmuDeck's own `settings.json` (same filename, different file).
-- `check_cosmic_call_bans.sh` / `check_no_bare_ignores.sh`: grep only `*.py`. Before, a local `__pycache__` `.pyc` file
-  made them fail.
-- Two tests that only passed on Linux or with a specific checkout name. `test_persistence` now detects a directory fd
-  with `os.fstat` instead of `/proc`, and the rom-launcher exe test compares against `DECKY_PLUGIN_DIR` instead of
-  requiring the folder to be named `decky-romm-sync`.
+The callable and event parity checks survive as contract tests. `CLAUDE.md` is a short page of real constraints.
 
 ### Phase 1 — Durable download queue (brief §5.1) — _highest priority_
 

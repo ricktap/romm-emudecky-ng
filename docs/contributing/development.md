@@ -202,23 +202,16 @@ See [Backend Architecture](../architecture/backend-architecture.md) for details.
 
 ## Releasing
 
-Releases are deliberate: nothing is published by a merge alone.
-[release-please](https://github.com/googleapis/release-please) (`.github/workflows/release.yml`) drives the process from
-the conventional-commit messages on `main`.
+Push a version tag; that is the whole release step:
 
-1. **Every push to `main`** updates a standing release PR titled `chore(main): release x.y.z`. It contains the version
-   bump (`package.json`, `plugin.json`, `.release-please-manifest.json`) and the new `CHANGELOG.md` section, generated
-   from the `feat:` / `fix:` / `perf:` commits since the last release (and `!` / `BREAKING CHANGE` for breaking ones).
-   While the version is below 1.0, `feat:` bumps the minor and `fix:` bumps the patch.
-2. **Review the release PR.** Edit the changelog text in the PR if you want to reword it; your edits are kept.
-3. **Merge the release PR when you want to ship.** release-please then tags `romm-emudecky-vX.Y.Z`, creates the GitHub
-   Release with that changelog section as its notes, and the `build-plugin` job builds, smoke-tests and attaches
-   `romm-emudecky.zip`.
+```bash
+git tag v0.27.0
+git push origin v0.27.0
+```
 
-Because the release PR is opened with the built-in `GITHUB_TOKEN`, CI does not run on it automatically; it only touches
-version numbers and the changelog. The repo setting **Settings → Actions → General → "Allow GitHub Actions to create and
-approve pull requests"** must be enabled, or release-please cannot open the PR. `workflow_dispatch` re-runs the build
-for the latest release (e.g. to re-attach a zip).
+`.github/workflows/release.yml` then stamps the version from the tag into `package.json` / `plugin.json`, builds and
+smoke-tests `romm-emudecky.zip`, and publishes a GitHub Release whose notes list the commit subjects since the previous
+tag.
 
 ## Project Structure
 

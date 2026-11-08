@@ -63,7 +63,7 @@ gear icon → toggle **Developer Mode**).
    [latest release link](https://github.com/ricktap/romm-emudecky-ng/releases/latest/download/romm-emudecky.zip))
 
 > Full step-by-step instructions, including first-time setup, are in
-> [Getting Started](https://ricktap.github.io/romm-emudecky-ng/user-guide/getting-started/).
+> [Getting Started](docs/user-guide/getting-started.md).
 
 ## Quick start
 
@@ -72,18 +72,18 @@ gear icon → toggle **Developer Mode**).
 3. In **Platforms**, enable the platforms you want to sync
 4. Hit **Sync Library** — your ROMs appear as non-steam shortcuts
 
-See the [User Guide](https://ricktap.github.io/romm-emudecky-ng/user-guide/syncing-your-library/) for syncing details,
-[save sync](https://ricktap.github.io/romm-emudecky-ng/user-guide/save-sync/), and
-[BIOS management](https://ricktap.github.io/romm-emudecky-ng/user-guide/bios-management/).
+See the [User Guide](docs/user-guide/syncing-your-library.md) for syncing details,
+[save sync](docs/user-guide/save-sync.md), and
+[BIOS management](docs/user-guide/bios-management.md).
 
 ## Contributing
 
 Build from source, run the tests, and read the architecture reference on the documentation site:
 
-- [Development setup](https://ricktap.github.io/romm-emudecky-ng/contributing/development/)
-- [Frontend dev loop](https://ricktap.github.io/romm-emudecky-ng/contributing/frontend-dev-loop/) — live-reload the UI
+- [Development setup](docs/contributing/development.md)
+- [Frontend dev loop](docs/contributing/frontend-dev-loop.md) — live-reload the UI
   into a windowed Big Picture on the Deck, no Game Mode switching
-- [Backend architecture](https://ricktap.github.io/romm-emudecky-ng/architecture/backend-architecture/)
+- [Backend architecture](docs/architecture/backend-architecture.md)
 
 ## Acknowledgments
 

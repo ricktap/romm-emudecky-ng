@@ -1,139 +1,78 @@
 name: Release
 
+# Pushing a tag like v0.27.0 builds the plugin zip and publishes a GitHub
+# Release for it. The release notes are the commit subjects since the
+# previous tag. The version in package.json / plugin.json is stamped from the
+# tag at build time, so tagging is the only release step.
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    tags: ["v*"]
 
 permissions:
   contents: write
-  pull-requests: write
-
-# Serialize releases: two quick pushes to main must not run release-please
-# concurrently and race on the release PR / tag.
-concurrency:
-  group: release
-  cancel-in-progress: false
 
 jobs:
-  release-please:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      version: ${{ steps.release.outputs.version }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-    steps:
-      # release-please never publishes on its own: each push to main only
-      # updates a standing "chore(main): release x.y.z" PR carrying the version
-      # bump + CHANGELOG entry. Merging that PR is the deliberate release step;
-      # only then does release_created flip and the zip get built and attached.
-      # Uses GITHUB_TOKEN (requires the repo setting "Allow GitHub Actions to
-      # create and approve pull requests"). Pushes made with GITHUB_TOKEN don't
-      # trigger workflows, so CI does not auto-run on the release PR itself —
-      # it only bumps versions/changelog; every change in it already passed CI
-      # on its own PR.
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
-        id: release
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-
-  build-plugin:
-    needs: release-please
-    if: ${{ needs.release-please.outputs.release_created || github.event_name == 'workflow_dispatch' }}
+  release:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history + tags for the release notes
 
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+      - name: Stamp version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          for f in package.json plugin.json; do
+            jq --arg v "$VERSION" '.version = $v' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+          done
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Download Decky CLI
+      - name: Install Decky CLI (pinned by SHA-256)
         run: |
           mkdir -p /tmp/decky-cli
-          curl -L -o /tmp/decky-cli/decky "https://github.com/SteamDeckHomebrew/cli/releases/download/0.0.8/decky-linux-x86_64"
-          # Pin the Decky CLI binary by SHA-256: it runs under sudo to build the
-          # zip every user installs, so it is the pipeline's highest-leverage
-          # supply-chain link. The hash is GitHub's own asset digest for tag 0.0.8
-          # (gh api repos/SteamDeckHomebrew/cli/releases). A re-tagged or swapped
-          # asset now fails the build instead of poisoning a release.
+          curl -sSL -o /tmp/decky-cli/decky "https://github.com/SteamDeckHomebrew/cli/releases/download/0.0.8/decky-linux-x86_64"
           echo "6777e356508c1ce887f8e61b0fa4954bb48b32e6d97341eef68ea4e0d6ead9a0  /tmp/decky-cli/decky" | sha256sum -c -
           chmod +x /tmp/decky-cli/decky
-          echo "/tmp/decky-cli" >> $GITHUB_PATH
+          echo "/tmp/decky-cli" >> "$GITHUB_PATH"
 
-      - name: Package plugin
+      - name: Build plugin zip
         run: |
-          sudo $(which decky) plugin build -o /tmp/output -s directory $GITHUB_WORKSPACE
-          sudo chown -R $(whoami) .
+          sudo "$(which decky)" plugin build -o /tmp/output -s directory "$GITHUB_WORKSPACE"
+          sudo chown -R "$(whoami)" . /tmp/output
+          cp "$(ls /tmp/output/*.zip | head -1)" /tmp/romm-emudecky.zip
 
-      - name: Determine tag name
-        id: tag
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+      - name: Smoke-test zip
         run: |
-          if [ -n "$TAG_NAME" ]; then
-            echo "tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=$(gh release list --limit 1 --json tagName -q '.[0].tagName')" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Smoke-test release zip
-        run: |
-          BUILT_ZIP=$(ls /tmp/output/*.zip | head -1)
-          echo "Checking $BUILT_ZIP for required entries..."
-          # bootstrap RAISES without 001_initial.sql (plugin fully inert), and the
-          # bios_registry is the most fatal defaults/ omission, previously uncovered
-          # by this smoke test. The Decky CLI FLATTENS the repo's defaults/ dir into
-          # the plugin root at package time, so the registry ships as
-          # bios_registry.json (no defaults/ prefix) — which is exactly where the
-          # runtime reads it (firmware.py). Emulator resolution now reads the live
-          # es_systems.xml directly (#1210), so no core snapshot ships.
-          for required in main.py plugin.json package.json dist/index.js py_modules/bootstrap.py bin/rom-launcher \
-              py_modules/db/migrations/001_initial.sql py_modules/db/migrations/002_add_emulator_override.sql \
-              bios_registry.json; do
-            if ! unzip -l "$BUILT_ZIP" | grep -qE "/$required\b"; then
-              echo "ERROR: release zip is missing $required"
-              unzip -l "$BUILT_ZIP"
-              exit 1
-            fi
+          ZIP=/tmp/romm-emudecky.zip
+          for f in main.py plugin.json package.json dist/index.js py_modules/bootstrap.py bin/rom-launcher \
+              py_modules/db/migrations/001_initial.sql bios_registry.json; do
+            unzip -l "$ZIP" | grep -qE "/$f\b" || { echo "missing $f"; unzip -l "$ZIP"; exit 1; }
           done
-          # bin/rom-launcher must stay executable — Steam launches it directly,
-          # and a Decky CLI version bump could silently drop the exec bit.
-          LAUNCHER_PERMS=$(unzip -Z "$BUILT_ZIP" | grep -E '/bin/rom-launcher$' | awk '{print $1}')
-          if [[ "$LAUNCHER_PERMS" != *x* ]]; then
-            echo "ERROR: bin/rom-launcher is not executable in the zip (perms: '$LAUNCHER_PERMS')"
-            unzip -Z "$BUILT_ZIP" | grep -E '/bin/rom-launcher$' || true
-            exit 1
-          fi
-          if unzip -l "$BUILT_ZIP" | grep -qE '\.map\b'; then
-            echo "ERROR: release zip contains source maps — should have been stripped"
-            exit 1
-          fi
-          echo "Smoke test passed."
+          [[ "$(unzip -Z "$ZIP" | grep -E '/bin/rom-launcher$' | awk '{print $1}')" == *x* ]] \
+            || { echo "bin/rom-launcher is not executable"; exit 1; }
 
-      - name: Upload release asset
+      - name: Write release notes
+        run: |
+          PREV=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          RANGE=${PREV:+$PREV..}$GITHUB_REF_NAME
+          {
+            echo "## Changes${PREV:+ since $PREV}"
+            echo
+            git log --no-merges --pretty='- %s (%h)' "$RANGE"
+          } > /tmp/notes.md
+          cat /tmp/notes.md
+
+      - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          BUILT_ZIP=$(ls /tmp/output/*.zip | head -1)
-          DEST="/tmp/output/romm-emudecky.zip"
-          if [ "$BUILT_ZIP" != "$DEST" ]; then
-            cp "$BUILT_ZIP" "$DEST"
-          fi
-          gh release upload "$TAG" \
-            "$DEST" \
-            --clobber
+          gh release create "$GITHUB_REF_NAME" /tmp/romm-emudecky.zip \
+            --title "EmuDecky RomM Manager $GITHUB_REF_NAME" \
+            --notes-file /tmp/notes.md

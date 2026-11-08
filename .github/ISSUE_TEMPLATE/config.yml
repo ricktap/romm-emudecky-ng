@@ -1,8 +1,0 @@
-blank_issues_enabled: false
-contact_links:
-  - name: Documentation
-    url: https://ricktap.github.io/romm-emudecky-ng/
-    about: Architecture, file structure, user guide, and contributing docs
-  - name: Discussions
-    url: https://github.com/ricktap/romm-emudecky-ng/discussions
-    about: Questions, ideas, and general conversation that aren't bug reports or specific feature requests
