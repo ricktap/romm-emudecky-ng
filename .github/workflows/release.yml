@@ -58,13 +58,27 @@ jobs:
           # the checkout dir, so a renamed repo would silently change it.
           TOP=$(unzip -Z1 "$ZIP" | head -1 | cut -d/ -f1)
           [ "$TOP" = "romm-emudecky-ng" ] || { echo "zip top folder is '$TOP', expected 'romm-emudecky-ng'"; exit 1; }
-          for f in main.py plugin.json package.json dist/index.js py_modules/bootstrap.py py_modules/backend.py \
-              py_modules/rpc/server.py py_modules/rpc/client.py bin/rom-launcher-ng \
-              py_modules/db/migrations/001_initial.sql bios_registry.json; do
+          # The shim needs only the protocol client from py_modules/; the native
+          # backend (built by the Decky CLI from backend/ in Docker) is bin/.
+          for f in main.py plugin.json package.json dist/index.js py_modules/rpc/client.py \
+              py_modules/rpc/protocol.py bin/rom-launcher-ng bin/romm-emudecky-ng-backend bios_registry.json; do
             unzip -l "$ZIP" | grep -qE "/$f\b" || { echo "missing $f"; unzip -l "$ZIP"; exit 1; }
           done
-          [[ "$(unzip -Z "$ZIP" | grep -E '/bin/rom-launcher-ng$' | awk '{print $1}')" == *x* ]] \
-            || { echo "bin/rom-launcher-ng is not executable"; exit 1; }
+          for exe in bin/rom-launcher-ng bin/romm-emudecky-ng-backend; do
+            [[ "$(unzip -Z "$ZIP" | grep -E "/$exe\$" | awk '{print $1}')" == *x* ]] \
+              || { echo "$exe is not executable"; exit 1; }
+          done
+          # The backend must be a Linux x86-64 executable that runs on SteamOS
+          # (holo, the image it was built in) and on Bazzite (Fedora-based).
+          rm -rf /tmp/smoke && mkdir /tmp/smoke && unzip -q "$ZIP" -d /tmp/smoke
+          file "/tmp/smoke/$TOP/bin/romm-emudecky-ng-backend" | grep -q 'ELF 64-bit LSB.*x86-64' \
+            || { file "/tmp/smoke/$TOP/bin/romm-emudecky-ng-backend"; exit 1; }
+          for image in ghcr.io/steamdeckhomebrew/holo-base:latest registry.fedoraproject.org/fedora:latest; do
+            COUNT=$(docker run --rm -v "/tmp/smoke/$TOP/bin:/plugin-bin:ro" "$image" \
+              /plugin-bin/romm-emudecky-ng-backend --list-methods | jq length)
+            [ "$COUNT" -gt 0 ] || { echo "backend --list-methods failed on $image"; exit 1; }
+            echo "backend lists $COUNT callables on $image"
+          done
 
       - name: Write release notes
         if: startsWith(github.ref, 'refs/tags/')

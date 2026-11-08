@@ -1,0 +1,5 @@
+# The compiler that builds the shipped backend — the Decky CLI's Docker build
+# (backend/Dockerfile), CI, and local `cargo` all use this exact version.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"

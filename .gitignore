@@ -46,3 +46,8 @@ coverage.json
 
 # Frontend test coverage
 coverage/
+
+# Native backend build output
+backend/target/
+backend/out/
+*.profraw

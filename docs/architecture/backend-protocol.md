@@ -1,10 +1,11 @@
 # Backend protocol
 
 The frontend never talks to the backend directly. Decky calls methods on the `Plugin` class in `main.py` (the **shim**),
-and the shim forwards every call over a local socket to the **backend**. Today the backend is the Python code in
-`py_modules/` (`backend.Backend`), running inside the plugin process. The 0.40.0 rewrite replaces it with a Rust binary
-that speaks this same protocol; the contract tests (`tests/contract/`) run through this protocol so they keep passing
-unchanged.
+and the shim forwards every call over a local socket to the **backend**. On the `rust` branch (the 0.40.0 rewrite) the
+backend is a native binary, `bin/romm-emudecky-ng-backend`, built from `backend/` and spawned by the shim as a child
+process. The Python backend in `py_modules/` (`backend.Backend`) speaks the same protocol and stays in the tree as the
+specification of every callable not yet ported; the Python contract tests (`tests/contract/`) still drive it through
+this protocol, and the Rust integration tests (`backend/tests/`) drive the binary the same way.
 
 ## Transport
 
@@ -17,14 +18,14 @@ unchanged.
 
 ## Messages
 
-| Direction       | Shape                                              | Meaning                                         |
-| --------------- | -------------------------------------------------- | ----------------------------------------------- |
-| shim → backend  | `{"id": n, "method": "<name>", "args": [...]}`     | Call a callable with positional JSON arguments. |
-| backend → shim  | `{"id": n, "result": <json>}`                      | The call succeeded.                             |
-| backend → shim  | `{"id": n, "error": {"message": "..."}}`           | The call failed (exception, bad arity, …).      |
-| backend → shim  | `{"event": "<name>", "args": [...]}`               | An event for the frontend (`decky.emit`).       |
-| shim → backend  | `{"id": n, "method": "__list_methods__"}`          | Result: the list of callable names.             |
-| shim → backend  | `{"id": n, "method": "__shutdown__"}`              | Run shutdown work, answer, then close.          |
+| Direction      | Shape                                          | Meaning                                         |
+| -------------- | ---------------------------------------------- | ----------------------------------------------- |
+| shim → backend | `{"id": n, "method": "<name>", "args": [...]}` | Call a callable with positional JSON arguments. |
+| backend → shim | `{"id": n, "result": <json>}`                  | The call succeeded.                             |
+| backend → shim | `{"id": n, "error": {"message": "..."}}`       | The call failed (exception, bad arity, …).      |
+| backend → shim | `{"event": "<name>", "args": [...]}`           | An event for the frontend (`decky.emit`).       |
+| shim → backend | `{"id": n, "method": "__list_methods__"}`      | Result: the list of callable names.             |
+| shim → backend | `{"id": n, "method": "__shutdown__"}`          | Run shutdown work, answer, then close.          |
 
 - `id` is chosen by the shim and echoed back. Requests are handled concurrently, so responses can arrive in any order.
 - An unknown method gets an error response (`unknown method: <name>`). A frame that is not valid JSON gets an error
@@ -36,28 +37,53 @@ unchanged.
 
 ## Lifecycle
 
-1. Decky calls `Plugin._main()`. The shim calls `_launch_backend(socket_path)` — the only place that knows which backend
-   runs. Today it calls `backend.serve_in_process`, which runs the startup work (`Backend._main`: wire services,
-   migrations, startup healing, background tasks) and then binds the socket. Later it spawns `bin/<binary>` instead.
-2. The shim connects (retrying until the socket accepts), sends `__list_methods__`, and adds one `async def` forwarder per
-   name to `Plugin`. Decky resolves the frontend's `callable("name")` to these forwarders.
-3. Each event frame is passed to `decky.emit(name, *args)`.
-4. Decky calls `Plugin._unload()`. The shim sends `__shutdown__`; the backend runs its shutdown work (`Backend._unload`),
-   answers, and closes. The shim then closes its connection.
+1. At import, the shim runs `bin/romm-emudecky-ng-backend --list-methods` (prints the callable names as a JSON array)
+   and adds one `async def` forwarder per name to `Plugin`. Decky serves frontend calls in parallel with `_main`, so the
+   forwarders must exist before the backend runs; a call that arrives during startup waits (up to 60 s) for it. A
+   missing or broken binary yields an empty list (logged) and the plugin stays inert.
+2. Decky calls `Plugin._main()`. The shim spawns `bin/romm-emudecky-ng-backend --socket <path>` with the Decky
+   directories in its environment (`DECKY_PLUGIN_SETTINGS_DIR`, `…_RUNTIME_DIR`, `…_LOG_DIR`, `DECKY_PLUGIN_DIR`,
+   `DECKY_USER_HOME`). The backend runs its startup work (SQLite migrations, settings load + upgrade, legacy credential
+   migration) and then binds the socket (mode `0600`).
+3. The shim connects (retrying until the socket accepts; it gives up at once if the process exits first), sends
+   `__list_methods__`, and adds forwarders for any name the static list missed.
+4. Each event frame is passed to `decky.emit(name, *args)`.
+5. Decky calls `Plugin._unload()`. The shim sends `__shutdown__`; the backend runs its shutdown work, answers, closes,
+   and exits. The shim closes its connection and reaps the process (killing it after 10 s).
 
 If the connection drops, pending calls fail and the next call reconnects once. If the backend fails to start, the shim
-logs it and the plugin stays inert.
+logs it and the plugin stays inert. The backend also exits cleanly on `SIGTERM`, and on Linux asks the kernel to send it
+`SIGTERM` when the plugin process dies (`PR_SET_PDEATHSIG`), so it never outlives Decky. It logs to
+`<DECKY_PLUGIN_LOG_DIR>/backend.log` (stderr when that variable is unset).
+
+Callables the Rust backend has not ported yet are still listed (the frontend's callable surface never changes) but
+answer with the error `not implemented in the Rust backend yet: <name>`. The listed surface is `backend/callables.json`;
+`tests/test_rust_backend_callables.py` keeps it identical to the Python `Backend`.
 
 ## Code
 
-| Piece                          | File                         |
-| ------------------------------ | ---------------------------- |
-| Framing and message shapes     | `py_modules/rpc/protocol.py` |
-| Backend side (server)          | `py_modules/rpc/server.py`   |
-| Shim side (client)             | `py_modules/rpc/client.py`   |
-| Python backend + its callables | `py_modules/backend.py`      |
-| Decky shim                     | `main.py`                    |
+| Piece                                  | File                                                     |
+| -------------------------------------- | -------------------------------------------------------- |
+| Decky shim (spawn, forwarders, relay)  | `main.py`                                                |
+| Shim side (client)                     | `py_modules/rpc/client.py`, `py_modules/rpc/protocol.py` |
+| Rust backend: protocol server          | `backend/src/rpc/`                                       |
+| Rust backend: composition + callables  | `backend/src/app.rs`, `backend/callables.json`           |
+| Rust backend: entry point              | `backend/src/main.rs`                                    |
+| Python backend (spec, in-process only) | `py_modules/backend.py`, `py_modules/rpc/server.py`      |
 
-The callable surface is the public `async def` methods of `backend.Backend`. `scripts/check_callable_manifest.py` (and
-`tests/contract/test_callable_manifest.py`) compares it with the frontend's `callable<...>("name")` declarations; it
-reads `py_modules/backend.py`, not `main.py`, because the shim's methods are generated.
+`scripts/check_callable_manifest.py` (and `tests/contract/test_callable_manifest.py`) compares the frontend's
+`callable<...>("name")` declarations with the public `async def` methods of `backend.Backend`; it reads
+`py_modules/backend.py`, not `main.py`, because the shim's methods are generated.
+
+## Building the native backend
+
+`backend/` follows the Decky plugin template for native backends. `decky plugin build` sees `backend/Dockerfile`, builds
+that image (`ghcr.io/steamdeckhomebrew/holo-toolchain-rust`, i.e. SteamOS with rustup and gcc), mounts `backend/` at
+`/backend` and the zip's `bin/` staging directory at `/backend/out`, and runs `backend/entrypoint.sh`, which runs
+`make`. The `Makefile` builds `cargo build --release --locked` and copies the binary to `out/`, so it ships as
+`bin/romm-emudecky-ng-backend` next to the existing `bin/` files. The compiler version is pinned in
+`backend/rust-toolchain.toml`. TLS uses rustls with the bundled Mozilla roots and SQLite is compiled in, so the binary
+needs no OpenSSL or system SQLite (SteamOS and Bazzite).
+
+Locally: `cd backend && cargo test` (unit + integration tests; the integration tests spawn the real binary on a temp
+socket against a fake RomM server), `cargo llvm-cov --summary-only` for coverage.

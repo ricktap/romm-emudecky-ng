@@ -1,14 +1,23 @@
 """The Decky shim (``main.py``): forwarder generation, launch, and unload.
 
 The shim must carry no callable logic — it generates one forwarder per name the
-backend lists and relays everything over the socket.
+backend lists and relays everything over the socket. The spawn path is driven
+with a stand-in backend executable (a Python script speaking the protocol), and
+— when it has been built — against the real Rust binary.
 """
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
+import os
+import stat
+import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 import main
 from rpc import protocol
@@ -95,13 +104,129 @@ async def test_main_stays_inert_when_backend_fails_to_start():
     await plugin._unload()  # no client, no backend — must not raise
 
 
-def test_forwarders_exist_at_import_for_every_backend_callable():
-    """Decky serves frontend calls in parallel with ``_main`` — the methods must already exist."""
-    names = main.static_callable_names()
-    assert "get_settings" in names
-    assert "start_download" in names
-    for name in names:
-        assert inspect.iscoroutinefunction(getattr(main.Plugin, name)), name
+_PY_MODULES = Path(__file__).resolve().parent.parent / "py_modules"
+_REPO = Path(__file__).resolve().parent.parent
+
+
+def _fake_backend(tmp_path: Path, body: str) -> str:
+    """Write an executable stand-in for ``bin/romm-emudecky-ng-backend``."""
+    script = tmp_path / "fake-backend"
+    script.write_text(f"#!{sys.executable}\nimport sys\nsys.path.insert(0, {str(_PY_MODULES)!r})\n{body}")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    return str(script)
+
+
+_SERVING_BACKEND = """
+import asyncio, json, logging, os
+from rpc.server import BackendServer
+
+if sys.argv[1] == "--list-methods":
+    print(json.dumps(["ping", "settings_dir"]))
+    sys.exit(0)
+
+async def ping():
+    return "pong"
+
+async def settings_dir():
+    return os.environ["DECKY_PLUGIN_SETTINGS_DIR"]
+
+async def main():
+    server = BackendServer(logger=logging.getLogger("fake"), registry={"ping": ping, "settings_dir": settings_dir})
+    await server.start(sys.argv[2])
+    await server.wait_closed()
+
+asyncio.run(main())
+"""
+
+
+def test_static_callable_names_reads_the_binary(tmp_path):
+    binary = _fake_backend(tmp_path, _SERVING_BACKEND)
+    assert main.static_callable_names(binary) == ["ping", "settings_dir"]
+
+
+def test_static_callable_names_falls_back_to_empty(tmp_path):
+    assert main.static_callable_names(str(tmp_path / "missing")) == []
+    assert main.static_callable_names(_fake_backend(tmp_path, "print('not json')")) == []
+    assert main.static_callable_names(_fake_backend(tmp_path, "print('[1, 2]')")) == []
+    assert main.static_callable_names(_fake_backend(tmp_path, "sys.exit(4)")) == []
+
+
+async def test_spawned_backend_round_trip_and_unload_reaps_it(tmp_path):
+    binary = _fake_backend(tmp_path, _SERVING_BACKEND)
+    with (
+        patch.object(main, "BACKEND_BINARY", binary),
+        patch.object(main, "socket_path_for", lambda _rt: protocol.socket_path_for(None)),
+    ):
+        plugin = main.Plugin()
+        await plugin._main()
+    assert await plugin.ping() == "pong"  # type: ignore[attr-defined]  # generated forwarder
+    import decky
+
+    assert await plugin.settings_dir() == decky.DECKY_PLUGIN_SETTINGS_DIR  # type: ignore[attr-defined]
+    process = plugin._backend.process
+    await plugin._unload()
+    assert process.returncode == 0
+    assert plugin._backend is None
+
+
+async def test_backend_exiting_during_startup_leaves_plugin_inert(tmp_path):
+    binary = _fake_backend(tmp_path, "sys.exit(3)")
+    with (
+        patch.object(main, "BACKEND_BINARY", binary),
+        patch.object(main, "socket_path_for", lambda _rt: protocol.socket_path_for(None)),
+    ):
+        plugin = main.Plugin()
+        await asyncio.wait_for(plugin._main(), timeout=10)
+    assert plugin._start_failed
+    assert plugin._client is None
+    assert plugin._backend is None
+    await plugin._unload()
+
+
+async def test_missing_binary_leaves_plugin_inert(tmp_path):
+    with patch.object(main, "BACKEND_BINARY", str(tmp_path / "missing")):
+        plugin = main.Plugin()
+        await plugin._main()
+    assert plugin._start_failed
+
+
+def _built_rust_backend() -> str | None:
+    for candidate in (
+        os.environ.get("ROMM_RUST_BACKEND_BIN", ""),
+        str(_REPO / "backend" / "target" / "release" / "romm-emudecky-ng-backend"),
+        str(_REPO / "backend" / "target" / "debug" / "romm-emudecky-ng-backend"),
+    ):
+        if candidate and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+@pytest.mark.skipif(_built_rust_backend() is None, reason="Rust backend not built (cargo build in backend/)")
+async def test_shim_against_the_real_rust_backend(tmp_path):
+    """End to end: the real shim spawns the real binary and forwards over the socket."""
+    import decky
+
+    binary = _built_rust_backend()
+    names = main.static_callable_names(binary)
+    assert len(names) == 121
+    with (
+        patch.object(main, "BACKEND_BINARY", binary),
+        patch.object(main, "socket_path_for", lambda _rt: protocol.socket_path_for(None)),
+    ):
+        plugin = main.Plugin()
+        await plugin._main()
+    settings = await plugin.get_settings()  # type: ignore[attr-defined]
+    assert settings["romm_url"] == ""
+    assert settings["has_token"] is False
+    assert await plugin.get_settings_reset_notice() == {"pending": False, "backed_up_to": None}  # type: ignore[attr-defined]
+    from rpc.client import BackendCallError
+
+    with pytest.raises(BackendCallError, match="not implemented in the Rust backend yet: start_download"):
+        await plugin.start_download(1)  # type: ignore[attr-defined]
+    process = plugin._backend.process
+    await plugin._unload()
+    assert process.returncode == 0
+    assert os.path.exists(os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "settings.json"))
 
 
 async def test_call_made_during_startup_waits_for_the_backend():
@@ -136,11 +261,10 @@ async def test_call_made_during_startup_waits_for_the_backend():
 
 
 async def test_call_after_failed_startup_raises_backend_unavailable():
-    import pytest
-
     async def failing_launch(_socket_path):
         raise RuntimeError("sqlite migration failed")
 
+    main.install_forwarders(main.Plugin, ["get_settings"])
     with patch.object(main, "_launch_backend", failing_launch):
         plugin = main.Plugin()
         await plugin._main()
