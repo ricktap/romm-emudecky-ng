@@ -48,7 +48,7 @@ class FakeActiveCoreResolver:
         self.calls.append(rom_id)
         return self.per_rom.get(rom_id, self.default)
 
-    def active_emulator_for_rom(self, rom_id: int) -> EmulatorInvocation | None:
+    def active_emulator_for_rom(self, rom_id: int, platform_slug: str | None = None) -> EmulatorInvocation | None:
         self.emulator_calls.append(rom_id)
         if rom_id in self.per_rom_emulator:
             return self.per_rom_emulator[rom_id]

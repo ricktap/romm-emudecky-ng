@@ -116,6 +116,15 @@ class InstalledFileReader(Protocol):
         """Recursively return ``(absolute_path, size_bytes)`` for every file under *directory*."""
         ...
 
+    def list_entries(self, directory: str) -> list[tuple[str, bool, int]]:
+        """Return ``(name, is_dir, size_bytes)`` for the top-level entries of *directory*.
+
+        Directories and regular files only (symlinks followed; size ``0`` for a
+        directory); anything else is skipped. ``[]`` when *directory* is
+        missing or unreadable. Not recursive.
+        """
+        ...
+
 
 class DownloadFileStore(Protocol):
     """Filesystem seam for ROM download target operations.

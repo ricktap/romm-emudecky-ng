@@ -69,7 +69,7 @@ class ActiveCoreResolver:
         self._resolve_system = config.resolve_system
         self._logger = config.logger
 
-    def active_emulator_for_rom(self, rom_id: int) -> EmulatorInvocation | None:
+    def active_emulator_for_rom(self, rom_id: int, platform_slug: str | None = None) -> EmulatorInvocation | None:
         """Return the :class:`EmulatorInvocation` the ROM ``rom_id`` will launch with.
 
         The launch-bake seam. Reads the ROM's ``platform_slug`` +
@@ -101,19 +101,29 @@ class ActiveCoreResolver:
         baked path are always decided from one layout fact. A libretro emulator,
         a non-folder install, or an unresolvable sandbox launcher all leave the
         invocation unchanged.
+
+        *platform_slug* is the caller's platform for a ROM that may have no
+        ``roms`` row yet (a library sync bakes launch commands before its unit
+        commit writes the rows). With no row there can be no per-game override,
+        so the chain starts at the per-platform layer for that slug. A stored
+        row always wins; with neither a row nor a slug the plain launch applies.
         """
         rom, install = self._read_rom_and_install(rom_id)
-        if rom is None:
+        if rom is not None:
+            platform_slug, override = rom.platform_slug, rom.emulator_override
+        elif platform_slug:
+            override = None
+        else:
             self._logger.warning("active_core_resolver: no ROM for rom_id=%s; resolving to plain launch", rom_id)
             return None
 
-        system = self._resolve_system(rom.platform_slug)
+        system = self._resolve_system(platform_slug)
         options = self._core_info.get_emulator_options(system)["options"]
-        emulator = self._resolve_by_precedence(rom, rom_id, system, options)
+        emulator = self._resolve_by_precedence(platform_slug, override, rom_id, system, options)
         return self._maybe_folder_boot_direct(emulator, install, rom_id)
 
     def _resolve_by_precedence(
-        self, rom: Rom, rom_id: int, system: str, options: list[EmulatorOption]
+        self, platform_slug: str, override: str | None, rom_id: int, system: str, options: list[EmulatorOption]
     ) -> EmulatorInvocation | None:
         """Apply the per-game → per-platform → system-default precedence chain.
 
@@ -121,7 +131,6 @@ class ActiveCoreResolver:
         rewrite. A stale per-game/per-platform label warns and degrades to the
         next layer; the bottom is the live es_systems default (or ``None``).
         """
-        override = rom.emulator_override
         if override is not None:
             invocation = label_to_invocation(options, override)
             if invocation is not None:
@@ -134,7 +143,7 @@ class ActiveCoreResolver:
                 system,
             )
 
-        platform_label = self._platform_core_reader.get_platform_core(rom.platform_slug)
+        platform_label = self._platform_core_reader.get_platform_core(platform_slug)
         if platform_label is not None:
             invocation = label_to_invocation(options, platform_label)
             if invocation is not None:
@@ -143,7 +152,7 @@ class ActiveCoreResolver:
                 "active_core_resolver: per-platform core '%s' for %s (rom_id=%s) no longer resolves; "
                 "degrading to the system default",
                 platform_label,
-                rom.platform_slug,
+                platform_slug,
                 rom_id,
             )
 

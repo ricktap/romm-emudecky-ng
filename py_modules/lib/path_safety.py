@@ -22,6 +22,10 @@ Guards for server-supplied path components:
   trusted base and confirms the result resolves strictly below the base
   (the same semantics as :func:`is_safe_rom_path`), so a multi-component
   registry path or a symlink cannot escape.
+- :func:`safe_join_lexical` — the same realpath containment guard, but
+  returns the joined path under the caller's own spelling of the base
+  (symlinks not resolved), for paths that get **recorded** (install rows,
+  download targets) and must stay under the configured root.
 
 The two validating guards (:func:`safe_path_component`, :func:`safe_join`)
 raise :class:`PathTraversalError` so call sites can fail closed (abort the
@@ -128,6 +132,27 @@ def safe_join(base: str, *parts: str) -> str:
     if not real_joined.startswith(real_base + os.sep):
         raise PathTraversalError(f"path escapes base directory: {os.path.join(base, *parts)!r} not under {base!r}")
     return real_joined
+
+
+def safe_join_lexical(base: str, *parts: str) -> str:
+    """Join *parts* onto *base* under :func:`safe_join`'s guard, keeping *base*'s spelling.
+
+    Runs the realpath-containment check of :func:`safe_join` (raises
+    :class:`PathTraversalError` on escape), then returns the lexically
+    normalised join of the **unresolved** base and parts. A configured root
+    reached through a symlink (SteamOS mounts the SD card at
+    ``/run/media/deck/<uuid>`` and links ``/run/media/mmcblk0p1`` to it)
+    therefore stays spelled the way it was configured, so a recorded path
+    lines up with every other path built from that root. The lexical result
+    must also sit strictly below the normalised base; a part that only
+    resolves inside through ``..`` games is rejected.
+    """
+    safe_join(base, *parts)
+    norm_base = os.path.normpath(base)
+    joined = os.path.normpath(os.path.join(base, *parts))
+    if not joined.startswith(norm_base.rstrip(os.sep) + os.sep):
+        raise PathTraversalError(f"path escapes base directory: {joined!r} not under {base!r}")
+    return joined
 
 
 def is_safe_rom_path(path: str, roms_base: str) -> bool:

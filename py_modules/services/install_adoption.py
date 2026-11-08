@@ -4,10 +4,13 @@ A ROM counts as installed only when a ``RomInstall`` row exists. Files that
 reached the ROM folders some other way (copied by hand, or downloaded by an
 older plugin) are adopted here: when every file sits exactly where this
 plugin's download would put it, with exactly RomM's size, the same
-``RomInstall`` a finished download writes is recorded. Anything that decides
-whether on-disk files may be adopted, or records an adoption, belongs here;
-the path/match decision itself is the pure kernel in
-``domain.install_layout`` (shared with the download path).
+``RomInstall`` a finished download writes is recorded. For systems whose
+folder installs launch a file picked by extension (Switch), a ROM the exact
+rule misses can still pair one-to-one with a system-folder entry by
+normalized title. Anything that decides whether on-disk files may be adopted,
+or records an adoption, belongs here; the match decisions themselves are the
+pure kernels in ``domain.install_layout`` (shared with the download path) and
+``domain.title_match``.
 
 Adoption never touches the files (no rename, no extraction, no playlist
 generation) and never holds a Unit of Work while probing the filesystem.
@@ -29,9 +32,11 @@ from domain.install_layout import (
     pick_one_per_group,
     single_file_matches,
 )
+from domain.emulator_table import launch_file_extensions
 from domain.rom_files import detect_launch_file
 from domain.rom_install import RomInstall
-from lib.path_safety import PathTraversalError, safe_join
+from domain.title_match import DiskEntry, TitleMatch, normalize_title, pair_by_title
+from lib.path_safety import PathTraversalError, safe_join, safe_join_lexical
 
 if TYPE_CHECKING:
     import logging
@@ -92,6 +97,19 @@ class _Eligibility:
     blocked: bool
     group_key: str | None
     selected_disc: str | None
+
+
+@dataclass(frozen=True)
+class _TitleScope:
+    """DB facts for one system's title fallback, read in one short UoW.
+
+    ``roms`` are ``(rom_id, fs_name)`` of every synced ROM on the platform
+    (the RomM side of the one-to-one check); ``claimed`` are the system-folder
+    entry names existing installs already point at.
+    """
+
+    roms: tuple[tuple[int, str], ...]
+    claimed: frozenset[str]
 
 
 class InstallAdoptionService:
@@ -165,13 +183,24 @@ class InstallAdoptionService:
             return None
         platform_slug = rom.get("platform_slug", "") or ""
         system = self._resolve_system(platform_slug, rom.get("platform_fs_slug"))
-        try:
-            roms_dir = safe_join(self._retrodeck_paths.roms_path(), system)
-        except (PathTraversalError, TypeError):
+        roms_dir = self._system_dir(system)
+        if roms_dir is None:
             return None
         if isinstance(layout, SingleFileLayout):
             return self._probe_single(rom, layout, roms_dir, platform_slug, system)
         return self._probe_multi(rom, layout, roms_dir, platform_slug, system)
+
+    def _system_dir(self, system: str) -> str | None:
+        """The system folder under the configured roms root, or ``None`` when unsafe.
+
+        Spelled under the configured root (``safe_join_lexical``), not its
+        symlink-resolved mount, so recorded install paths match the paths the
+        rest of the plugin builds from that root.
+        """
+        try:
+            return safe_join_lexical(self._retrodeck_paths.roms_path(), system)
+        except (PathTraversalError, TypeError):
+            return None
 
     def _probe_single(
         self, rom: dict[str, Any], layout: SingleFileLayout, roms_dir: str, platform_slug: str, system: str
@@ -242,6 +271,7 @@ class InstallAdoptionService:
         eligibility = self._read_eligibility(roms)
         active = self._active_downloads()
         candidates: list[AdoptionCandidate] = []
+        unmatched: list[dict[str, Any]] = []
         for rom in roms:
             rom_id = int(rom["id"])
             facts = eligibility[rom_id]
@@ -253,12 +283,117 @@ class InstallAdoptionService:
                 self._logger.warning(f"Install adoption probe failed for rom {rom_id}: {e}")
                 continue
             if install is None:
+                unmatched.append(rom)
                 continue
-            bake_path = self._disc_resolver.resolve_for_install(install, facts.selected_disc)
-            candidates.append(
-                AdoptionCandidate(rom_id=rom_id, install=install, bake_path=bake_path, group_key=facts.group_key)
-            )
+            candidates.append(self._candidate(install, facts))
+        candidates.extend(self._plan_title_fallback(unmatched, roms, candidates, eligibility))
         return pick_one_per_group(candidates)
+
+    def _candidate(self, install: RomInstall, facts: _Eligibility) -> AdoptionCandidate:
+        bake_path = self._disc_resolver.resolve_for_install(install, facts.selected_disc)
+        return AdoptionCandidate(rom_id=install.rom_id, install=install, bake_path=bake_path, group_key=facts.group_key)
+
+    # ── Normalized-title fallback (Switch) ───────────────────────
+
+    def _plan_title_fallback(
+        self,
+        unmatched: list[dict[str, Any]],
+        batch: list[dict[str, Any]],
+        exact: list[AdoptionCandidate],
+        eligibility: dict[int, _Eligibility],
+    ) -> list[AdoptionCandidate]:
+        """Pair exact-rule misses with system-folder entries by normalized title.
+
+        Only for systems with emulator-table launch-file extensions. Per
+        system: one short read UoW (synced ROMs of the platform + entries
+        existing installs point at), then one listing of the system folder,
+        plus one listing of each directory whose title a missed ROM carries.
+        """
+        by_system: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for rom in unmatched:
+            platform_slug = rom.get("platform_slug", "") or ""
+            system = self._resolve_system(platform_slug, rom.get("platform_fs_slug"))
+            if launch_file_extensions(system) is not None:
+                by_system.setdefault((platform_slug, system), []).append(rom)
+        out: list[AdoptionCandidate] = []
+        for (platform_slug, system), misses in by_system.items():
+            try:
+                out.extend(self._title_fallback_for_system(platform_slug, system, misses, batch, exact, eligibility))
+            except OSError as e:
+                self._logger.warning(f"Install adoption title match failed for {system}: {e}")
+        return out
+
+    def _read_title_scope(self, platform_slug: str, system: str) -> _TitleScope:
+        with self._uow_factory() as uow:
+            roms = tuple((row.rom_id, row.fs_name) for row in uow.roms.iter_by_platform(platform_slug))
+            claimed = frozenset(
+                os.path.basename(install.rom_dir or install.file_path)
+                for install in uow.rom_installs.iter_all()
+                if install.system == system
+            )
+        return _TitleScope(roms=roms, claimed=claimed)
+
+    def _title_fallback_for_system(
+        self,
+        platform_slug: str,
+        system: str,
+        misses: list[dict[str, Any]],
+        batch: list[dict[str, Any]],
+        exact: list[AdoptionCandidate],
+        eligibility: dict[int, _Eligibility],
+    ) -> list[AdoptionCandidate]:
+        extensions = launch_file_extensions(system)
+        roms_dir = self._system_dir(system)
+        if extensions is None or roms_dir is None:
+            return []
+        scope = self._read_title_scope(platform_slug, system)
+        # RomM side: every synced ROM of the platform, overlaid with this batch
+        # (a first sync has no rows yet), so a shared title is seen as ambiguous.
+        romm_side = dict(scope.roms)
+        for rom in batch:
+            if (rom.get("platform_slug", "") or "") == platform_slug and isinstance(rom.get("fs_name"), str):
+                romm_side[int(rom["id"])] = rom["fs_name"]
+        claimed = set(scope.claimed)
+        claimed.update(os.path.basename(c.install.rom_dir or c.install.file_path) for c in exact)
+        wanted = {normalize_title(str(rom.get("fs_name") or "")) for rom in misses} - {""}
+        if not wanted:
+            return []
+        entries: list[DiskEntry] = []
+        for name, is_dir, size in self._file_reader.list_entries(roms_dir):
+            if not is_dir:
+                entries.append(DiskEntry(name=name, is_dir=False, files=((name, size),), claimed=name in claimed))
+            elif normalize_title(name) in wanted:
+                children = self._file_reader.list_entries(os.path.join(roms_dir, name))
+                files = tuple((child, child_size) for child, child_is_dir, child_size in children if not child_is_dir)
+                entries.append(DiskEntry(name=name, is_dir=True, files=files, claimed=name in claimed))
+        miss_by_id = {int(rom["id"]): rom for rom in misses}
+        out: list[AdoptionCandidate] = []
+        for match in pair_by_title(romm_side.items(), entries, extensions):
+            rom = miss_by_id.get(match.rom_id)
+            if rom is None:
+                continue
+            install = self._title_install(rom, match, roms_dir, platform_slug, system)
+            if install is not None:
+                self._logger.info(f"Install adoption: rom {match.rom_id} matched '{match.entry_name}' by title")
+                out.append(self._candidate(install, eligibility[match.rom_id]))
+        return out
+
+    def _title_install(
+        self, rom: dict[str, Any], match: TitleMatch, roms_dir: str, platform_slug: str, system: str
+    ) -> RomInstall | None:
+        """The ``RomInstall`` a download of *match* would record (file, or folder + launch file)."""
+        try:
+            entry_path = safe_join_lexical(roms_dir, match.entry_name)
+            if not match.is_dir:
+                return self._build_install(
+                    rom, file_path=entry_path, rom_dir=None, platform_slug=platform_slug, system=system
+                )
+            launch = safe_join_lexical(entry_path, match.launch_file)
+        except PathTraversalError:
+            return None
+        return self._build_install(
+            rom, file_path=launch, rom_dir=entry_path, platform_slug=platform_slug, system=system
+        )
 
     def commit_adoptions(self, candidates: list[AdoptionCandidate]) -> list[int]:
         """Persist the candidates' ``RomInstall`` rows in one short write UoW.

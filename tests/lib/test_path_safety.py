@@ -9,6 +9,7 @@ from lib.path_safety import (
     coerce_safe_component,
     is_safe_rom_path,
     safe_join,
+    safe_join_lexical,
     safe_path_component,
 )
 
@@ -151,6 +152,56 @@ class TestSafeJoin:
         (base / "link").symlink_to(outside)
         with pytest.raises(PathTraversalError):
             safe_join(str(base), "link/secret.bin")
+
+
+class TestSafeJoinLexical:
+    """Same guard as safe_join, but the result keeps the caller's base spelling."""
+
+    def test_keeps_symlinked_base_unresolved(self, tmp_path):
+        # SteamOS: /run/media/mmcblk0p1 -> /run/media/deck/<uuid>.
+        real = tmp_path / "deck" / "uuid" / "roms"
+        real.mkdir(parents=True)
+        link = tmp_path / "mmcblk0p1"
+        link.symlink_to(tmp_path / "deck" / "uuid")
+        base = str(link / "roms")
+        assert safe_join_lexical(base, "switch") == os.path.join(base, "switch")
+        assert safe_join(base, "switch") == os.path.realpath(os.path.join(base, "switch"))
+
+    def test_normalises_trailing_slash(self, tmp_path):
+        base = str(tmp_path / "roms")
+        os.makedirs(base)
+        assert safe_join_lexical(base + "/", "gba") == os.path.join(base, "gba")
+
+    def test_rejects_parent_traversal(self, tmp_path):
+        base = str(tmp_path / "roms")
+        os.makedirs(base)
+        with pytest.raises(PathTraversalError):
+            safe_join_lexical(base, "../etc")
+
+    def test_rejects_equality_with_base(self, tmp_path):
+        base = str(tmp_path / "roms")
+        os.makedirs(base)
+        with pytest.raises(PathTraversalError):
+            safe_join_lexical(base, ".")
+
+    def test_rejects_symlink_escaping_base(self, tmp_path):
+        base = tmp_path / "roms"
+        base.mkdir()
+        (base / "evil").symlink_to(tmp_path)
+        with pytest.raises(PathTraversalError):
+            safe_join_lexical(str(base), "evil", "..", "..", "x")
+
+    def test_rejects_lexical_escape_that_resolves_inside(self, tmp_path):
+        # A ".." that stays under base lexically is fine; one that climbs above
+        # base lexically is rejected even when the symlink-resolved path
+        # (roms/deep -> roms/a/b, so "deep/../../a/x" -> roms/a/x) is inside.
+        base = tmp_path / "roms"
+        (base / "a" / "b").mkdir(parents=True)
+        (base / "inner").symlink_to(base / "a" / "b")
+        assert safe_join_lexical(str(base), "inner/../x") == os.path.join(str(base), "x")
+        (base / "deep").symlink_to(base / "a" / "b")
+        with pytest.raises(PathTraversalError):
+            safe_join_lexical(str(base), "deep/../../a/x")
 
 
 class TestIsSafeRomPath:

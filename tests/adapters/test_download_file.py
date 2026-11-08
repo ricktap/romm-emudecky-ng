@@ -52,6 +52,33 @@ class TestIsDir:
         assert adapter.is_dir(str(tmp_path / "missing")) is False
 
 
+class TestListEntries:
+    def test_top_level_files_and_dirs(self, adapter, tmp_path):
+        (tmp_path / "a.xci").write_bytes(b"123")
+        (tmp_path / "Game").mkdir()
+        (tmp_path / "Game" / "nested.xci").write_bytes(b"1")
+        assert sorted(adapter.list_entries(str(tmp_path))) == [("Game", True, 0), ("a.xci", False, 3)]
+
+    def test_follows_symlinks_and_skips_broken_ones(self, adapter, tmp_path):
+        target = tmp_path / "real"
+        target.mkdir()
+        (target / "f.nsp").write_bytes(b"12")
+        listed = tmp_path / "listed"
+        listed.mkdir()
+        (listed / "linkdir").symlink_to(target)
+        (listed / "linkfile").symlink_to(target / "f.nsp")
+        (listed / "broken").symlink_to(tmp_path / "missing")
+        assert sorted(adapter.list_entries(str(listed))) == [("linkdir", True, 0), ("linkfile", False, 2)]
+
+    def test_missing_directory_is_empty(self, adapter, tmp_path):
+        assert adapter.list_entries(str(tmp_path / "missing")) == []
+
+    def test_file_instead_of_directory_is_empty(self, adapter, tmp_path):
+        f = tmp_path / "x"
+        f.write_bytes(b"")
+        assert adapter.list_entries(str(f)) == []
+
+
 class TestRemove:
     def test_removes_existing(self, adapter, tmp_path):
         f = tmp_path / "a.rom"

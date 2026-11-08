@@ -48,7 +48,7 @@ from lib.errors import (
     error_response,
 )
 from lib.list_result import ErrorCode
-from lib.path_safety import PathTraversalError, safe_join
+from lib.path_safety import PathTraversalError, safe_join_lexical
 
 if TYPE_CHECKING:
     import logging
@@ -718,7 +718,9 @@ class DownloadService:
                 # ``system`` may be an unmapped server slug passed through verbatim
                 # (ADR-0010). Validate it stays under roms_path BEFORE any make_dirs
                 # so a slug like "../../etc" cannot create or write outside roms.
-                roms_dir = safe_join(roms_path, system)
+                # Lexical join: the recorded install path stays under the
+                # configured roms root, not its symlink-resolved mount point.
+                roms_dir = safe_join_lexical(roms_path, system)
             except PathTraversalError as e:
                 self._download_in_progress.discard(rom_id)
                 self._logger.error(f"Rejected download for ROM {rom_id}: unsafe platform slug {system!r}: {e}")

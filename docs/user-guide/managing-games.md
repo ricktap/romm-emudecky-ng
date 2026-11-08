@@ -108,6 +108,18 @@ downloading it again. This is checked during a library sync and when you open th
 **Play** a moment after the page opens). Multi-file games are detected only when every file RomM lists is present with
 the right size. Renamed copies are not detected — download those through the plugin, or rename them to RomM's file name.
 
+**Switch copies are also matched by name.** Switch dumps rarely carry RomM's exact names (RomM shows
+`Catherine_ Full Body`, the copy is `Catherine Full Body [0100BF00112C0000][v1.0.1](US-EU).xci`), and their sizes are
+useless for matching (cartridge images are padded to the same size). So when the exact check finds nothing, a `.xci` /
+`.nsp` file in `roms/switch/` — or a folder there that directly contains one — counts as a game whose name is **equal**
+to RomM's after normalizing both: case, accents (`Pokémon` = `Pokemon`) and punctuation (`_` `:` `-` …) are ignored, and
+the file extension, bracketed tags such as `[0100…]`, `[v0]`, `(US-EU)`, and a trailing scene tag such as
+`NSW-NiiNTENDO` are dropped. For a folder, the largest `.xci` / `.nsp` inside is launched, as for a downloaded one. A
+match counts only when it is one-to-one: if two copies on disk, or two RomM games, end up with the same name, none of
+them is adopted. Copies renamed beyond that (abbreviations, extra words, a different title) are not detected. Installs
+are always recorded under the EmuDeck ROMs folder as configured, even when it is reached through a link (the SD card's
+`/run/media/mmcblk0p1/…`).
+
 **Only one version of a game is downloaded at a time.** If you tap **Download** on a version while another version of
 the same game (its [sibling group](#versions)) is already on disk, the plugin removes the old install first and then
 downloads the new one — no prompt. This keeps a multi-version game to a single copy on disk. Your **save files are never

@@ -152,3 +152,147 @@ async def test_library_sync_adopts_and_bakes_launch_options(harness):
     assert adopted.file_path == path
     installed = await harness.plugin.get_installed_rom(10)
     assert installed is not None
+
+
+# ── Switch: normalized-title fallback ────────────────────────────
+
+_CATHERINE_XCI = "Catherine Full Body [0100BF00112C0000]+[v1.0.1](US-EU).xci"
+_FE_XCI = "Fire Emblem Three Houses NSW-HR.xci"
+_ZELDA_XCI = "The Legend Of Zelda Echoes Of Wisdom NSW-NiiNTENDO.xci"
+
+
+def _eden(harness) -> str:
+    path = harness.tmp_path / "home" / "Applications" / "Eden.AppImage"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return str(path)
+
+
+def _eden_cmd(exe: str, rom: str) -> str:
+    return f'vblank_mode=0 %command% "{exe}" -f -g "{rom}"'
+
+
+def _server_switch_folder_rom(harness, rom_id: int, fs_name: str) -> None:
+    """A RomM Switch game stored as a folder whose contents differ from the copy on disk."""
+    harness.romm.roms[rom_id] = {
+        "id": rom_id,
+        "name": fs_name.replace("_", ":"),
+        "fs_path": "switch",
+        "fs_name": fs_name,
+        "fs_name_no_ext": fs_name,
+        "fs_size_bytes": 7985954816,
+        "platform_id": 9,
+        "platform_slug": "switch",
+        "platform_fs_slug": "switch",
+        "platform_name": "Nintendo Switch",
+        "has_multiple_files": True,
+        "files": [{"file_path": f"switch/{fs_name}", "file_name": "base.xci", "file_size_bytes": 7985954816}],
+    }
+
+
+def _switch_dir(harness) -> str:
+    return os.path.join(harness.retrodeck_paths.roms_path(), "switch")
+
+
+def _place_switch(harness, rel: str, size: int = 8) -> str:
+    path = os.path.join(_switch_dir(harness), rel)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(b"\0" * size)
+    return path
+
+
+async def test_game_page_adopts_switch_folder_by_title(harness):
+    exe = _eden(harness)
+    seed_rom(harness, 21, platform_slug="switch", shortcut_app_id=_APP_ID)
+    _server_switch_folder_rom(harness, 21, "Fire Emblem_ Three Houses")
+    launch = _place_switch(harness, f"Fire Emblem Three Houses/{_FE_XCI}")
+    rom_dir = os.path.join(_switch_dir(harness), "Fire Emblem Three Houses")
+
+    assert (await harness.plugin.get_cached_game_detail(_APP_ID))["installed"] is False
+    await _drain_background_tasks(harness)
+
+    [event] = _events(harness, "download_complete")
+    assert event["rom_id"] == 21
+    assert event["adopted"] is True
+    assert event["file_path"] == launch
+    assert event["launch_options"] == _eden_cmd(exe, launch)
+    assert (await harness.plugin.get_cached_game_detail(_APP_ID))["installed"] is True
+    installed = await harness.plugin.get_installed_rom(21)
+    assert installed is not None
+    assert installed["file_path"] == launch
+    with harness.uow_factory() as uow:
+        install = uow.rom_installs.get(21)
+    assert install is not None
+    assert install.rom_dir == rom_dir
+    assert install.system == "switch"
+    assert (await harness.plugin.get_rom_relaunch_options(21))["launch_options"] == _eden_cmd(exe, launch)
+
+
+async def test_library_sync_adopts_switch_copies_by_title(harness):
+    exe = _eden(harness)
+    harness.romm.platforms = [{"id": 9, "name": "Nintendo Switch", "slug": "switch", "rom_count": 4}]
+    _server_switch_folder_rom(harness, 31, "Catherine_ Full Body")
+    _server_switch_folder_rom(harness, 32, "The Legend of Zelda_ Echoes of Wisdom")
+    _server_switch_folder_rom(harness, 33, "Super Mario Galaxy")
+    _server_switch_folder_rom(harness, 34, "Super Mario Galaxy 2")
+    # A re-sync of an already-synced library (the on-device case): the table
+    # invocation is resolved from the existing ROM rows.
+    for rom_id in (31, 32, 33, 34):
+        seed_rom(harness, rom_id, platform_slug="switch")
+    harness.backend.settings["enabled_platforms"] = {"9": True}
+    catherine = _place_switch(harness, f"Catherine Full Body/{_CATHERINE_XCI}")
+    zelda = _place_switch(harness, _ZELDA_XCI)
+    # Not in RomM: never adopted, never a crash.
+    _place_switch(harness, "Pokemon Scarlet/Pokemon Scarlet NSW-NiiNTENDO.xci")
+    _place_switch(harness, "Pokemon Shining Pearl [010018E011D92000][v0].nsp")
+    _place_switch(harness, "metadata.txt")
+
+    orch = harness.backend._sync_service._orchestrator
+    orch._wait_for_unit_complete = _ack_immediately
+    assert (await harness.plugin.start_sync())["success"] is True
+    await _drain_background_tasks(harness)
+
+    [unit] = _events(harness, "sync_apply_unit")
+    by_rom = {s["rom_id"]: s for s in unit["shortcuts"]}
+    assert by_rom[31]["launch_options"] == _eden_cmd(exe, catherine)
+    assert by_rom[32]["launch_options"] == _eden_cmd(exe, zelda)
+    assert by_rom[33]["launch_options"] == ""
+    assert by_rom[34]["launch_options"] == ""
+    with harness.uow_factory() as uow:
+        cat = uow.rom_installs.get(31)
+        zel = uow.rom_installs.get(32)
+        assert uow.rom_installs.get(33) is None
+        assert uow.rom_installs.get(34) is None
+    assert cat is not None
+    assert cat.rom_dir == os.path.join(_switch_dir(harness), "Catherine Full Body")
+    assert cat.file_path == catherine
+    assert zel is not None
+    assert zel.rom_dir is None
+    assert zel.file_path == zelda
+
+
+async def test_first_sync_bakes_table_emulator_for_switch_copy(harness):
+    """Fresh install: no ROM rows exist before the first sync, yet the adopted
+    Switch copy must get the full emulator command in that same sync."""
+    exe = _eden(harness)
+    harness.romm.platforms = [{"id": 9, "name": "Nintendo Switch", "slug": "switch", "rom_count": 1}]
+    _server_switch_folder_rom(harness, 41, "Catherine_ Full Body")
+    harness.backend.settings["enabled_platforms"] = {"9": True}
+    catherine = _place_switch(harness, f"Catherine Full Body/{_CATHERINE_XCI}")
+    with harness.uow_factory() as uow:
+        assert uow.roms.get(41) is None
+
+    orch = harness.backend._sync_service._orchestrator
+    orch._wait_for_unit_complete = _ack_immediately
+    assert (await harness.plugin.start_sync())["success"] is True
+    await _drain_background_tasks(harness)
+
+    [unit] = _events(harness, "sync_apply_unit")
+    [shortcut] = [s for s in unit["shortcuts"] if s["rom_id"] == 41]
+    assert shortcut["launch_options"] == _eden_cmd(exe, catherine)
+    with harness.uow_factory() as uow:
+        install = uow.rom_installs.get(41)
+    assert install is not None
+    assert install.file_path == catherine
