@@ -205,7 +205,7 @@ export const VersionPicker: FC<VersionPickerProps> = ({ appId }) => {
     }
     if (!confirmed) {
       logError(`VersionPicker: could not confirm launch options for rom ${result.rom_id} (appId ${result.app_id})`);
-      toaster.toast({ title: "RomM Sync", body: "Switched — re-switch if launch fails" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Switched — re-switch if launch fails" });
     }
     // Publish the newly active version's cover onto the Steam shortcut so the
     // grid art tracks the binding (#1346). Cache-first and best-effort — a
@@ -237,7 +237,7 @@ export const VersionPicker: FC<VersionPickerProps> = ({ appId }) => {
       // Every sync-then-switch failure is terminal for this attempt — release the
       // in-flight guard so the trigger re-enables (it never reaches a reload).
       setSwitching(false);
-      toaster.toast({ title: "RomM Sync", body });
+      toaster.toast({ title: "EmuDecky RomM Manager", body });
       detach(
         refreshSaveStatus(unsyncedRomId).catch((e) =>
           logWarn(`VersionPicker: post-abort save-status refresh failed for rom ${unsyncedRomId}: ${e}`),
@@ -314,7 +314,7 @@ export const VersionPicker: FC<VersionPickerProps> = ({ appId }) => {
           await applySwitchSuccess(forced);
         } else {
           setSwitching(false);
-          toaster.toast({ title: "RomM Sync", body: "Could not switch version", subtext: forced.message });
+          toaster.toast({ title: "EmuDecky RomM Manager", body: "Could not switch version", subtext: forced.message });
         }
         return;
       }
@@ -322,11 +322,11 @@ export const VersionPicker: FC<VersionPickerProps> = ({ appId }) => {
       setSwitching(false);
       // Keep the toast body short (Steam truncates it to one line) and put the
       // backend detail in the subtext so the reason is readable (#1359).
-      toaster.toast({ title: "RomM Sync", body: "Could not switch version", subtext: result.message });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Could not switch version", subtext: result.message });
     } catch (e) {
       setSwitching(false);
       logError(`VersionPicker: switchVersion failed: ${e}`);
-      toaster.toast({ title: "RomM Sync", body: "Could not switch version" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Could not switch version" });
     }
   };
 

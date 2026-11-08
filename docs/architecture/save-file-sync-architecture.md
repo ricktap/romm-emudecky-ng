@@ -2,8 +2,8 @@
 
 ## Overview
 
-decky-romm-sync provides bidirectional save file synchronization between RetroDECK and a self-hosted RomM server. Saves
-are uploaded after play sessions and downloaded before game launch, enabling seamless multi-device play.
+EmuDecky RomM Manager provides bidirectional save file synchronization between RetroDECK and a self-hosted RomM server.
+Saves are uploaded after play sessions and downloaded before game launch, enabling seamless multi-device play.
 
 The scope is **per-game RetroArch save files** across all systems that use RetroArch cores via RetroDECK (NES, SNES, GB,
 GBC, GBA, Genesis, N64, PSX via RetroArch cores, Saturn, Dreamcast, PC Engine, and more). Each system's full save-file
@@ -1284,7 +1284,7 @@ signals let the re-initialized `sessionManager` recover it:
   running-apps lists (`Router.RunningApps`, `SteamUIStore.RunningApps`), each through a guard, merged + de-duped. This
   read is **polled** (every 500ms for up to 15s), not one-shot, and a timed-out round logs the per-source `diagnostics`
   so the on-device log names the surface that actually works on a given build.
-- **A localStorage breadcrumb (attestation).** A single versioned row (`decky-romm-sync:active-session` →
+- **A localStorage breadcrumb (attestation).** A single versioned row (`romm-emudecky:active-session` →
   `{v, appId, romId, startMs}`) is written at start and removed at stop. It is **not** cleared by
   `destroySessionManager`, so it outlives the reload. Every localStorage access is wrapped — a storage failure degrades
   to the no-attestation path, never throws.

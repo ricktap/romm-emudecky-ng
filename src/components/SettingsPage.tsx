@@ -471,7 +471,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
       if (result.success) {
         clearSaveSortMigration();
         toaster.toast({
-          title: "RomM Sync",
+          title: "EmuDecky RomM Manager",
           body: result.message || "Migration complete.",
         });
       }

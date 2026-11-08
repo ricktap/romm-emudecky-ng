@@ -735,7 +735,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
       if (result.server_query_failed) {
         reportServerReachable(false);
         detach(debugLog(`CustomPlayButton: resolve conflict — server query failed for rom ${romId}`));
-        toaster.toast({ title: "RomM Sync", body: "Couldn't reach server to resolve conflict" });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: "Couldn't reach server to resolve conflict" });
         setState("conflict");
         return;
       }
@@ -755,7 +755,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
       setState("play");
     } catch (e) {
       detach(debugLog(`CustomPlayButton: resolve conflict failed: ${e}`));
-      toaster.toast({ title: "RomM Sync", body: "Couldn't reach server to resolve conflict" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Couldn't reach server to resolve conflict" });
       setState("conflict");
     }
   };
@@ -766,11 +766,11 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     try {
       const result = await startDownload(romId);
       if (!result.success) {
-        toaster.toast({ title: "RomM Sync", body: result.message || "Download failed" });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: result.message || "Download failed" });
         setActionPending(false);
       }
     } catch {
-      toaster.toast({ title: "RomM Sync", body: "Download failed — is RomM server running?" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Download failed — is RomM server running?" });
       setActionPending(false);
     }
   };
@@ -811,16 +811,16 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
         // a launch-options hiccup must not turn a successful uninstall into an error.
         await setLaunchOptionsConfirmed(appId, "").catch(() => false);
         globalThis.dispatchEvent(new CustomEvent("romm_rom_uninstalled", { detail: { rom_id: romId } }));
-        toaster.toast({ title: "RomM Sync", body: `${romName || "ROM"} uninstalled` });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: `${romName || "ROM"} uninstalled` });
         // Dark pulse transition before showing Download button
         setState("uninstalling");
         transitionTimerRef.current = setTimeout(() => setState("download"), 500);
         return;
       } else {
-        toaster.toast({ title: "RomM Sync", body: result.message || "Uninstall failed" });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: result.message || "Uninstall failed" });
       }
     } catch {
-      toaster.toast({ title: "RomM Sync", body: "Uninstall failed" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Uninstall failed" });
     }
   };
 

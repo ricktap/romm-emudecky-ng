@@ -47,7 +47,7 @@ export function handleGlobalDownloadFailure(
     error: event.error_message,
   });
   toast.toast({
-    title: "RomM Sync",
+    title: "EmuDecky RomM Manager",
     body: `Download failed: ${event.rom_name} — ${event.error_message}`,
   });
 }

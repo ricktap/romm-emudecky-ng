@@ -6,14 +6,15 @@ Common issues and how to fix them.
 
 ### Connection shows "Backend error"
 
-**Symptom**: The RomM Sync QAM panel's **Connection** row shows a "Backend error" badge with the note "Plugin backend
-failed to start — check Decky logs", and the Sync buttons are disabled. This state means the plugin's own Python backend
-process never started — it is **not** the same as an unreachable RomM server, which shows **Not connected** instead.
+**Symptom**: The EmuDecky RomM Manager QAM panel's **Connection** row shows a "Backend error" badge with the note
+"Plugin backend failed to start — check Decky logs", and the Sync buttons are disabled. This state means the plugin's
+own Python backend process never started — it is **not** the same as an unreachable RomM server, which shows **Not
+connected** instead.
 
 **Fix**: The backend aborted during startup — most often a failed data migration after an update — so the UI can't reach
-it. Open the Decky plugin log to find the underlying error, then reload RomM Sync from the Decky plugin list. If it
-still fails after a reload, restart Steam (or the Steam Deck); if the error persists, include the log output when you
-report it.
+it. Open the Decky plugin log to find the underlying error, then reload EmuDecky RomM Manager from the Decky plugin
+list. If it still fails after a reload, restart Steam (or the Steam Deck); if the error persists, include the log output
+when you report it.
 
 ## Games Won't Launch
 
@@ -30,8 +31,8 @@ for details.
 
 **Symptom**: Pressing Play does nothing, or you get a toast saying the ROM needs to be downloaded.
 
-**Fix**: Open the game's detail page and tap **Download** in the RomM Sync panel. The game will be playable once the
-download completes.
+**Fix**: Open the game's detail page and tap **Download** in the EmuDecky RomM Manager panel. The game will be playable
+once the download completes.
 
 ### Controller doesn't work in RetroArch menus
 
@@ -138,8 +139,8 @@ SteamGridDB, those slots fall back to Steam's defaults — you can contribute ar
 
 ### Artwork not appearing after sync
 
-**Fix**: Open the game's detail page and tap **Refresh Metadata** in the RomM Sync panel. This re-fetches all artwork
-and metadata.
+**Fix**: Open the game's detail page and tap **Refresh Metadata** in the EmuDecky RomM Manager panel. This re-fetches
+all artwork and metadata.
 
 ## Shortcuts Appear on Other Devices
 

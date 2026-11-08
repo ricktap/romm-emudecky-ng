@@ -29,7 +29,7 @@ This changes the system so the daily loop can run without `sudo`:
 - Writes the systemd drop-in `/etc/systemd/system/plugin_loader.service.d/10-dev-loop.conf` with
   `Environment=CHOWN_PLUGIN_PATH=0`. This disables Decky's tamper guard, which otherwise re-owns the plugin dir and
   `plugin.json` back to root on every plugin load — with the guard off, the deck user can write straight into
-  `~/homebrew/plugins/decky-romm-sync`. Drop-ins survive Decky self-updates (those rewrite only the unit file).
+  `~/homebrew/plugins/romm-emudecky`. Drop-ins survive Decky self-updates (those rewrite only the unit file).
 - Runs `systemctl daemon-reload` and restarts `plugin_loader`.
 - Chowns an existing plugin dir back to the deck user.
 - Warns (without failing) if `~/.steam/steam/.cef-enable-remote-debugging` is missing — see [DevTools](#devtools).
@@ -55,9 +55,9 @@ What happens:
 
 The reload is bundle-level, not component-level hot module replacement: the plugin is unmounted and re-imported, so
 component state resets and whatever is currently on screen keeps showing the **old** render until it is mounted again.
-Concretely: after a save, leave the plugin's QAM panel and re-enter it (back out of _RomM Sync_, open it again) — or
-re-navigate to a patched game-detail page — to see the change. Keyboard shortcuts in the BPM window: **Ctrl+2** opens
-the Quick Access Menu, **Ctrl+1** the main menu.
+Concretely: after a save, leave the plugin's QAM panel and re-enter it (back out of _EmuDecky RomM Manager_, open it
+again) — or re-navigate to a patched game-detail page — to see the change. Keyboard shortcuts in the BPM window:
+**Ctrl+2** opens the Quick Access Menu, **Ctrl+1** the main menu.
 
 ### Choosing the display
 

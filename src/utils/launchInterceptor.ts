@@ -217,7 +217,7 @@ async function handleWatcherVerdict(verdict: GateVerdict, appId: number, romId: 
       return "done";
     case "block":
       if (verdict.reason === "migration_pending") {
-        toaster.toast({ title: "RomM Sync", body: MIGRATION_TOAST_BODY });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: MIGRATION_TOAST_BODY });
       }
       return "done";
     case "conflict": {
@@ -339,7 +339,7 @@ export function registerLaunchInterceptor(): void {
             // (no relaunch): the ROM is gone.
             if (!(await isRomInstalled(appId, romId))) {
               toaster.toast({
-                title: "RomM Sync",
+                title: "EmuDecky RomM Manager",
                 body: "ROM not downloaded. Open the plugin to download it first.",
               });
               return;

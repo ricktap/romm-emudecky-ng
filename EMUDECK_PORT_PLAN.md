@@ -1,11 +1,11 @@
-# EmuDeck Port Plan — `ricktap/Romm-emudecky`
+# EmuDeck Port Plan — `ricktap/romm-emudecky-ng`
 
 > **This is the single roadmap for this fork.** It replaces both the upstream roadmap (danielcopper's GitHub Projects
 > board) and the earlier draft of this file. Source brief: Patrick's "RomM Sync Plugin EmuDeck Fix Plan" (Obsidian,
 > 2026-11-08). Where the brief and the code disagreed, the code was checked and the disagreement is resolved in §3.
 >
 > Fork chain: `danielcopper/decky-romm-sync` (RetroDECK) → `melikootje/Romm-emudecky` (started the EmuDeck port) →
-> `ricktap/Romm-emudecky` (this repo, default branch `emudeck-port`).
+> `ricktap/romm-emudecky-ng` (this repo, default branch `emudeck-port`).
 
 ---
 
@@ -115,6 +115,18 @@ Local dev note: this Mac has no `mise` and no `.venv`, so the test baseline stil
     same filesystem as `<Emulation>` (e.g. `<storagePath>/…/.romm-sync/firmware`)? Never fall back to a symlink without
     checking that each emulator follows it.
   - Never auto-install into the emulator. Tell the user it still has to be installed from the emulator's own UI.
+- **D8 — The plugin is renamed "EmuDecky RomM Manager" (decided 2026-11-08).** Display name `EmuDecky RomM Manager`
+  (`plugin.json`, QAM title, toasts). Technical slug `romm-emudecky`, used for the package name, release zip, install
+  folder `~/homebrew/plugins/romm-emudecky`, User-Agent `romm-emudecky/<version>`, the device client name registered on
+  RomM, and the `localStorage` key. Upstream issue links, CHANGELOG history, ADRs, SQL migrations and the old
+  `romm-sync:playtime` server note keep their old names. The slug is a play on Decky Loader + EmuDeck. The GitHub repo
+  is `ricktap/romm-emudecky-ng` (renamed from `Romm-emudecky`; docs site `ricktap.github.io/romm-emudecky-ng`), and its
+  README heading is "EmuDecky RomM Manager - Decky Loader Plugin". Everywhere else, including the QAM, toasts, docs and
+  store, the name is just "EmuDecky RomM Manager". README and store description say the plugin is unofficial and not
+  affiliated with EmuDeck or RomM.
+  - **On each machine, uninstall the old "RomM Sync" plugin before installing EmuDecky RomM Manager.** The new folder
+    means fresh settings and database (sign in again). Shortcut ownership is detected only by the `…/bin/rom-launcher`
+    suffix, so two installed copies would each claim, and could remove, the other's shortcuts.
 
 ---
 
@@ -138,10 +150,10 @@ touches in the same PR (CLAUDE.md docs rule). Build order follows the brief.
   4/7).
 - `deno fmt --check`.
 
-Toolchain: Python 3.11.14 (`uv venv --python 3.11`, deps from `requirements-dev.lock`), pnpm 10.29.3, Node 24.22.2 for
-tests, deno 2.9.8. Without mise, run the frontend tests with `npx -y node@24 node_modules/vitest/vitest.mjs run`. **Node
-≥ 25 breaks 23 `sessionManager` tests**: Node's built-in `localStorage` shadows happy-dom's. Stay on the pinned Node 24
-(or pass `NODE_OPTIONS=--no-experimental-webstorage`).
+Toolchain: Python 3.11.14 (`uv venv --python 3.11`, deps from `requirements-dev.lock`), pnpm 10.29.3, deno 2.9.8. The
+frontend suite passes on both Node 24 (the pin) and Node 25. Node ≥ 25 ships a built-in global `localStorage` that
+shadowed happy-dom's and broke 23 `sessionManager` tests. `vitest.config.ts` now passes `--no-experimental-webstorage`
+to the test workers, so no local flag is needed.
 
 What it took to get green (inherited issues, not regressions):
 

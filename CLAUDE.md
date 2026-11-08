@@ -1,4 +1,4 @@
-# Romm-emudecky — Decky Loader Plugin (EmuDeck fork of decky-romm-sync)
+# EmuDecky RomM Manager — Decky Loader Plugin (EmuDeck fork of decky-romm-sync)
 
 ## What This Is
 
@@ -9,7 +9,7 @@ handles settings, sync, install/uninstall, downloads, and BIOS/firmware manageme
 ## Fork context — read first
 
 - **Fork chain:** `danielcopper/decky-romm-sync` (RetroDECK, upstream) → `melikootje/Romm-emudecky` (started the EmuDeck
-  port) → `ricktap/Romm-emudecky` (this repo, default branch `emudeck-port`).
+  port) → `ricktap/romm-emudecky-ng` (this repo, default branch `emudeck-port`).
 - **Roadmap = [`EMUDECK_PORT_PLAN.md`](EMUDECK_PORT_PLAN.md).** It is the single source of truth for scope, phase order,
   settled decisions, and open questions. Upstream's GitHub Projects board does not apply here.
 - **Target machines:** a Steam Deck (SteamOS, internal + SD storage) **and** two Bazzite PCs. Never assume a Deck:
@@ -30,7 +30,7 @@ Documentation-debt-as-a-separate-follow-up-issue is forbidden — those follow-u
 a change needs docs, the default is "yes, it does." Enforced in CI by `.github/workflows/docs-check.yml`.
 
 The docs live in `docs/` and are the canonical source for architecture, file structure, and feature documentation. Built
-with **Material for MkDocs** and published to GitHub Pages (<https://ricktap.github.io/Romm-emudecky/>) by
+with **Material for MkDocs** and published to GitHub Pages (<https://ricktap.github.io/romm-emudecky-ng/>) by
 `.github/workflows/docs.yml` on every push to `main`. Layout mirrors the three nav tabs: `docs/user-guide/` (end users),
 `docs/architecture/` (how it works), `docs/contributing/` (dev setup). The old GitHub Wiki is retired — it only
 redirects to the published site. Preview locally with `mise run docs`.
@@ -55,7 +55,7 @@ silent omission. The CI check enforces this.
 - **User-Agent on outgoing HTTP**: SteamGridDB **and** RomM behind Cloudflare Tunnel reject the default `Python-urllib`
   UA with 403 (Bot Fight Mode at the edge). Every HTTP-talking adapter (`RommHttpAdapter`, `SteamGridDbAdapter`) takes a
   `user_agent: str` ctor param. Bootstrap reads `package.json` once via `PluginMetadataReader` and threads
-  `decky-romm-sync/<version>` to both — single source of truth, no hardcoded version strings.
+  `romm-emudecky/<version>` to both — single source of truth, no hardcoded version strings.
 - **AddShortcut ignores most params**: `SteamClient.Apps.AddShortcut(name, exe, startDir, launchOptions)` ignores
   startDir and launchOptions (confirmed by MoonDeck plugin). Must use `Set*` calls (`SetShortcutName`, `SetShortcutExe`,
   `SetShortcutStartDir`, `SetAppLaunchOptions`) after a 500ms delay. Do NOT pass quoted exe paths — the API handles

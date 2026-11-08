@@ -1568,7 +1568,7 @@ describe("SettingsPage", () => {
       expect(vi.mocked(clearSaveSortMigration)).toHaveBeenCalled();
       expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: "RomM Sync",
+          title: "EmuDecky RomM Manager",
           body: "Moved 2 files",
         }),
       );

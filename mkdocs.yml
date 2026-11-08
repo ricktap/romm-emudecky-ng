@@ -1,6 +1,6 @@
-site_name: decky-romm-sync
+site_name: EmuDecky RomM Manager
 site_description: Decky Loader plugin to sync your RomM library to Steam as non-steam shortcuts
-site_url: https://ricktap.github.io/Romm-emudecky/
+site_url: https://ricktap.github.io/romm-emudecky-ng/
 
 # Architectural Decision Records (`docs/adr/`) are kept in the repo for
 # contributors and AI agents — they're internal design history, not user
@@ -9,8 +9,8 @@ site_url: https://ricktap.github.io/Romm-emudecky/
 exclude_docs: |
   adr/
 
-repo_url: https://github.com/ricktap/Romm-emudecky
-repo_name: ricktap/Romm-emudecky
+repo_url: https://github.com/ricktap/romm-emudecky-ng
+repo_name: ricktap/romm-emudecky-ng
 edit_uri: edit/main/docs/
 
 theme:

@@ -135,13 +135,13 @@ export const DiscSelector: FC<DiscSelectorProps> = ({ appId }) => {
         }
         setSelected(result.selected ?? null);
       } else {
-        toaster.toast({ title: "RomM Sync", body: result.message || "Failed to select disc" });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: result.message || "Failed to select disc" });
       }
     } catch (e) {
       // Observable catch effect: surface the failure so the user knows the pick
       // didn't take, and leave `selected` unchanged (revert to the prior pin).
       logError(`DiscSelector: selectDisc failed: ${e}`);
-      toaster.toast({ title: "RomM Sync", body: "Failed to select disc" });
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Failed to select disc" });
     }
   };
 

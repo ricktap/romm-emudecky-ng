@@ -1,6 +1,6 @@
 # Development
 
-Guide for setting up a development environment and contributing to decky-romm-sync.
+Guide for setting up a development environment and contributing to EmuDecky RomM Manager.
 
 ## Prerequisites
 
@@ -16,8 +16,8 @@ Guide for setting up a development environment and contributing to decky-romm-sy
 ## Setup
 
 ```bash
-git clone https://github.com/danielcopper/decky-romm-sync.git
-cd decky-romm-sync
+git clone https://github.com/ricktap/romm-emudecky-ng.git
+cd romm-emudecky-ng
 mise install          # installs Node LTS, pnpm, Python
 mise run setup        # installs JS + Python dependencies
 ```
@@ -116,10 +116,10 @@ Every backend feature or callable where testing makes sense should have unit tes
 mise run dev          # build frontend, deploy to the plugin dir, restart plugin_loader
 ```
 
-This builds the frontend, copies the plugin files into `~/homebrew/plugins/decky-romm-sync`, and restarts
-`plugin_loader` to pick up the changes. It **stops** `plugin_loader` around the file copy on purpose: the loader runs as
-root and continuously re-owns the plugin dir back to root within ~1–2s as a tamper guard, so copying while it runs races
-against that re-own and fails with `permission denied`. With the loader stopped, the copy is uncontested; it restarts
+This builds the frontend, copies the plugin files into `~/homebrew/plugins/romm-emudecky`, and restarts `plugin_loader`
+to pick up the changes. It **stops** `plugin_loader` around the file copy on purpose: the loader runs as root and
+continuously re-owns the plugin dir back to root within ~1–2s as a tamper guard, so copying while it runs races against
+that re-own and fails with `permission denied`. With the loader stopped, the copy is uncontested; it restarts
 automatically when the task finishes — even if the build or copy fails, so a failure never leaves the plugin dead. For
 backend-only changes, restarting the plugin loader is sufficient without rebuilding.
 
@@ -134,7 +134,7 @@ shortcuts, and caveats.
 For development, symlink the repo into the plugins directory:
 
 ```bash
-sudo ln -sf "$(pwd)" ~/homebrew/plugins/decky-romm-sync
+sudo ln -sf "$(pwd)" ~/homebrew/plugins/romm-emudecky
 sudo systemctl restart plugin_loader
 ```
 

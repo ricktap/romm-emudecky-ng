@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from services.protocols.files import SaveFileStore
 
 
-_TOAST_TITLE_NOT_INSTALLED = "RomM Sync"
+_TOAST_TITLE_NOT_INSTALLED = "EmuDecky RomM Manager"
 _TOAST_BODY_NOT_INSTALLED = "ROM not downloaded. Open the game page to download it first."
 _TOAST_TITLE_SAVE_CONFLICT = "RomM Save Sync"
 _TOAST_BODY_SAVE_CONFLICT = "Save conflict detected — open game page to resolve before playing"

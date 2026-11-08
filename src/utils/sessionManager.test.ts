@@ -139,7 +139,7 @@ describe("sessionManager lifecycle forwarding", () => {
 });
 
 describe("sessionManager reload adoption", () => {
-  const BREADCRUMB_KEY = "decky-romm-sync:active-session";
+  const BREADCRUMB_KEY = "romm-emudecky:active-session";
 
   const seedBreadcrumb = (crumb: { v: number; appId: number; romId: number; startMs: number }) =>
     localStorage.setItem(BREADCRUMB_KEY, JSON.stringify(crumb));
@@ -516,7 +516,7 @@ describe("sessionManager reload adoption", () => {
 // sessionManager dispatches it (running:true on start + reload-adoption,
 // running:false on stop) with the appId+romId the button matches on.
 describe("sessionManager session-changed dispatch (#1313)", () => {
-  const BREADCRUMB_KEY = "decky-romm-sync:active-session";
+  const BREADCRUMB_KEY = "romm-emudecky:active-session";
   let sessionEvents: { running: boolean; appId: number; romId: number }[];
   let sessionListener: (e: WindowEventMap["romm_session_changed"]) => void;
 

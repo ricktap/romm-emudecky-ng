@@ -1,6 +1,6 @@
-![decky-romm-sync](assets/banner.png)
+![EmuDecky RomM Manager](assets/banner.png)
 
-# decky-romm-sync
+# EmuDecky RomM Manager
 
 A [Decky Loader](https://decky.xyz/) plugin that syncs your self-hosted [RomM](https://github.com/rommapp/romm) ROM
 library into Steam as Non-Steam shortcuts. Games launch through EmuDeck.
@@ -10,7 +10,7 @@ library into Steam as Non-Steam shortcuts. Games launch through EmuDeck.
 - Manage BIOS files for systems that require them
 - Sync save files between devices through your RomM server
 
-![A RomM game's detail page in Steam showing the injected RomM Sync panel](assets/screenshot-game-detail.jpg)
+![A RomM game's detail page in Steam showing the injected EmuDecky RomM Manager panel](assets/screenshot-game-detail.jpg)
 
 ## User Guide
 
