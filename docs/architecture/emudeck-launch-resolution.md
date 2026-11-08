@@ -341,7 +341,7 @@ EmuDeckLaunchResolution(
 The EmuDeck launch resolution follows the launcher pure-exec wrapper model established in
 [ADR-0009](https://github.com/danielcopper/decky-romm-sync/blob/main/docs/adr/0009-launcher-pure-exec-wrapper-baked-launch-options.md):
 
-- The launcher (`bin/rom-launcher`) is a pure `exec "$@"` wrapper
+- The launcher (`bin/rom-launcher-ng`) is a pure `exec "$@"` wrapper
 - The full launch command lives in the Steam shortcut's `launch_options`
 - No state, no path resolution, no emulator knowledge in the launcher itself
 - The plugin bakes the complete command at sync/download time

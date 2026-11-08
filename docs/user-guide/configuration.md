@@ -201,7 +201,7 @@ use `sdl2` instead, which fixes controller navigation in RetroArch menus.
 
 Grab the latest release ZIP to install manually via Decky's **Install Plugin from ZIP**:
 
-[⬇ Download romm-emudecky.zip](https://github.com/ricktap/romm-emudecky-ng/releases/latest/download/romm-emudecky.zip)
+[⬇ Download romm-emudecky-ng.zip](https://github.com/ricktap/romm-emudecky-ng/releases/latest/download/romm-emudecky-ng.zip)
 
 For install instructions, see the [README](/README.md#from-zip-or-url).
 

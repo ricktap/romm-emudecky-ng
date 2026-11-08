@@ -57,10 +57,10 @@ search for **EmuDecky RomM Manager**, and install. No Developer Mode required.
 This is the current method while v1.0 is in progress. It requires **Developer Mode** in Decky Loader (Decky settings →
 gear icon → toggle **Developer Mode**).
 
-1. Download the latest `romm-emudecky.zip` from the
+1. Download the latest `romm-emudecky-ng.zip` from the
    [releases page](https://github.com/ricktap/romm-emudecky-ng/releases)
 2. In Decky settings → **Developer** tab → **Install Plugin from ZIP** (or **from URL** with the
-   [latest release link](https://github.com/ricktap/romm-emudecky-ng/releases/latest/download/romm-emudecky.zip))
+   [latest release link](https://github.com/ricktap/romm-emudecky-ng/releases/latest/download/romm-emudecky-ng.zip))
 
 > Full step-by-step instructions, including first-time setup, are in
 > [Getting Started](docs/user-guide/getting-started.md).

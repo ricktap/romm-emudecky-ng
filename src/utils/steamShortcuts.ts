@@ -3,11 +3,11 @@ import { getAppIdRomIdMap, syncHeartbeat, logError } from "../api/backend";
 
 /**
  * Ownership marker: RomM-managed shortcuts launch through the plugin's
- * `bin/rom-launcher` exec wrapper. A shortcut whose `strShortcutExe` ends with
+ * `bin/rom-launcher-ng` exec wrapper. A shortcut whose `strShortcutExe` ends with
  * this suffix is ours regardless of its launch options (which now carry the
  * full RetroDECK command, not a `romm:<id>` marker).
  */
-const ROM_LAUNCHER_SUFFIX = "/bin/rom-launcher";
+const ROM_LAUNCHER_SUFFIX = "/bin/rom-launcher-ng";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 
@@ -80,7 +80,7 @@ export function setLaunchOptionsConfirmed(appId: number, value: string, timeoutM
 
 /**
  * Scan Steam's live shortcut store and return the appIds of every RomM-owned
- * shortcut — those whose `strShortcutExe` ends with `/bin/rom-launcher` (the
+ * shortcut — those whose `strShortcutExe` ends with `/bin/rom-launcher-ng` (the
  * live-in-Steam ownership marker), regardless of any backend binding.
  *
  * Returns the raw live appId list, or `null` when the scan could **not** run
@@ -127,7 +127,7 @@ export async function getLiveRomMShortcutAppIds(): Promise<number[] | null> {
  * Scan all non-Steam shortcuts and return those managed by RomM.
  *
  * A shortcut is RomM-owned when BOTH hold: its `strShortcutExe` ends with
- * `/bin/rom-launcher` (live-in-Steam ownership marker) AND its appId is bound
+ * `/bin/rom-launcher-ng` (live-in-Steam ownership marker) AND its appId is bound
  * to a rom_id in the backend's `get_app_id_rom_id_map()` (the authoritative
  * rom_id↔appId binding now that launch options no longer carry the id). After
  * a DB reset the backend map is empty, so our shortcuts are detected by exe but

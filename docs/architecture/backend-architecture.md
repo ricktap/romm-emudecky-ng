@@ -591,7 +591,7 @@ fires so the UI doesn't hang on "downloading". Firmware downloads surface the sa
 Beyond the disk-prune and orphaned-`SyncRun` reconciliation, this service owns the **startup launch-options reconcile**
 (#1043). `launch_options` (the full Steam-shortcut launch command) is written only event-driven — at sync, at
 download-complete, and on EmuDeck-home migration (ADR-0009) — so any path that misses its bake leaves an installed
-shortcut stuck on the `""` placeholder, and `bin/rom-launcher` then runs with no args and exits non-zero. There was no
+shortcut stuck on the `""` placeholder, and `bin/rom-launcher-ng` then runs with no args and exits non-zero. There was no
 backstop short of a Force Full Sync or uninstall/reinstall.
 
 `get_installed_relaunch_options()` is the read half of the fix: a 0-arg read that returns `[{app_id, launch_options}]`

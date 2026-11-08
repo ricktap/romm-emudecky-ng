@@ -82,7 +82,7 @@ async function refreshAppIdMap(): Promise<void> {
 // re-initialized manager can adopt the still-running game and finalize its
 // stop. A single versioned localStorage row; every access is wrapped so a
 // storage failure degrades to the no-attestation path instead of throwing.
-const SESSION_BREADCRUMB_KEY = "romm-emudecky:active-session";
+const SESSION_BREADCRUMB_KEY = "romm-emudecky-ng:active-session";
 const SESSION_BREADCRUMB_VERSION = 1;
 
 interface SessionBreadcrumb {

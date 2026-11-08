@@ -116,7 +116,7 @@ Every backend feature or callable where testing makes sense should have unit tes
 mise run dev          # build frontend, deploy to the plugin dir, restart plugin_loader
 ```
 
-This builds the frontend, copies the plugin files into `~/homebrew/plugins/romm-emudecky`, and restarts `plugin_loader`
+This builds the frontend, copies the plugin files into `~/homebrew/plugins/romm-emudecky-ng`, and restarts `plugin_loader`
 to pick up the changes. It **stops** `plugin_loader` around the file copy on purpose: the loader runs as root and
 continuously re-owns the plugin dir back to root within ~1–2s as a tamper guard, so copying while it runs races against
 that re-own and fails with `permission denied`. With the loader stopped, the copy is uncontested; it restarts
@@ -134,7 +134,7 @@ shortcuts, and caveats.
 For development, symlink the repo into the plugins directory:
 
 ```bash
-sudo ln -sf "$(pwd)" ~/homebrew/plugins/romm-emudecky
+sudo ln -sf "$(pwd)" ~/homebrew/plugins/romm-emudecky-ng
 sudo systemctl restart plugin_loader
 ```
 
@@ -210,7 +210,7 @@ git push origin v0.27.0
 ```
 
 `.github/workflows/release.yml` then stamps the version from the tag into `package.json` / `plugin.json`, builds and
-smoke-tests `romm-emudecky.zip`, and publishes a GitHub Release whose notes list the commit subjects since the previous
+smoke-tests `romm-emudecky-ng.zip`, and publishes a GitHub Release whose notes list the commit subjects since the previous
 tag.
 
 ## Project Structure
@@ -269,7 +269,7 @@ src/                                 # Frontend TypeScript
   api/backend.ts                     # callable() wrappers (typed)
   types/                             # TypeScript interfaces and Steam API declarations
   utils/                             # Shortcut CRUD, sync, downloads, collections, session manager
-bin/rom-launcher                     # Pure exec wrapper — runs the launch command baked into the shortcut
+bin/rom-launcher-ng                     # Pure exec wrapper — runs the launch command baked into the shortcut
 defaults/config.json                 # platform_map: 149 platform slug -> EmuDeck system mappings
 tests/                               # Backend unit tests, mirroring py_modules/ layout
 ```

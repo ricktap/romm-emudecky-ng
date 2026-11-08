@@ -147,7 +147,7 @@ def build_shortcuts_data(
     on the ``Rom`` aggregate. ``is_main_sibling`` sits under ``rom_user``; the
     lookup is guarded so a missing or ``null`` ``rom_user`` degrades to ``False``.
     """
-    exe = os.path.join(plugin_dir, "bin", "rom-launcher")
+    exe = os.path.join(plugin_dir, "bin", "rom-launcher-ng")
     start_dir = os.path.join(plugin_dir, "bin")
     return [
         {

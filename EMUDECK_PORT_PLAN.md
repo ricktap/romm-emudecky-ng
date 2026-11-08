@@ -53,7 +53,7 @@ then-current `emudeck-port` HEAD (`160d806`, the branch is now `main`):
 | Download queue is memory-only; restarts lose partial downloads     | **True, and worse.** `DownloadService.cleanup_leftover_tmp_files()` **deletes** every `.tmp` on startup (`services/downloads.py:221`). HTTP Range resume and in-session pause/resume already work.                                                                                                                                                                                                   |
 | ES-DE install probe only knows RetroDECK paths                     | **True.** `adapters/es_de_config.py` maps `/app/…` and `/var/{data,config}/…` to RetroDECK locations. It never expands host `~/…` globs against the real home.                                                                                                                                                                                                                                       |
 | Shortcuts fall back to an empty `LaunchOptions`                    | **True, but the cause is now different.** `resolve_emudeck_invocation` returns `needs_setup` for **every** standalone emulator, because the per-system launcher map in `adapters/emudeck_launchers.py` is still commented out (deliberately: "don't commit guessed launcher names"). RetroArch resolves to `<launchers>/retroarch.sh -L <cores>/<core>.so`, which has not been verified on a device. |
-| `rom-launcher` relies on a `binfmt_misc` handler                   | **Not true of the current wrapper.** `bin/rom-launcher` is a pure `exec "$@"` (ADR-0009). With empty launch options it exits with a usage error, which is the "does nothing" symptom. The real bug is the unresolved invocation (row above). See D2.                                                                                                                                                 |
+| `rom-launcher-ng` relies on a `binfmt_misc` handler                   | **Not true of the current wrapper.** `bin/rom-launcher-ng` is a pure `exec "$@"` (ADR-0009). With empty launch options it exits with a usage error, which is the "does nothing" symptom. The real bug is the unresolved invocation (row above). See D2.                                                                                                                                                 |
 | Shortcuts must be edited in `shortcuts.vdf` with the `vdf` package | **The plugin does not write `shortcuts.vdf`.** Shortcuts are created and updated live through `SteamClient.Apps.AddShortcut` / `SetAppLaunchOptions` from the frontend (`src/utils/steamShortcuts.ts`). No Steam restart is needed. See D1.                                                                                                                                                          |
 | Per-game emulator override must be built                           | **Mostly exists.** `roms.emulator_override` column, `RomRepository.set_emulator_override`, `CoreChangeModal`, ADR-0011. Still missing: options gated on EmuDeck detection, and standalone choices that actually render.                                                                                                                                                                              |
 | Download queue UI must be built                                    | **Partly exists.** `src/components/DownloadQueue.tsx` already has pause/resume/cancel. Still missing: persistence, reorder, speed/ETA.                                                                                                                                                                                                                                                               |
@@ -84,10 +84,10 @@ Local dev note: this Mac has no `mise` and no `.venv`, so the test baseline stil
 - **No guessed paths, no guessed saves.** Unreadable EmuDeck config is a visible health failure. Save sync is offered
   only where a verified `SaveLocationProvider` exists.
 
-- **D2 — `rom-launcher` stays the shortcut Exe (decided 2026-11-08).** Steam derives the appId from `exe + name`, so
+- **D2 — `rom-launcher-ng` stays the shortcut Exe (decided 2026-11-08).** Steam derives the appId from `exe + name`, so
   switching emulator only changes `launch_options`. The appId stays the same and artwork, collections, playtime and the
   rom↔appId binding all survive. The wrapper did not cause the failure the brief saw; the empty launch options did (§2).
-  The brief's working shape becomes `Exe=rom-launcher`,
+  The brief's working shape becomes `Exe=rom-launcher-ng`,
   `LaunchOptions=vblank_mode=0 %command% <home>/Applications/Eden.AppImage -f -g "<rom>"`. Steam's `VAR=val %command%`
   syntax sets the env var, and the wrapper execs the rest. Without `%command%`, Steam would pass `vblank_mode=0` to the
   wrapper as a plain argument, which breaks `exec`. Verify on-device in Phase 2.
@@ -95,8 +95,8 @@ Local dev note: this Mac has no `mise` and no `.venv`, so the test baseline stil
   sandbox mapping), the flatpak invocation leftovers, `adapters/retrodeck_paths.py` and `lib/retrodeck_health.py` once
   their EmuDeck replacements cover every caller. Do not add a RetroDECK fallback anywhere, and do not keep compatibility
   shims for it.
-- **D4 — Standalone emulators are invoked directly, through `rom-launcher` (decided 2026-11-08).** The chain is always
-  Steam → `rom-launcher` → emulator binary (e.g. `~/Applications/Eden.AppImage -f -g "<rom>"`). EmuDeck's
+- **D4 — Standalone emulators are invoked directly, through `rom-launcher-ng` (decided 2026-11-08).** The chain is always
+  Steam → `rom-launcher-ng` → emulator binary (e.g. `~/Applications/Eden.AppImage -f -g "<rom>"`). EmuDeck's
   `tools/launchers/*.sh` scripts are **not** in the launch chain for standalone emulators. They are only an extra "is it
   installed" signal. Keep one verified table per emulator (binary location/glob + args template, seeded from ES-DE's
   find rules and command templates) and fill it only from on-device checks. RetroArch's route (EmuDeck `retroarch.sh` vs
@@ -115,18 +115,18 @@ Local dev note: this Mac has no `mise` and no `.venv`, so the test baseline stil
     same filesystem as `<Emulation>` (e.g. `<storagePath>/…/.romm-sync/firmware`)? Never fall back to a symlink without
     checking that each emulator follows it.
   - Never auto-install into the emulator. Tell the user it still has to be installed from the emulator's own UI.
-- **D8 — The plugin is renamed "EmuDecky RomM Manager" (decided 2026-11-08).** Display name `EmuDecky RomM Manager`
-  (`plugin.json`, QAM title, toasts). Technical slug `romm-emudecky`, used for the package name, release zip, install
-  folder `~/homebrew/plugins/romm-emudecky`, User-Agent `romm-emudecky/<version>`, the device client name registered on
-  RomM, and the `localStorage` key. Upstream issue links, CHANGELOG history, ADRs, SQL migrations and the old
-  `romm-sync:playtime` server note keep their old names. The slug is a play on Decky Loader + EmuDeck. The GitHub repo
-  is `ricktap/romm-emudecky-ng` (renamed from `Romm-emudecky`), and its
-  README heading is "EmuDecky RomM Manager - Decky Loader Plugin". Everywhere else, including the QAM, toasts, docs and
-  store, the name is just "EmuDecky RomM Manager". README and store description say the plugin is unofficial and not
-  affiliated with EmuDeck or RomM.
-  - **On each machine, uninstall the old "RomM Sync" plugin before installing EmuDecky RomM Manager.** The new folder
-    means fresh settings and database (sign in again). Shortcut ownership is detected only by the `…/bin/rom-launcher`
-    suffix, so two installed copies would each claim, and could remove, the other's shortcuts.
+- **D8 — The plugin is named "EmuDecky RomM Manager" (decided 2026-11-08).** Display name `EmuDecky RomM Manager`
+  (`plugin.json`, QAM title, toasts, docs, store). The technical slug `romm-emudecky-ng` equals the repo name
+  (`ricktap/romm-emudecky-ng`) and is used for the package name, release zip, install folder
+  `~/homebrew/plugins/romm-emudecky-ng`, User-Agent `romm-emudecky-ng/<version>`, the device client name registered on
+  RomM, and the `localStorage` key. The README heading is "EmuDecky RomM Manager - Decky Loader Plugin". README and
+  store description say the plugin is unofficial and not affiliated with EmuDeck or RomM. Upstream issue links,
+  CHANGELOG history, ADRs, SQL migrations and the old `romm-sync:playtime` server note keep their old names.
+  - **Side-by-side installs are supported.** The distinct folder gives this plugin its own settings and database, and
+    its shortcuts launch through `bin/rom-launcher-ng` ("next generation"). Ownership is detected by the exe ending in
+    `/bin/rom-launcher-ng`, which never matches upstream's `/bin/rom-launcher` and vice versa, so neither plugin sees
+    or touches the other's shortcuts. A frontend test pins this.
+  - The release workflow fails the build if the zip's top folder (the install folder) is not `romm-emudecky-ng`.
 
 ---
 
@@ -177,7 +177,7 @@ The callable and event parity checks survive as contract tests. `CLAUDE.md` is a
 
 - `es_de_config` probe: add host-native resolution. Expand `~` against the real `$HOME` and match `staticpath` globs.
   Use `<Emulation>/tools/launchers/<name>.sh` as a second "installed" signal. Remove the RetroDECK branches (D3).
-- Fill in the verified emulator invocation table (D4: direct binary through `rom-launcher`). Start with **Eden, yuzu,
+- Fill in the verified emulator invocation table (D4: direct binary through `rom-launcher-ng`). Start with **Eden, yuzu,
   Ryujinx**, then one RetroArch system (SNES/GBA), PS2 (PCSX2), and GC/Wii (Dolphin) from the original plan's validation
   set. Only values confirmed on a real EmuDeck install go in the table.
 - Support an env prefix (`vblank_mode=0`) in the rendered invocation (D2 detail).
