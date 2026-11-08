@@ -210,6 +210,7 @@ class TestGetPlatformCoreInfo:
             "active_core_label": "Snes9x",
             "platform_core_label": None,
             "has_game_override": False,
+            "game_override_label": None,
         }
 
     def test_unknown_rom_returns_empty(self, event_loop, service, core_info):
@@ -223,6 +224,7 @@ class TestGetPlatformCoreInfo:
             "active_core_label": None,
             "platform_core_label": None,
             "has_game_override": False,
+            "game_override_label": None,
         }
         assert core_info.emulator_options_calls == []
 

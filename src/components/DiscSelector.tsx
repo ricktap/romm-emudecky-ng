@@ -150,6 +150,9 @@ export const DiscSelector: FC<DiscSelectorProps> = ({ appId }) => {
 
   const { discs, default: dflt } = selection;
   const isM3u = dflt.kind === "m3u";
+  // A launch-file pick (Switch folder: base game / update / DLC files) rather
+  // than numbered discs — the face shows the position, the menu says "Launch file".
+  const isFilePick = dflt.kind === "file";
 
   // The effective pin: an explicit selection, else the default target (null for
   // m3u, disc 1's filename otherwise).
@@ -158,7 +161,11 @@ export const DiscSelector: FC<DiscSelectorProps> = ({ appId }) => {
   // The m3u playlist is active only when the default is m3u and nothing is pinned.
   const showPlaylistFace = isM3u && selected === null;
   const activeDisc = discs.find((d) => d.filename === effectiveSelected);
-  const activeNum = activeDisc ? (activeDisc.label.match(/\d+/)?.[0] ?? String(activeDisc.index)) : "";
+  const activeNum = activeDisc
+    ? isFilePick
+      ? String(activeDisc.index)
+      : (activeDisc.label.match(/\d+/)?.[0] ?? String(activeDisc.index))
+    : "";
 
   // Options: the m3u "all discs" default (when present) followed by each disc.
   const options: { data: DiscOptionData; icon: ReactNode; text: string }[] = [];
@@ -171,7 +178,7 @@ export const DiscSelector: FC<DiscSelectorProps> = ({ appId }) => {
   // active option is tinted + check-marked in the list.
   const openMenu = (e: MouseEvent): void => {
     showContextMenu(
-      <Menu label="Disc">
+      <Menu label={isFilePick ? "Launch file" : "Disc"}>
         {options.map((o) => {
           const active = o.data === effectiveSelected;
           return (

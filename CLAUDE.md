@@ -1,8 +1,9 @@
 # EmuDecky RomM Manager — Decky Loader plugin
 
 Syncs a self-hosted RomM library onto **EmuDeck** machines (Steam Deck + two Bazzite PCs) as Steam non-Steam shortcuts:
-install/uninstall games, launch via EmuDeck emulators, save sync, BIOS/firmware. Python backend (`main.py`,
-`py_modules/`), React/TypeScript frontend (`src/`).
+install/uninstall games, launch via EmuDeck emulators, save sync, BIOS/firmware. Python backend (`py_modules/`) behind
+a thin Decky shim (`main.py`), React/TypeScript frontend (`src/`). The backend is being rewritten in Rust for 0.40.0
+(GitHub milestone "0.40.0"); the shim's socket protocol is the contract both must satisfy.
 
 - **Roadmap and decisions:** [`EMUDECK_PORT_PLAN.md`](EMUDECK_PORT_PLAN.md) — read it before starting work.
 - **Fork of** `danielcopper/decky-romm-sync` (RetroDECK). `#NNN` refs in code/docs/ADRs are **upstream** issues.
@@ -48,10 +49,10 @@ no linting/formatting in CI — don't add any.
   `resolve_emulator_invocation` → `domain/emudeck_launch.resolve_emudeck_invocation`. Ownership = exe ends with
   `/bin/rom-launcher-ng`; rom_id↔appId lives in `roms.shortcut_app_id`.
 - **Frontend API:** `@decky/ui` + `@decky/api`, `callable()` (not `decky-frontend-lib` / `callPluginMethod`). Every
-  callable in `main.py` must be `async def`. Don't push bulk data through `decky.emit()` — use per-item callables.
+  callable on `Backend` (`py_modules/backend.py`) must be `async def`. Don't push bulk data through `decky.emit()` — use per-item callables.
 - **Callable failures** return `{success: False, reason, message}` (`reason` from `lib.list_result.ErrorCode` or a
   short string). Never `error` / `error_code` keys.
-- **RomM:** requires ≥ 4.9.0 (`_MIN_REQUIRED_VERSION` in `main.py`). Filter param is `platform_ids` (plural); cover URLs
+- **RomM:** requires ≥ 4.9.0 (`_MIN_REQUIRED_VERSION` in `py_modules/backend.py`). Filter param is `platform_ids` (plural); cover URLs
   contain unencoded spaces; lists are paginated `{"items": [...], "total": N}`. Send a real User-Agent
   (`romm-emudecky-ng/<version>`, read from `package.json`) — Cloudflare/SteamGridDB 403 the Python default.
 - **Token-host binding:** the API token is sent only to the origin it was minted for (`romm_api_token_origin`);
@@ -71,8 +72,11 @@ no linting/formatting in CI — don't add any.
   `lib/` cross-cutting helpers · `models/` data shapes. Services never import adapters; adapters never import services.
 - Services depend on Protocols from `services/protocols/` and take one frozen `XxxServiceConfig` keyword argument.
   No direct clocks/sleep/uuid/random in services — inject `Clock` / `Sleeper` / `UuidGen`.
-- `bootstrap.py` is the only place adapters are instantiated and wired; `main.py` holds the Decky lifecycle and the
-  callable surface.
+- `bootstrap.py` is the only place adapters are instantiated and wired. `py_modules/backend.py` (`Backend`) holds the
+  callable surface and lifecycle work. `main.py` is only the Decky shim: it starts the backend, forwards every callable
+  over the Unix-socket protocol (`docs/architecture/backend-protocol.md`) and relays events to `decky.emit`. Its
+  forwarders exist from import time, because Decky serves calls in parallel with `_main`; calls wait for the backend
+  to be ready. Never put logic in the shim.
 - SQLite aggregates are mutated only through verb-named methods (`mark_installed`, not `set_installed`). Don't open a
   UoW while another is open on the same path (e.g. `relaunch_options_resolver` resolves outside the write UoW).
 - No `if emudeck` branches in services — host specifics live in adapters and `domain/emudeck_launch.py`.

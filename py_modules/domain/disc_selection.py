@@ -126,16 +126,67 @@ def resolve_launch_path(file_path: str, discs: list[Disc], selected_disc: str | 
     return (discs[0].path, stale)
 
 
-def default_descriptor(file_path: str, discs: list[Disc]) -> dict[str, str]:
+def default_descriptor(file_path: str, discs: list[Disc], *, size_ranked: bool = False) -> dict[str, str]:
     """Describe the default (NULL-selection) target for the picker's UI.
 
-    ``{"kind": "m3u"|"disc", "label": str, "filename": str}``. ``kind="m3u"``
-    iff *file_path* is an ``.m3u`` (label ``"All discs (m3u)"``, filename the
-    basename of *file_path*); otherwise ``kind="disc"`` and the label/filename
-    of the first enumerated disc. Callers only reach here for multi-disc ROMs,
-    so ``discs`` is non-empty in the ``"disc"`` branch.
+    ``{"kind": "m3u"|"disc"|"file", "label": str, "filename": str}``.
+    ``kind="file"`` when the candidates are size-ranked launch files
+    (:func:`enumerate_size_ranked` — the default is the largest file);
+    ``kind="m3u"`` iff *file_path* is an ``.m3u`` (label ``"All discs (m3u)"``,
+    filename the basename of *file_path*); otherwise ``kind="disc"`` and the
+    label/filename of the first enumerated disc. Callers only reach here for
+    multi-candidate ROMs, so ``discs`` is non-empty in the ``"disc"``/``"file"``
+    branches.
     """
+    if size_ranked:
+        first = discs[0]
+        return {"kind": "file", "label": first.label, "filename": first.filename}
     if file_path.lower().endswith(".m3u"):
         return {"kind": "m3u", "label": "All discs (m3u)", "filename": os.path.basename(file_path)}
     first = discs[0]
     return {"kind": "disc", "label": first.label, "filename": first.filename}
+
+
+def enumerate_size_ranked(files: list[tuple[str, int]], extensions: frozenset[str]) -> list[Disc]:
+    """Enumerate a folder install's launch-file candidates, largest first.
+
+    For systems whose folder installs hold a base game plus update/DLC files of
+    the same container type (Switch ``.xci``/``.nsp``): every file whose
+    extension (case-insensitive) is in *extensions* is a candidate. Ordered by
+    size descending, ties broken by lowercase basename, so ``index`` 1 — the
+    default — is the largest file (the base game). ``label`` is the basename
+    without its extension.
+    """
+    candidates = [(path, size) for path, size in files if os.path.splitext(path)[1].lower() in extensions]
+    candidates.sort(key=lambda item: (-item[1], os.path.basename(item[0]).lower()))
+    return [
+        Disc(
+            filename=os.path.basename(path),
+            path=path,
+            label=os.path.splitext(os.path.basename(path))[0],
+            index=position,
+        )
+        for position, (path, _size) in enumerate(candidates, start=1)
+    ]
+
+
+def resolve_size_ranked_path(file_path: str, candidates: list[Disc], selected: str | None) -> tuple[str, bool]:
+    """Resolve the launch path over size-ranked *candidates* (see :func:`enumerate_size_ranked`).
+
+    Returns ``(path_to_bake, stale)``. A pinned *selected* filename that is a
+    candidate wins; a pin that no longer matches is ``stale`` and degrades to the
+    default. The default is the first (largest) candidate — even when it is the
+    only one, so a folder install whose recorded ``file_path`` is the folder
+    itself or a non-game file still bakes the game file. No candidates at all
+    falls back to *file_path*.
+    """
+    if not candidates:
+        return (file_path, False)
+    stale = False
+    if selected is not None:
+        for candidate in candidates:
+            if candidate.filename == selected:
+                return (candidate.path, False)
+        stale = True
+    return (candidates[0].path, stale)
+

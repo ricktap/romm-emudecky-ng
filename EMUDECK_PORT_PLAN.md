@@ -248,20 +248,54 @@ pattern (decky-nexus, deckyemu, Decky-Metadata) is an in-plugin check plus Decky
 - **Later, optional:** submit to the official Decky store (a PR to decky-plugin-database per release, with review).
   This gives native update notifications without the internal API.
 
-### Phase 2 — EmuDeck install detection + launch resolution (brief §5.2)
+### Phase 2 — EmuDeck emulator detection + launch (Switch first), built with rewrite step 1a (#8)
 
-- `es_de_config` probe: add host-native resolution. Expand `~` against the real `$HOME` and match `staticpath` globs.
-  Use `<Emulation>/tools/launchers/<name>.sh` as a second "installed" signal. Remove the RetroDECK branches (D3).
-- Fill in the verified emulator invocation table (D4: direct binary through `rom-launcher-ng`). Start with **Eden, yuzu,
-  Ryujinx**, then one RetroArch system (SNES/GBA), PS2 (PCSX2), and GC/Wii (Dolphin) from the original plan's validation
-  set. Only values confirmed on a real EmuDeck install go in the table.
-- Support an env prefix (`vblank_mode=0`) in the rendered invocation (D2 detail).
-- Unresolvable cases surface as `needs_setup` / `launcher_missing` in the game-detail UI. They are never silently empty.
-- **Profile the sluggishness here** (brief §5.5.4): time the QAM library render and game-detail open; check for
-  per-render probes and slow SQLite paths. Fix what is found before Phase 4.
-- **Accept:** a never-before-synced game gets a shortcut that launches on the first try under Eden, yuzu and Ryujinx,
-  plus the RetroArch/PS2/GC set. Paths with spaces and special characters work. Version switch and reinstall re-bake
-  correctly. Repeat on one Bazzite box.
+**Deck facts (diagnostic, 2026-11-08, SteamOS 3.9.5):**
+
+- `storagePath = /run/media/mmcblk0p1` (SD card).
+- `~/Applications` holds `Eden.AppImage`, `yuzu.AppImage`, `pcsx2-Qt.AppImage`, `Cemu.AppImage`, `DuckStation.AppImage`,
+  `Vita3K/`, and `publish/Ryujinx` + `publish/Ryujinx.sh`.
+- RetroArch and Dolphin are flatpaks; RetroArch cores are in
+  `~/.var/app/org.libretro.RetroArch/config/retroarch/cores`.
+- EmuDeck's `tools/launchers/*.sh` forward the ROM argument, but run `git pull` and a cloud-sync upload on every
+  launch. So per D4 they stay out of the launch chain.
+- ES-DE's `es_systems.xml` / `es_find_rules.xml` are only inside `ES-DE.AppImage`; `~/ES-DE/custom_systems` has a Wii
+  U-only file. That is why the ES-DE-XML lookup resolves everything to `needs_setup` on EmuDeck.
+- Switch games are a mix of single `.xci`/`.nsp` files and **folders** (base + update/DLC).
+
+**Decisions (2026-11-08):**
+
+- **Our own small emulator table replaces the ES-DE XML lookup.** Each entry is system → emulators → (locate: glob
+  under `~/Applications` relative to `$HOME`, or a flatpak id) → args template.
+  - "Installed" means the located file exists and is executable.
+  - The default emulator per system is the table's first installed entry.
+  - The per-game emulator override (`roms.emulator_override`) chooses only among installed entries.
+  - The ES-DE-XML-based resolution code goes once nothing uses it (rewrite review).
+- **Switch first:**
+  - Eden (default): `~/Applications/Eden*.AppImage -f -g "<rom>"`, verified by a working hand-made shortcut.
+  - yuzu: `~/Applications/yuzu*.AppImage -f -g "<rom>"`.
+  - Ryujinx: `~/Applications/publish/Ryujinx.sh "<rom>"`.
+  - Every standalone launch gets the `vblank_mode=0 %command%` env prefix. Shortcut exe stays `rom-launcher-ng` (D2).
+  - yuzu and Ryujinx args are confirmed by the on-device test before release.
+- **Folder games:** launch the largest `.xci`/`.nsp` in the folder by default. This is overridable per game on the same
+  game-config page as the emulator override, reusing the per-game launch-file selection (`roms.selected_disc`,
+  ADR-0014).
+- Other systems (RetroArch, PS2/GC/PS1, Wii U/Vita) come after Switch is verified.
+
+**Rewrite step 1a (#8) in the same go:** `main.py` becomes the shim; callables travel as newline-delimited JSON over a
+Unix socket in `DECKY_PLUGIN_RUNTIME_DIR`; contract tests drive the plugin through the shim. Decky runs as a frozen
+executable with no separate Python interpreter, so until Rust exists the backend server behind the socket runs inside
+the plugin process. Only what sits behind the socket changes later.
+
+**Accept:** Eden, Ryujinx and yuzu each launch a Switch game (one single-file, one folder game) from Steam on the first
+try. Changing a game's emulator or launch file re-bakes the shortcut. The contract tests pass through the shim.
+
+**Status:** implemented in v0.33.0; the on-device acceptance test is open. Review fixes:
+
+- The shim installs its forwarders at import time and gates calls on backend readiness, because Decky serves frontend
+  calls in parallel with `_main`.
+- Launch-option quoting now escapes `$` and backticks; Steam runs launch options through a shell, and the old quoting
+  let a file name trigger command substitution.
 
 ### Phase 3 — Internal/external RomM URL fallback (brief §2)
 

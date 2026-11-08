@@ -65,15 +65,15 @@ def _make_testable_plugin():
     ``is_retrodeck_migration_pending`` per-test.
 
     Also pre-wires a no-op ``_debug_logger`` so any service that consumes
-    ``Plugin._log_debug`` (which forwards through ``_debug_logger``) works
+    ``Backend._log_debug`` (which forwards through ``_debug_logger``) works
     out of the box. Tests that want to assert on debug-log behaviour can
     override ``_debug_logger`` after construction (e.g. with the real
     ``SettingsAwareDebugLogger`` bound to a settings dict they control).
     """
     # Import here to ensure decky mock is already installed
-    from main import Plugin
+    from backend import Backend
 
-    class TestablePlugin(Plugin):
+    class TestablePlugin(Backend):
         """Plugin subclass that declares test-only attributes for type safety.
 
         Genuinely test-fixture-only attributes live here: ``_fake_api``,

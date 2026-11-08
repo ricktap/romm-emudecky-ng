@@ -342,3 +342,21 @@ def test_emulator_option_is_frozen():
     option = EmulatorOption(label="x", kind="standalone", core_so=None, command="%ROM%", status="bakeable", reason=None)
     with pytest.raises(dataclasses.FrozenInstanceError):
         option.label = "y"  # type: ignore[misc]
+
+
+class TestTableKindPayload:
+    def test_table_option_is_standalone_on_the_wire(self):
+        from domain.emulator_commands import options_to_payload
+        from domain.emulator_table import table_options
+
+        payload = options_to_payload(table_options("switch", {"eden": "/h/Eden.AppImage"}))
+        assert payload[0] == {
+            "label": "Eden",
+            "kind": "standalone",
+            "core_so": None,
+            "is_default": True,
+            "bakeable": True,
+            "reason": None,
+        }
+        assert payload[1]["bakeable"] is False
+        assert payload[1]["reason"] == "not_installed"

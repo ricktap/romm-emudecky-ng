@@ -28,10 +28,10 @@ async def test_connect_with_pairing_code_happy_path_persists_user_provenance(har
     assert "Connected" in result["message"]
     # Persisted exactly like a pasted token: user provenance, no server-side id;
     # no mint, no DELETE.
-    assert harness.plugin.settings["romm_api_token"] == "rmm_paired"
-    assert harness.plugin.settings["romm_api_token_id"] is None
-    assert harness.plugin.settings["romm_api_token_origin"] == "http://romm.local"
-    assert harness.plugin.settings["romm_api_token_source"] == "user"
+    assert harness.backend.settings["romm_api_token"] == "rmm_paired"
+    assert harness.backend.settings["romm_api_token_id"] is None
+    assert harness.backend.settings["romm_api_token_origin"] == "http://romm.local"
+    assert harness.backend.settings["romm_api_token_source"] == "user"
     assert ("mint_client_token",) not in [(c[0],) for c in harness.romm.call_log]
     assert harness.romm.deleted_token_ids == []
     # The code was normalized (uppercased) before the exchange.
@@ -48,8 +48,8 @@ async def test_connect_with_pairing_code_invalid_code_returns_canonical_failure(
     assert result["reason"] == "auth_failed"
     assert "invalid or has expired" in result["message"]
     # Nothing persisted — the previous (empty) token state stands.
-    assert not harness.plugin.settings.get("romm_api_token")
-    assert harness.plugin.settings.get("romm_api_token_source") is None
+    assert not harness.backend.settings.get("romm_api_token")
+    assert harness.backend.settings.get("romm_api_token_source") is None
 
 
 async def test_connect_with_pairing_code_rate_limited_returns_rate_limited_reason(harness):
@@ -61,7 +61,7 @@ async def test_connect_with_pairing_code_rate_limited_returns_rate_limited_reaso
     assert result["success"] is False
     assert result["reason"] == "rate_limited"
     assert "Too many attempts" in result["message"]
-    assert not harness.plugin.settings.get("romm_api_token")
+    assert not harness.backend.settings.get("romm_api_token")
 
 
 async def test_connect_with_pairing_code_blank_code_is_config_error(harness):

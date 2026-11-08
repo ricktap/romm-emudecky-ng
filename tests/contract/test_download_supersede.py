@@ -15,19 +15,23 @@ from __future__ import annotations
 
 import asyncio
 
+from ._harness import background_tasks
 from ._seed import seed_group_member
 
 _GROUP = "igdb:100:99"
 _APP_ID = 42
 
 
-async def _drain_background_tasks() -> None:
+async def _drain_background_tasks(harness) -> None:
     """Await the fire-and-forget download task(s) `start_download` spawned."""
     for _ in range(6):
-        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
+        pending = background_tasks()
         if not pending:
-            return
+            break
         await asyncio.gather(*pending, return_exceptions=True)
+    # Events emitted by the drained work cross the socket; a round-trip makes
+    # sure the shim has relayed them to ``harness.emit``.
+    await harness.flush_events()
 
 
 def _seed_server_rom(harness, rom_id: int, *, fs_name: str) -> None:
@@ -58,7 +62,7 @@ async def test_start_download_supersedes_installed_sibling(harness):
     with harness.uow_factory() as uow:
         assert uow.rom_installs.get(1) is None
 
-    await _drain_background_tasks()
+    await _drain_background_tasks(harness)
     with harness.uow_factory() as uow:
         assert uow.rom_installs.get(2) is not None  # the new version downloaded
 
@@ -73,7 +77,7 @@ async def test_start_download_keeps_grandfathered_sibling(harness):
     result = await harness.plugin.start_download(2)
     assert result["success"] is True
 
-    await _drain_background_tasks()
+    await _drain_background_tasks(harness)
     with harness.uow_factory() as uow:
         assert uow.rom_installs.get(1) is not None  # grandfathered kept
         assert uow.rom_installs.get(2) is not None

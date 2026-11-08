@@ -28,7 +28,7 @@ async def test_get_settings_reset_notice_clean_boot_shape(harness):
 
 async def test_get_settings_reset_notice_pending_is_non_consuming(harness):
     # Simulate bootstrap having folded a corrupt-reset into the live settings.
-    harness.plugin.settings["_settings_reset_notice"] = {"backed_up_to": "settings.json.corrupt-1781697600"}
+    harness.backend.settings["_settings_reset_notice"] = {"backed_up_to": "settings.json.corrupt-1781697600"}
 
     first = await harness.plugin.get_settings_reset_notice()
     assert first == {"pending": True, "backed_up_to": "settings.json.corrupt-1781697600"}
@@ -40,11 +40,11 @@ async def test_get_settings_reset_notice_pending_is_non_consuming(harness):
 
 
 async def test_dismiss_settings_reset_notice_clears_marker(harness):
-    harness.plugin.settings["_settings_reset_notice"] = {"backed_up_to": "settings.json.corrupt-42"}
+    harness.backend.settings["_settings_reset_notice"] = {"backed_up_to": "settings.json.corrupt-42"}
 
     ack = await harness.plugin.dismiss_settings_reset_notice()
     assert ack == {"success": True}
 
     # The marker is gone and the read now reports not-pending.
-    assert "_settings_reset_notice" not in harness.plugin.settings
+    assert "_settings_reset_notice" not in harness.backend.settings
     assert await harness.plugin.get_settings_reset_notice() == {"pending": False, "backed_up_to": None}

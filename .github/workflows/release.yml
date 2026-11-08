@@ -58,7 +58,8 @@ jobs:
           # the checkout dir, so a renamed repo would silently change it.
           TOP=$(unzip -Z1 "$ZIP" | head -1 | cut -d/ -f1)
           [ "$TOP" = "romm-emudecky-ng" ] || { echo "zip top folder is '$TOP', expected 'romm-emudecky-ng'"; exit 1; }
-          for f in main.py plugin.json package.json dist/index.js py_modules/bootstrap.py bin/rom-launcher-ng \
+          for f in main.py plugin.json package.json dist/index.js py_modules/bootstrap.py py_modules/backend.py \
+              py_modules/rpc/server.py py_modules/rpc/client.py bin/rom-launcher-ng \
               py_modules/db/migrations/001_initial.sql bios_registry.json; do
             unzip -l "$ZIP" | grep -qE "/$f\b" || { echo "missing $f"; unzip -l "$ZIP"; exit 1; }
           done

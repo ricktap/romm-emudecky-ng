@@ -323,7 +323,8 @@ export interface DiscSelection {
   multi_disc: boolean;
   discs?: Disc[];
   selected?: string | null;
-  default?: { kind: "m3u" | "disc"; label: string; filename: string };
+  /** `"file"`: a launch-file pick (Switch folder: largest `.xci`/`.nsp` by default), not a disc. */
+  default?: { kind: "m3u" | "disc" | "file"; label: string; filename: string };
 }
 
 /**

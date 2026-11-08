@@ -1,7 +1,8 @@
 """Fixtures for the callable contract-test tier.
 
-Exposes the ``harness`` fixture: a real :class:`main.Plugin` wired through
-the real :func:`bootstrap` with only the network edges faked. See
+Exposes the ``harness`` fixture: the real :class:`main.Plugin` shim talking
+over a real Unix socket to the real backend, wired through the real
+:func:`bootstrap` with only the network edges faked. See
 :mod:`tests.contract._harness` for the build recipe and the real-vs-faked
 boundary.
 """
@@ -12,7 +13,7 @@ from unittest import mock
 
 import pytest
 
-from tests.contract._harness import ContractHarness, build_contract_harness
+from tests.contract._harness import build_contract_harness
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +32,7 @@ def _isolate_system_flatpak_root(tmp_path):
 
 
 @pytest.fixture
-async def harness(tmp_path) -> ContractHarness:
+async def harness(tmp_path):
     """A wired real ``Plugin`` plus the fake edges a contract test drives.
 
     Async so the harness binds the test's *running* event loop into the
@@ -42,4 +43,8 @@ async def harness(tmp_path) -> ContractHarness:
     Each test gets a fresh ``tmp_path`` (own SQLite db, settings file, file
     stores), so state never leaks between contract tests.
     """
-    return build_contract_harness(tmp_path)
+    built = await build_contract_harness(tmp_path)
+    try:
+        yield built
+    finally:
+        await built.close()

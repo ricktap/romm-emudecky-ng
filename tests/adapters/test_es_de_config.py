@@ -13,7 +13,7 @@ from domain.shortcut_data import EmulatorInvocation
 
 # conftest.py patches decky before this import.
 # main.py adds py_modules to sys.path (provides vdf, etc.).
-from main import Plugin  # noqa: F401
+import backend  # noqa: F401
 
 _TEST_LOGGER = logging.getLogger("test_es_de")
 

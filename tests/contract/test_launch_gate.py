@@ -22,7 +22,7 @@ def _call_names(harness) -> list[str]:
 
 async def test_evaluate_launch_disabled_allows_and_skips_round_trip(harness):
     """Save-sync off + installed ROM → allow, and no ``list_saves`` round-trip."""
-    harness.plugin.settings["save_sync_enabled"] = False
+    harness.backend.settings["save_sync_enabled"] = False
     seed_install(harness, 1)  # rom_id=1; shortcut_app_id defaults to rom_id, so app id 1 maps
     # A server save that the gate WOULD read (and could surface as a conflict)
     # if it ran the status round-trip — it must not.
@@ -37,7 +37,7 @@ async def test_evaluate_launch_disabled_allows_and_skips_round_trip(harness):
 
 async def test_evaluate_launch_disabled_still_blocks_not_installed(harness):
     """The disabled-allow is gated behind the not-installed check — uninstalled still blocks."""
-    harness.plugin.settings["save_sync_enabled"] = False
+    harness.backend.settings["save_sync_enabled"] = False
     seed_rom(harness, 1, shortcut_app_id=1)  # bound shortcut, but NOT installed
 
     verdict = await harness.plugin.evaluate_launch(1)

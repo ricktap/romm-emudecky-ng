@@ -29,6 +29,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from domain.emulator_table import find_emulator, render_invocation
 from domain.shortcut_data import EmulatorInvocation, direct_launch_args
 
 # Resolution states surfaced to the UI / game-detail panel. The shortcut bake
@@ -96,6 +97,20 @@ def _retroarch_invocation(
     )
 
 
+def _table_invocation(emulator: EmulatorInvocation) -> EmuDeckLaunchResolution:
+    """Render an emulator-table invocation (see :func:`resolve_emudeck_invocation`)."""
+    entry = find_emulator(emulator.command)
+    if entry is None:
+        return EmuDeckLaunchResolution(status=RESOLUTION_NEEDS_SETUP, reason="unknown_table_emulator")
+    if not emulator.launcher:
+        return EmuDeckLaunchResolution(status=RESOLUTION_NEEDS_SETUP, reason="emulator_not_installed")
+    return EmuDeckLaunchResolution(
+        status=RESOLUTION_OK,
+        launch_options=render_invocation(entry, emulator.launcher),
+        launcher_path=emulator.launcher,
+    )
+
+
 def resolve_emudeck_invocation(
     rom: dict[str, Any],
     emulator: EmulatorInvocation | None,
@@ -117,6 +132,12 @@ def resolve_emudeck_invocation(
       ``-L <coresdir>/<core>.so``. The retroarch launcher script name is
       ``retroarch.sh`` by default (overridable for installations that ship a
       differently-named RetroArch launcher).
+    - ``table`` (an emulator-table entry, :mod:`domain.emulator_table`) → the
+      entry's args template over its located executable, behind the
+      ``vblank_mode=0 %command%`` prefix (EmuDeck plan D4: the emulator is
+      invoked directly through ``rom-launcher-ng``, never through EmuDeck's
+      launcher scripts). No executable located → ``needs_setup``
+      (``emulator_not_installed``).
     - ``standalone`` or ``direct`` with a ``command`` → the per-system
       launcher script (looked up in ``system_launcher_map`` by ``system``);
       the standalone command's middle args (``%EMULATOR_*%`` and ``%ROM%``
@@ -132,6 +153,9 @@ def resolve_emudeck_invocation(
     del rom  # reserved for future per-ROM branching; symmetric with legacy
     if emulator is None:
         return EmuDeckLaunchResolution(status=RESOLUTION_NEEDS_SETUP, reason="no_emulator_resolved")
+
+    if emulator.kind == "table":
+        return _table_invocation(emulator)
 
     if emulator.kind == "libretro" and emulator.core_so:
         if not launchers_path or not retroarch_cores_dir:

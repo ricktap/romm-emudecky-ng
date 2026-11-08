@@ -36,6 +36,9 @@ class EmulatorInvocation:
     - ``kind == "direct"`` → the folder-boot form (ADR-0019): ``command`` is the
       same full ES-DE standalone command AND ``launcher`` is the emulator's
       sandbox launcher path.
+    - ``kind == "table"`` → an emulator from the plugin's own emulator table
+      (:mod:`domain.emulator_table`): ``command`` is the table emulator id and
+      ``launcher`` is its located executable on the host.
 
     ``label`` is the ES-DE display label (diagnostics only). This is the
     standalone-emulator seam (#129); read-path consumers that only understand
@@ -43,7 +46,7 @@ class EmulatorInvocation:
     emulator) and degrade exactly as they do for a ``(None, None)`` resolution.
     """
 
-    kind: str  # "libretro" | "standalone" | "direct"
+    kind: str  # "libretro" | "standalone" | "direct" | "table"
     label: str | None = None
     core_so: str | None = None
     command: str | None = None
@@ -70,6 +73,12 @@ class EmulatorInvocation:
         return cls(kind="direct", label=label, command=command, launcher=launcher)
 
 
+    @classmethod
+    def table(cls, emulator_id: str, executable: str | None, label: str | None = None) -> EmulatorInvocation:
+        """An emulator-table entry (*emulator_id*) located at *executable* on the host."""
+        return cls(kind="table", label=label, command=emulator_id, launcher=executable)
+
+
 def direct_launch_args(command: str) -> str:
     """Recover a standalone command's middle launcher args for the ``direct`` bake.
 
@@ -82,18 +91,33 @@ def direct_launch_args(command: str) -> str:
     return " ".join(stripped.split())
 
 
+def quote_launch_arg(value: str) -> str:
+    """Double-quote *value* as one launch-options argument.
+
+    Steam runs launch options through a shell, so every character that stays
+    special inside double quotes is backslash-escaped: ``\\`` first, then
+    ``"``, ``$`` and backtick. A value can therefore neither break out of the
+    quoted token nor trigger expansion or command substitution (a ROM named
+    ``$(rm -rf ~).nsp`` stays a literal file name). Spaces, apostrophes and
+    brackets need no escaping inside the double quotes
+    (``Pokemon Shining Pearl [010018E011D92000][v0].nsp``).
+    """
+    escaped = value.replace("\\", "\\\\")
+    for ch in ('"', "$", "`"):
+        escaped = escaped.replace(ch, "\\" + ch)
+    return f'"{escaped}"'
+
+
 def build_launch_options(invocation: str, path: str) -> str:
     """Compose the Steam shortcut launch command from *invocation* and ROM *path*.
 
-    The path is double-quoted so paths with spaces survive the launcher's
-    ``exec "$@"``. Embedded ``\\`` and ``"`` in the path are backslash-escaped
-    (backslash first, then quote) so a server-controlled ROM filename cannot
-    break out of the quoted token and inject extra argv elements into the
+    The path is double-quoted (:func:`quote_launch_arg`) so paths with spaces
+    survive the launcher's ``exec "$@"`` and a server-controlled ROM filename
+    cannot break out of the quoted token and inject extra argv elements into the
     emulator invocation. Only the path is escaped — *invocation* is trusted
-    build-time text whose own ``-e "..."`` quoting must survive verbatim.
+    build-time text whose own quoting must survive verbatim.
     """
-    escaped = path.replace("\\", "\\\\").replace('"', '\\"')
-    return f'{invocation} "{escaped}"'
+    return f"{invocation} {quote_launch_arg(path)}"
 
 
 def extract_version_metadata(rom: dict[str, Any]) -> dict[str, Any]:

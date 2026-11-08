@@ -169,6 +169,34 @@ describe("DiscSelector — multi-disc rendering", () => {
   });
 });
 
+describe("DiscSelector — launch-file pick (Switch folder)", () => {
+  beforeEach(() => {
+    captured.menu = null;
+    vi.mocked(getCachedGameDetail).mockReset();
+    vi.mocked(backend.getDiscSelection).mockReset();
+  });
+
+  it("titles the menu 'Launch file' and shows the position, not digits from the filename", async () => {
+    mockCachedDetail();
+    vi.mocked(backend.getDiscSelection).mockResolvedValue({
+      multi_disc: true,
+      discs: [
+        { filename: "Game [010018E011D92000][v0].nsp", label: "Game [010018E011D92000][v0]", index: 1 },
+        { filename: "Game [010018E011D92800][v196608].nsp", label: "Game [010018E011D92800][v196608]", index: 2 },
+      ],
+      selected: null,
+      default: { kind: "file", label: "Game [010018E011D92000][v0]", filename: "Game [010018E011D92000][v0].nsp" },
+    });
+
+    const { r, menu } = await renderAndOpen();
+
+    expect(r.getByTestId("disc-btn").textContent).toBe("1");
+    expect(within(menu.container).getAllByRole("menuitem")).toHaveLength(2);
+    expect(captured.menu).not.toBeNull();
+    expect((captured.menu as { props: { label: string } }).props.label).toBe("Launch file");
+  });
+});
+
 describe("DiscSelector — selecting a disc", () => {
   beforeEach(() => {
     captured.menu = null;

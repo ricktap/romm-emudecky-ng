@@ -143,6 +143,7 @@ async def test_get_platform_core_info_payload_shape(harness):
         "active_core_label",
         "platform_core_label",
         "has_game_override",
+        "game_override_label",
     }
     assert result["emulator_data_available"] is True
     assert result["emulators"] == [_MGBA_ENTRY, _VBA_NEXT_ENTRY]

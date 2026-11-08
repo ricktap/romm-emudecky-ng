@@ -1,4 +1,4 @@
-"""Coverage for ``main.Plugin`` callable delegation seams.
+"""Coverage for ``backend.Backend`` callable delegation seams.
 
 Every callable on ``Plugin`` is a thin one-liner that forwards to a
 backend service. These tests exercise each delegation by:

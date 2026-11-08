@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from domain.disc_selection import default_descriptor
+from domain.emulator_table import launch_file_extensions
 from domain.shortcut_data import build_launch_options
 from lib.list_result import ErrorCode
 
@@ -95,6 +96,7 @@ class DiscService:
             discs = self._disc_resolver.enumerate_discs(install)
             selected = rom.selected_disc
             file_path = install.file_path
+            system = install.system
         if len(discs) < 2:
             return {"multi_disc": False}
         # Down-validate the pin: a stale pin (the file is no longer enumerated)
@@ -107,7 +109,9 @@ class DiscService:
             "multi_disc": True,
             "discs": [{"filename": d.filename, "label": d.label, "index": d.index} for d in discs],
             "selected": selected,
-            "default": default_descriptor(file_path, discs),
+            "default": default_descriptor(
+                file_path, discs, size_ranked=launch_file_extensions(system) is not None
+            ),
         }
 
     async def select_disc(self, rom_id: int, filename: str | None) -> dict[str, Any]:

@@ -56,7 +56,9 @@ class EmulatorOption:
 
     ``label`` is ES-DE's display label — the pick key the per-game/per-platform
     override stores. ``kind`` is ``"libretro"`` (a RetroArch core; ``core_so``
-    is its bare name) or ``"standalone"`` (``core_so`` is ``None``).
+    is its bare name), ``"standalone"`` (``core_so`` is ``None``), or
+    ``"table"`` (an entry of the plugin's own emulator table: ``command`` is its
+    emulator id, ``launcher`` its located executable).
     ``command`` is the raw ES-DE command text, retained so a standalone option
     can be rendered into an ``EmulatorInvocation`` (a libretro option rebuilds
     from ``core_so``); it is not exposed on the frontend payload.
@@ -83,6 +85,10 @@ class EmulatorOption:
     command: str
     status: str
     reason: str | None
+    # Located host executable — set only for ``kind == "table"`` options (the
+    # plugin's own emulator table, :mod:`domain.emulator_table`), whose
+    # ``command`` is the table emulator id.
+    launcher: str | None = None
 
 
 def classify_command(label: str, text: str) -> EmulatorOption:
@@ -190,6 +196,8 @@ def option_to_invocation(option: EmulatorOption | None) -> EmulatorInvocation | 
         return EmulatorInvocation.libretro(option.core_so, option.label)
     if option.kind == "standalone" and option.command:
         return EmulatorInvocation.standalone(option.command, option.label)
+    if option.kind == "table" and option.command and option.launcher:
+        return EmulatorInvocation.table(option.command, option.launcher, option.label)
     return None
 
 
@@ -216,13 +224,14 @@ def options_to_payload(options: list[EmulatorOption]) -> list[dict[str, Any]]:
     option (``needs_setup`` reads as ``bakeable: False`` with its ``reason`` —
     ``"inject"`` or ``"not_installed"`` — so the picker can disable it with a
     distinct message). The raw ``command`` text is intentionally dropped from the
-    wire payload.
+    wire payload. A ``table`` option is a standalone emulator to the picker, so
+    it reports ``kind: "standalone"``.
     """
     default = select_default_option(options)
     return [
         {
             "label": option.label,
-            "kind": option.kind,
+            "kind": "standalone" if option.kind == "table" else option.kind,
             "core_so": option.core_so,
             "is_default": option is default,
             "bakeable": option.status == "bakeable",

@@ -53,6 +53,10 @@ export interface CoreInfo {
   active_core_label: string | null;
   platform_core_label: string | null;
   has_game_override: boolean;
+  /** The per-game pinned label (null when unpinned). When it names an emulator
+   *  that is no longer bakeable (e.g. uninstalled), the game launches with the
+   *  default and the picker says so. */
+  game_override_label?: string | null;
 }
 
 /**
