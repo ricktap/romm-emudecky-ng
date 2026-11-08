@@ -9,6 +9,23 @@
 
 ---
 
+## 0. Version roadmap (set 2026-11-09)
+
+| Versions        | Focus                                                                                                  |
+| --------------- | ------------------------------------------------------------------------------------------------------ |
+| up to **0.75**  | **Nintendo Switch only**: Eden / Ryujinx / yuzu launch, adoption, downloads, Switch save sync, Switch firmware/keys |
+| **0.40.0**      | Rust backend rewrite (GitHub milestone "0.40.0"), still Switch-only                                      |
+| 0.75 → **0.90** | add the other systems back (RetroArch, PS2 / GC / PS1, Wii U / Vita, …)                                  |
+| 0.90 → **1.0.0**| prepare for the official Decky plugin store                                                              |
+
+What this means for the work below:
+
+- Phases that target other systems (the non-Switch parts of Phases 2, 6 and 7) are deferred to the 0.75–0.90 range.
+- The rewrite's "what's still needed" reviews (steps 3–5) may remove or skip non-Switch features until then.
+- Releases follow semver. Minor and patch releases are cut as soon as they are reviewed and tested.
+
+---
+
 ## 1. Goal and target environment
 
 A Decky Loader plugin that brings a self-hosted RomM library onto **EmuDeck** machines: browse the library from the QAM,
@@ -214,6 +231,16 @@ game counted as installed only when this plugin downloaded it itself.
 - **Adoption** writes the same `RomInstall` record a finished download writes and goes through the same launch-options
   path, so uninstall, version switch and launch treat it like a downloaded game.
 - Launching adopted Switch games still needs Phase 2.
+- **Normalized-name fallback for Switch (decided 2026-11-08, after on-device data).**
+  - Why: hand-copied games never match exactly. RomM stores Switch games as folders with sanitized names
+    (`Catherine_ Full Body`), while copies use scene names (`… NSW-NiiNTENDO.xci`) or other spellings. Size cannot
+    help: XCI files are padded to cart size, and four different games on the Deck are all exactly 7,985,954,816 bytes.
+  - Rule: when the exact rule finds nothing, a disk entry in `roms/switch/` matches a RomM game if their names are
+    **exactly equal after normalizing**: lowercase; `_` `:` and other punctuation as spaces; drop the file extension,
+    bracketed/parenthesised tags (`[0100…]`, `[v0]`, `(US-EU)`) and `NSW-<group>` scene suffixes.
+  - Safety: pairing is one-to-one only; an ambiguous match adopts nothing. The entry must be a `.xci`/`.nsp` file, or
+    a folder containing one (the launch file is the largest, as for downloads). No size check for Switch.
+  - The recorded install path uses the EmuDeck-configured roms root, not a resolved mount path.
 
 ### Phase 1.6 — Self-update from GitHub releases (proposed 2026-11-08)
 

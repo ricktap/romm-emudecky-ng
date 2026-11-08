@@ -350,6 +350,47 @@ def test_missing_rom_resolves_to_none_with_warning(caplog: pytest.LogCaptureFixt
     assert any("404" in r.message for r in caplog.records)
 
 
+def test_missing_rom_with_platform_slug_resolves_like_an_unpinned_rom() -> None:
+    """A library sync bakes before writing the ``roms`` row (first sync): the
+    caller's platform slug drives the per-platform → system-default chain."""
+    uow = FakeUnitOfWork()
+    core_info = FakeCoreInfoProvider(
+        available_cores=[{"core_so": "mgba_libretro", "label": "mGBA", "is_default": True}],
+        active_core=("gpsp_libretro", "gpSP"),
+    )
+    platform_reader = FakePlatformCoreReader(mapping={"gba": "mGBA"})
+    resolver, _ = _make_resolver(uow=uow, core_info=core_info, platform_core_reader=platform_reader)
+
+    emulator = resolver.active_emulator_for_rom(404, "gba")
+
+    assert emulator is not None
+    assert (emulator.core_so, emulator.label) == ("mgba_libretro", "mGBA")
+    assert platform_reader.calls == ["gba"]
+
+
+def test_missing_rom_with_platform_slug_falls_to_system_default() -> None:
+    uow = FakeUnitOfWork()
+    core_info = FakeCoreInfoProvider(active_core=("mgba_libretro", "mGBA"))
+    resolver, _ = _make_resolver(uow=uow, core_info=core_info)
+
+    emulator = resolver.active_emulator_for_rom(404, "gba")
+
+    assert emulator is not None
+    assert emulator.core_so == "mgba_libretro"
+
+
+def test_stored_row_wins_over_caller_platform_slug() -> None:
+    uow = FakeUnitOfWork()
+    _seed_rom(uow, rom_id=20, platform_slug="snes", emulator_override=None)
+    core_info = FakeCoreInfoProvider(active_core=("snes9x_libretro", "Snes9x"))
+    platform_reader = FakePlatformCoreReader()
+    resolver, _ = _make_resolver(uow=uow, core_info=core_info, platform_core_reader=platform_reader)
+
+    resolver.active_emulator_for_rom(20, "gba")
+
+    assert platform_reader.calls == ["snes"]
+
+
 # --- active_emulator_for_rom: the standalone-aware launch-bake seam (#129) ------
 
 

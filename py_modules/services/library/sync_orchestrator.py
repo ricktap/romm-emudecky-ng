@@ -1085,7 +1085,9 @@ class SyncOrchestrator:
         """
         invocations: dict[int, str] = {}
         for rom in roms:
-            emulator = self._active_core.active_emulator_for_rom(rom["id"])
+            # The platform slug lets a ROM whose ``roms`` row this sync has not
+            # written yet (first sync) resolve the same way as a stored one.
+            emulator = self._active_core.active_emulator_for_rom(rom["id"], rom.get("platform_slug"))
             resolution = self._launch_resolver.resolve_for(rom, emulator, rom.get("platform_slug"))
             if resolution.status == "ok":
                 invocations[rom["id"]] = resolution.launch_options

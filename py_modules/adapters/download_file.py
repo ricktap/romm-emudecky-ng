@@ -98,6 +98,28 @@ class DownloadFileAdapter:
         """Return True when *path* is an existing directory."""
         return os.path.isdir(path)
 
+    def list_entries(self, directory: str) -> list[tuple[str, bool, int]]:
+        """Return ``(name, is_dir, size_bytes)`` for the top-level entries of *directory*.
+
+        Directories and regular files only (symlinks followed; size ``0`` for a
+        directory); anything else, and any entry whose ``stat`` fails, is
+        skipped. ``[]`` when *directory* is missing or unreadable.
+        """
+        out: list[tuple[str, bool, int]] = []
+        try:
+            with os.scandir(directory) as it:
+                for entry in it:
+                    try:
+                        if entry.is_dir():
+                            out.append((entry.name, True, 0))
+                        elif entry.is_file():
+                            out.append((entry.name, False, entry.stat().st_size))
+                    except OSError:
+                        continue
+        except OSError:
+            return []
+        return out
+
     def walk_files_matching_suffixes(self, base_dir: str, suffixes: tuple[str, ...]) -> list[str]:
         """Recursively list files under *base_dir* matching any of *suffixes*.
 

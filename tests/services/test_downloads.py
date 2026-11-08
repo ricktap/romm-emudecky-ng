@@ -264,6 +264,45 @@ class TestStartDownload:
         assert 42 in plugin._download_service._reserved_bytes
 
     @pytest.mark.asyncio
+    async def test_target_dir_keeps_configured_symlinked_root(self, plugin, tmp_path):
+        """SteamOS links /run/media/mmcblk0p1 to /run/media/deck/<uuid>: the
+        download target (and so the recorded install path) stays under the
+        configured root, not the resolved mount."""
+        from unittest.mock import AsyncMock
+
+        (tmp_path / "deck" / "uuid" / "roms").mkdir(parents=True)
+        (tmp_path / "mmcblk0p1").symlink_to(tmp_path / "deck" / "uuid")
+        roms_root = tmp_path / "mmcblk0p1" / "roms"
+        plugin._download_service._retrodeck_paths = FakeRetroDeckPaths(roms=str(roms_root))
+        rom_detail = {
+            "id": 42,
+            "name": "Zelda",
+            "fs_name": "zelda.z64",
+            "fs_size_bytes": 1024,
+            "platform_slug": "n64",
+            "platform_name": "Nintendo 64",
+        }
+        plugin._download_service._loop = MagicMock()
+        plugin._download_service._loop.run_in_executor = AsyncMock(return_value=rom_detail)
+        targets = []
+
+        def _capture_task(coro):
+            targets.append(coro.cr_frame.f_locals["target_path"])
+            coro.close()
+            return MagicMock()
+
+        plugin._download_service._loop.create_task = _capture_task
+        made_dirs: list[str] = []
+        plugin._download_service._download_file_store.make_dirs = made_dirs.append
+        plugin._download_service._download_file_store.disk_free = lambda _path: 500 * 1024 * 1024
+
+        result = await plugin.start_download(42)
+
+        assert result["success"] is True
+        assert made_dirs == [str(roms_root / "n64")]
+        assert targets == [str(roms_root / "n64" / "zelda.z64")]
+
+    @pytest.mark.asyncio
     async def test_rejects_already_downloading(self, plugin):
         plugin._download_service._download_in_progress.add(42)
         result = await plugin.start_download(42)

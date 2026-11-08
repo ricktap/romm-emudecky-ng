@@ -29,9 +29,9 @@ _GROUP = "igdb:100:1"
 
 
 class _Env:
-    def __init__(self, tmp_path, loop):
-        self.roms_root = tmp_path / "roms"
-        self.roms_root.mkdir()
+    def __init__(self, tmp_path, loop, *, roms_root=None):
+        self.roms_root = roms_root or tmp_path / "roms"
+        self.roms_root.mkdir(exist_ok=True)
         self.factory = FakeUnitOfWorkFactory()
         self.uow = self.factory.uow
         self.romm = FakeRommApi()
@@ -58,25 +58,30 @@ class _Env:
             )
         )
 
-    def seed_rom(self, rom_id, *, group=None, app_id=None, platform="gba"):
+    def seed_rom(self, rom_id, *, group=None, app_id=None, platform="gba", fs_name=None):
         with self.factory() as uow:
             uow.roms.save(
                 Rom.synced(
                     rom_id=rom_id,
                     platform_slug=platform,
                     name=f"rom-{rom_id}",
-                    fs_name=f"rom-{rom_id}",
+                    fs_name=fs_name or f"rom-{rom_id}",
                     shortcut_app_id=app_id,
                     synced_at="2026-01-01T00:00:00",
                     sibling_group_key=group,
                 )
             )
 
-    def seed_install(self, rom_id, path="/elsewhere/x.gba"):
+    def seed_install(self, rom_id, path="/elsewhere/x.gba", *, rom_dir=None, system="gba"):
         with self.factory() as uow:
             uow.rom_installs.save(
                 RomInstall.mark_installed(
-                    rom_id=rom_id, file_path=path, rom_dir=None, platform_slug="gba", system="gba", installed_at="t"
+                    rom_id=rom_id,
+                    file_path=path,
+                    rom_dir=rom_dir,
+                    platform_slug=system,
+                    system=system,
+                    installed_at="t",
                 )
             )
 
@@ -447,3 +452,239 @@ class TestScheduleAdoptionCheck:
         assert len(env.service._in_flight) == 1
         await asyncio.gather(*env.service._in_flight.values())
         assert [c[0] for c in env.romm.call_log].count("get_rom") == 2
+
+
+# ── Path consistency (symlinked roms root) ───────────────────────
+
+
+@pytest.fixture
+async def linked_env(tmp_path):
+    # SteamOS: the configured root /run/media/mmcblk0p1/... is a symlink to the
+    # SD card's mount /run/media/deck/<uuid>/...
+    (tmp_path / "deck" / "uuid" / "roms").mkdir(parents=True)
+    (tmp_path / "mmcblk0p1").symlink_to(tmp_path / "deck" / "uuid")
+    return _Env(tmp_path, asyncio.get_running_loop(), roms_root=tmp_path / "mmcblk0p1" / "roms")
+
+
+class TestRecordedPathUsesConfiguredRoot:
+    def test_exact_single_file_keeps_configured_root(self, linked_env):
+        linked_env.put("gba/game.gba", 8)
+        [cand] = linked_env.service.plan_adoptions([_single()])
+        assert cand.install.file_path == str(linked_env.roms_root / "gba" / "game.gba")
+        assert "/deck/uuid/" not in cand.install.file_path
+
+    def test_exact_multi_file_keeps_configured_root(self, linked_env):
+        linked_env.put("psx/Final Fantasy VII (USA)/FF7.cue", 3)
+        linked_env.put("psx/Final Fantasy VII (USA)/FF7.bin", 9)
+        [cand] = linked_env.service.plan_adoptions([_multi()])
+        d = linked_env.roms_root / "psx" / "Final Fantasy VII (USA)"
+        assert cand.install.rom_dir == str(d)
+        assert cand.install.file_path == str(d / "FF7.cue")
+
+    def test_title_match_keeps_configured_root(self, linked_env):
+        linked_env.put("switch/Catherine Full Body/Catherine Full Body [0100BF00112C0000]+[v1.0.1](US-EU).xci", 4)
+        [cand] = linked_env.service.plan_adoptions([_switch(1, "Catherine_ Full Body")])
+        d = linked_env.roms_root / "switch" / "Catherine Full Body"
+        assert cand.install.rom_dir == str(d)
+        assert cand.install.file_path == str(d / "Catherine Full Body [0100BF00112C0000]+[v1.0.1](US-EU).xci")
+
+
+# ── Normalized-title fallback (Switch) ───────────────────────────
+
+
+def _switch(rom_id, fs_name, *, inner=("game.xci", 100), **over):
+    """A RomM Switch ROM stored as a folder (never matches the exact rule on its own)."""
+    root = f"switch/{fs_name}"
+    rom = {
+        "id": rom_id,
+        "name": fs_name.replace("_", ":"),
+        "fs_path": "switch",
+        "fs_name": fs_name,
+        "fs_name_no_ext": fs_name,
+        "platform_slug": "switch",
+        "platform_name": "Nintendo Switch",
+        "has_multiple_files": True,
+        "files": [{"file_path": root, "file_name": inner[0], "file_size_bytes": inner[1]}],
+    }
+    rom.update(over)
+    return rom
+
+
+_CATHERINE_XCI = "Catherine Full Body [0100BF00112C0000]+[v1.0.1](US-EU).xci"
+_FE_XCI = "Fire Emblem Three Houses NSW-HR.xci"
+_ZELDA_XCI = "The Legend Of Zelda Echoes Of Wisdom NSW-NiiNTENDO.xci"
+_MK8_XCI = "Mario Kart 8 Deluxe [0100152000022000][v0].xci"
+
+_ROMM_SWITCH = [
+    (1, "Catherine_ Full Body"),
+    (2, "Fire Emblem_ Three Houses"),
+    (3, "The Legend of Zelda_ Echoes of Wisdom"),
+    (4, "Mario Kart 8 Deluxe"),
+    (5, "Super Mario Galaxy"),
+    (6, "Super Mario Galaxy 2"),
+    (7, "Donkey Kong Country Returns HD_ Version 1.1.0"),
+    (8, "Pokémon Legends_ Z-A"),
+]
+
+
+def _real_switch_folder(env):
+    """The roms/switch/ layout observed on the Deck (tiny files; sizes irrelevant)."""
+    env.put(f"switch/Catherine Full Body/{_CATHERINE_XCI}", 4)
+    env.put(f"switch/Fire Emblem Three Houses/{_FE_XCI}", 4)
+    env.put(f"switch/{_ZELDA_XCI}", 4)
+    env.put(f"switch/Mario Kart 8 Deluxe/{_MK8_XCI}", 4)
+    env.put("switch/Pokemon Scarlet/Pokemon Scarlet NSW-NiiNTENDO.xci", 4)
+    env.put("switch/Pokemon Shining Pearl [010018E011D92000][v0].nsp", 4)
+    env.put("switch/Super Mario Bros Wonder NSW-LiGHTFORCE.xci", 4)
+    (env.roms_root / "switch" / "Xenoblade Chronicles 3").mkdir()
+    env.put("switch/metadata.txt", 4)
+    env.put("switch/systeminfo.txt", 4)
+
+
+class TestTitleFallback:
+    def _plan(self, env):
+        return {c.rom_id: c for c in env.service.plan_adoptions([_switch(i, n) for i, n in _ROMM_SWITCH])}
+
+    def test_real_device_layout(self, env):
+        _real_switch_folder(env)
+        sw = env.roms_root / "switch"
+        by_id = self._plan(env)
+        assert sorted(by_id) == [1, 2, 3, 4]
+        assert by_id[1].install.rom_dir == str(sw / "Catherine Full Body")
+        assert by_id[1].install.file_path == str(sw / "Catherine Full Body" / _CATHERINE_XCI)
+        assert by_id[2].install.rom_dir == str(sw / "Fire Emblem Three Houses")
+        assert by_id[2].install.file_path == str(sw / "Fire Emblem Three Houses" / _FE_XCI)
+        assert by_id[3].install.rom_dir is None
+        assert by_id[3].install.file_path == str(sw / _ZELDA_XCI)
+        assert by_id[4].install.rom_dir == str(sw / "Mario Kart 8 Deluxe")
+        assert by_id[4].install.file_path == str(sw / "Mario Kart 8 Deluxe" / _MK8_XCI)
+        for cand in by_id.values():
+            assert cand.install.system == "switch"
+            assert cand.install.platform_slug == "switch"
+            assert cand.bake_path == cand.install.file_path
+
+    def test_folder_launch_file_is_largest_switch_file(self, env):
+        env.put("switch/Mario Kart 8 Deluxe/update.nsp", 50)
+        env.put(f"switch/Mario Kart 8 Deluxe/{_MK8_XCI}", 90)
+        env.put("switch/Mario Kart 8 Deluxe/huge.txt", 500)
+        [cand] = env.service.plan_adoptions([_switch(4, "Mario Kart 8 Deluxe")])
+        assert cand.install.file_path.endswith(f"/Mario Kart 8 Deluxe/{_MK8_XCI}")
+
+    def test_nested_only_launch_file_does_not_qualify(self, env):
+        env.put(f"switch/Mario Kart 8 Deluxe/sub/{_MK8_XCI}", 4)
+        assert env.service.plan_adoptions([_switch(4, "Mario Kart 8 Deluxe")]) == []
+
+    def test_two_disk_entries_for_one_title_adopt_none(self, env):
+        env.put(f"switch/Mario Kart 8 Deluxe/{_MK8_XCI}", 4)
+        env.put("switch/Mario Kart 8 Deluxe NSW-GRP.xci", 4)
+        assert env.service.plan_adoptions([_switch(4, "Mario Kart 8 Deluxe")]) == []
+
+    def test_two_roms_in_batch_with_one_title_adopt_none(self, env):
+        env.put(f"switch/Mario Kart 8 Deluxe/{_MK8_XCI}", 4)
+        roms = [_switch(4, "Mario Kart 8 Deluxe"), _switch(9, "Mario Kart 8_ Deluxe")]
+        assert env.service.plan_adoptions(roms) == []
+
+    def test_synced_rom_sharing_the_title_makes_it_ambiguous(self, env):
+        # The single-ROM hook only sees one ROM; the synced library supplies the rest.
+        env.put(f"switch/Mario Kart 8 Deluxe/{_MK8_XCI}", 4)
+        env.seed_rom(9, platform="switch", fs_name="Mario Kart 8_ Deluxe")
+        assert env.service.plan_adoptions([_switch(4, "Mario Kart 8 Deluxe")]) == []
+
+    def test_entry_used_by_an_existing_install_is_not_adopted(self, env):
+        env.put(f"switch/Mario Kart 8 Deluxe/{_MK8_XCI}", 4)
+        mk8 = env.roms_root / "switch" / "Mario Kart 8 Deluxe"
+        env.seed_rom(9, platform="switch", fs_name="MK8")
+        env.seed_install(9, str(mk8 / _MK8_XCI), rom_dir=str(mk8), system="switch")
+        assert env.service.plan_adoptions([_switch(4, "Mario Kart 8 Deluxe")]) == []
+
+    def test_existing_install_blocks(self, env):
+        env.put(f"switch/{_ZELDA_XCI}", 4)
+        env.seed_rom(3, platform="switch")
+        env.seed_install(3, system="switch")
+        assert env.service.plan_adoptions([_switch(3, "The Legend of Zelda_ Echoes of Wisdom")]) == []
+
+    def test_download_job_blocks(self, env):
+        env.put(f"switch/{_ZELDA_XCI}", 4)
+        env.seed_rom(3, platform="switch")
+        env.seed_job(3)
+        assert env.service.plan_adoptions([_switch(3, "The Legend of Zelda_ Echoes of Wisdom")]) == []
+
+    def test_active_download_blocks(self, env):
+        env.put(f"switch/{_ZELDA_XCI}", 4)
+        env.active.add(3)
+        assert env.service.plan_adoptions([_switch(3, "The Legend of Zelda_ Echoes of Wisdom")]) == []
+
+    def test_installed_sibling_blocks(self, env):
+        env.put(f"switch/{_ZELDA_XCI}", 4)
+        env.seed_rom(3, platform="switch", group=_GROUP)
+        env.seed_rom(30, platform="switch", group=_GROUP)
+        env.seed_install(30, system="switch")
+        assert env.service.plan_adoptions([_switch(3, "The Legend of Zelda_ Echoes of Wisdom")]) == []
+
+    def test_exact_rule_wins_and_claims_its_entry(self, env):
+        # RomM file "Mario Kart 8 Deluxe.xci" sits exactly where a download puts it.
+        exact = env.put("switch/Mario Kart 8 Deluxe.xci", 8)
+        env.put(f"switch/Mario Kart 8 Deluxe/{_MK8_XCI}", 4)
+        rom = {
+            "id": 4,
+            "name": "Mario Kart 8 Deluxe",
+            "fs_name": "Mario Kart 8 Deluxe.xci",
+            "fs_size_bytes": 8,
+            "platform_slug": "switch",
+            "files": [{"file_name": "Mario Kart 8 Deluxe.xci"}],
+        }
+        [cand] = env.service.plan_adoptions([rom])
+        assert cand.install.file_path == str(exact)
+        assert cand.install.rom_dir is None
+
+    def test_systems_without_launch_file_extensions_never_use_titles(self, env):
+        env.put("gba/Game X.gba", 8)
+        assert env.service.plan_adoptions([_single(fs_name="Game_ X.gba")]) == []
+
+    def test_missing_switch_folder(self, env):
+        assert env.service.plan_adoptions([_switch(4, "Mario Kart 8 Deluxe")]) == []
+
+    def test_unsafe_system_is_skipped(self, env):
+        assert env.service.plan_adoptions([_switch(4, "Mario Kart 8 Deluxe", platform_slug="..")]) == []
+
+    def test_symlink_entry_escaping_roms_root_is_rejected(self, env, tmp_path):
+        outside = tmp_path / "outside" / "Mario Kart 8 Deluxe"
+        outside.mkdir(parents=True)
+        (outside / _MK8_XCI).write_bytes(b"x")
+        (env.roms_root / "switch").mkdir()
+        (env.roms_root / "switch" / "Mario Kart 8 Deluxe").symlink_to(outside)
+        assert env.service.plan_adoptions([_switch(4, "Mario Kart 8 Deluxe")]) == []
+
+    def test_listing_failure_is_logged_not_raised(self, env, monkeypatch):
+        env.put(f"switch/{_ZELDA_XCI}", 4)
+
+        def boom(_directory):
+            raise OSError("io")
+
+        monkeypatch.setattr(env.service._file_reader, "list_entries", boom)
+        assert env.service.plan_adoptions([_switch(3, "The Legend of Zelda_ Echoes of Wisdom")]) == []
+
+    def test_commit_writes_title_match(self, env):
+        env.put(f"switch/{_ZELDA_XCI}", 4)
+        env.seed_rom(3, platform="switch")
+        cands = env.service.plan_adoptions([_switch(3, "The Legend of Zelda_ Echoes of Wisdom")])
+        assert env.service.commit_adoptions(cands) == [3]
+        with env.factory() as uow:
+            assert uow.rom_installs.get(3).file_path == str(env.roms_root / "switch" / _ZELDA_XCI)
+
+    @pytest.mark.asyncio
+    async def test_game_page_hook_adopts_by_title(self, env):
+        env.put(f"switch/Fire Emblem Three Houses/{_FE_XCI}", 4)
+        env.seed_rom(2, platform="switch", app_id=4242, fs_name="Fire Emblem_ Three Houses")
+        env.romm.roms[2] = _switch(2, "Fire Emblem_ Three Houses")
+
+        assert await env.service.adopt_rom(2) is True
+
+        d = env.roms_root / "switch" / "Fire Emblem Three Houses"
+        with env.factory() as uow:
+            install = uow.rom_installs.get(2)
+        assert install.rom_dir == str(d)
+        assert install.file_path == str(d / _FE_XCI)
+        payload = env.emit.await_args.args[1]
+        assert payload["adopted"] is True
+        assert payload["file_path"] == str(d / _FE_XCI)
