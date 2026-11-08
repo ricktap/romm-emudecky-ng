@@ -127,7 +127,8 @@ Local dev note: this Mac has no `mise` and no `.venv`, so the test baseline stil
     `/bin/rom-launcher-ng`, which never matches upstream's `/bin/rom-launcher` and vice versa, so neither plugin sees
     or touches the other's shortcuts. A frontend test pins this.
   - **Short name in Decky (2026-11-08):** the Decky plugin list and QAM entry (`plugin.json` `name`, `definePlugin`
-    in `src/index.tsx`) say "EmuDecky RomMM", because the full name was too long there. Everything else keeps
+    in `src/index.tsx`) say "EmuDecky RomM+", because the full name was too long there. This name is **permanent**: self-update (Phase 1.6) finds
+    the installed plugin by it. Everything else keeps
     "EmuDecky RomM Manager".
   - The release workflow fails the build if the zip's top folder (the install folder) is not `romm-emudecky-ng`.
 
@@ -197,6 +198,50 @@ Design agreed 2026-11-08:
 - Auto-resume stops at the first unreachable server or rejected sign-in, and marks the remaining jobs with that reason.
 - If the job table can't be read at startup, no ROM `.tmp` is deleted.
 - BIOS `.tmp` files are still wiped at startup until firmware joins the queue (Phase 7).
+
+### Phase 1.5 — Adopt games already on disk (found while testing v0.31)
+
+Games already on the device (copied by hand, or downloaded by the old RomM Sync plugin) showed "Download", because a
+game counted as installed only when this plugin downloaded it itself.
+
+- **Match rule (decided 2026-11-08):** exact path and size, no hashing.
+  - A ROM counts as installed when its file is exactly where this plugin would download it (`roms/<system>/<RomM
+    file name>`) and its size matches RomM's `fs_size_bytes`.
+  - Multi-file games: every file RomM lists must be present at its expected path with the right size.
+  - Renamed copies are not matched (no false positives); looser matching can come later if needed.
+- **When:** during library sync for each synced platform, and on opening a game's detail page (one cheap `stat`), so
+  the page is correct immediately.
+- **Adoption** writes the same `RomInstall` record a finished download writes and goes through the same launch-options
+  path, so uninstall, version switch and launch treat it like a downloaded game.
+- Launching adopted Switch games still needs Phase 2.
+
+### Phase 1.6 — Self-update from GitHub releases (proposed 2026-11-08)
+
+Installing every release by URL again is tedious. Decky's own update badge only works for plugins in the selected
+store, and a custom store would **replace** the official one for the user, so neither fits. The established community
+pattern (decky-nexus, deckyemu, Decky-Metadata) is an in-plugin check plus Decky's own installer:
+
+- **Check (backend):** `GET api.github.com/repos/ricktap/romm-emudecky-ng/releases/latest` through the HTTP adapter
+  (with our User-Agent).
+  - When: on plugin start, at most every 6 h, plus a "Check for updates" button.
+  - Compares semver against `package.json` `version`.
+  - Returns latest version, release notes, the **versioned** asset URL, and the asset's sha256 (from the API's `digest`).
+  - Only asset URLs under `https://github.com/ricktap/romm-emudecky-ng/releases/download/` are accepted, and a hash is
+    required.
+  - Unauthenticated rate limit is 60/h per IP, which is plenty.
+- **Install (frontend):**
+  - The QAM shows "Update available: vX.Y.Z" with the notes and an **Update** button.
+  - The button calls `window.DeckyBackend.call("utilities/install_plugin", url, <plugin.json name>, version, sha256, 2)`
+    (2 = UPDATE).
+  - Decky downloads, verifies the sha256, and shows **its own confirmation modal**, which a plugin cannot skip.
+  - Decky then replaces the folder and reloads the plugin. Settings and database survive, because they live outside
+    the plugin folder.
+- **Constraint:** Decky matches the installed plugin by `plugin.json` `"name"`, so **"EmuDecky RomM+" must never change
+  again**; a rename breaks updating. A test pins that the name used for installing is read from `plugin.json`.
+- **Risk:** `utilities/install_plugin` is internal and undocumented, but it has been stable through Decky v3.x and many
+  plugins use it. If the call fails, the UI falls back to "Download vX.Y.Z" with the release link.
+- **Later, optional:** submit to the official Decky store (a PR to decky-plugin-database per release, with review).
+  This gives native update notifications without the internal API.
 
 ### Phase 2 — EmuDeck install detection + launch resolution (brief §5.2)
 
