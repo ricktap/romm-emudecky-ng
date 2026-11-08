@@ -32,12 +32,14 @@ def _rewind_to_v4(db_path: str) -> None:
     outbox table absent and ``note_id`` present, 007's ``last_played`` column
     absent, 008's version-metadata columns absent, 009's
     ``last_session_start_monotonic`` column absent, and 010's
-    sibling_group_key index absent) so the sequential 005→…→010 re-run applies
+    sibling_group_key index absent, 012's download_jobs table absent) so the sequential 005→…→012 re-run applies
     cleanly.
     """
     conn = sqlite3.connect(db_path, isolation_level=None)
     try:
         conn.execute("DROP TABLE IF EXISTS rom_playtime_sessions")
+        # Reverse 012 so its CREATE TABLE re-applies cleanly.
+        conn.execute("DROP TABLE IF EXISTS download_jobs")
         conn.execute("ALTER TABLE rom_playtime ADD COLUMN note_id INTEGER")
         conn.execute("ALTER TABLE rom_playtime DROP COLUMN last_played")
         # Reverse 009 so its ADD COLUMN re-applies instead of duplicating.

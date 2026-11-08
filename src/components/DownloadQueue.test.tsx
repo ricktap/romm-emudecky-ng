@@ -400,6 +400,44 @@ describe("DownloadQueue", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // interrupted (durable queue: transient failure or plugin restart)
+  // ---------------------------------------------------------------------------
+  describe("interrupted", () => {
+    it.each([
+      ["server_unreachable", "Interrupted — server unreachable"],
+      ["disk_full", "Interrupted — disk full"],
+      ["restart", "Interrupted — plugin restarted"],
+      ["auth_failed", "Interrupted — sign-in required"],
+      [undefined, "Interrupted"],
+    ])("reason %s stays active with caption '%s' and offers Resume + Cancel", async (reason, label) => {
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({
+        downloads: [
+          makeItem({
+            rom_id: 93,
+            rom_name: "Samus",
+            status: "interrupted",
+            resumable: false,
+            ...(reason ? { reason } : {}),
+          }),
+        ],
+      });
+      const { container } = render(<DownloadQueue onBack={() => {}} />);
+      await flushMount();
+
+      expect(container.querySelector('[data-testid="dl-caption"]')?.textContent).toBe(`Samus (Genesis) — ${label}`);
+      expect(buttonByText(container, "Pause Samus")).toBeNull();
+      expect(buttonByText(container, "Cancel Samus")).not.toBeNull();
+      const resume = buttonByText(container, "Resume Samus");
+      expect(resume).not.toBeNull();
+      await act(async () => {
+        fireEvent.click(resume!);
+        await Promise.resolve();
+      });
+      expect(backend.resumeDownload).toHaveBeenCalledWith(93);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // extracting (post-transfer ZIP unpack)
   // ---------------------------------------------------------------------------
   describe("extracting", () => {

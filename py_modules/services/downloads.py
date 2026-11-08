@@ -1,8 +1,10 @@
 """DownloadService — ROM download orchestration.
 
 Owns every step between a frontend download request and a ROM
-landing on disk: disk-space pre-flight, single-file and multi-file
-downloads, ZIP extraction, and partial-download cleanup.
+landing on disk: the durable download queue (``DownloadJob`` rows that
+survive a plugin restart), the one-at-a-time transfer scheduler,
+disk-space pre-flight, single-file and multi-file downloads, ZIP
+extraction, failure classification, and partial-download cleanup.
 Raw filesystem I/O flows through the ``DownloadFileStore`` Protocol;
 HTTP traffic flows through ``RommRomReader``.
 """
@@ -10,12 +12,21 @@ HTTP traffic flows through ``RommRomReader``.
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
+import re
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from domain.disc_formats import DISC_IMAGE_EXTENSIONS
+from domain.download_job import (
+    INTERRUPT_AUTH_FAILED,
+    INTERRUPT_DISK_FULL,
+    INTERRUPT_SERVER_UNREACHABLE,
+    DownloadJob,
+    InvalidJobTransitionError,
+)
 from domain.rom_files import (
     build_m3u_content,
     detect_launch_file,
@@ -29,12 +40,21 @@ from domain.rom_files import (
 )
 from domain.rom_install import RomInstall
 from domain.shortcut_data import EmulatorInvocation, build_launch_options
-from lib.errors import error_response
+from lib.errors import (
+    RommApiError,
+    RommAuthError,
+    RommForbiddenError,
+    RommNotFoundError,
+    RommServerError,
+    TokenHostMismatchError,
+    error_response,
+)
 from lib.list_result import ErrorCode
 from lib.path_safety import PathTraversalError, coerce_safe_component, safe_join
 
 if TYPE_CHECKING:
     import logging
+    from collections.abc import Callable
 
     from models.state import InstalledRomEntry
 
@@ -57,6 +77,68 @@ if TYPE_CHECKING:
 _DOWNLOAD_QUEUE_MAX_TERMINAL = 50
 _ZIP_TMP_EXT = ".zip.tmp"
 _TMP_EXT = ".tmp"
+# Stopped-but-unfinished statuses: no transfer task runs, the DownloadJob row and
+# the partial transfer are kept, and ``resume_download`` picks the job up again.
+_RESUMABLE_STATUSES = ("paused", "interrupted")
+# Errno values meaning "the disk is full" — the user can free space and resume.
+_DISK_FULL_ERRNOS = frozenset({errno.ENOSPC, errno.EDQUOT})
+# The HTTP adapter's completeness check message (``_validate_download``).
+_HTTP_STATUS_RE = re.compile(r"HTTP (\d{3})\b")
+_INCOMPLETE_RE = re.compile(r"Download incomplete: got (\d+) bytes, expected (\d+)")
+
+_OUTCOME_INTERRUPTED = "interrupted"
+_OUTCOME_FAILED = "failed"
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    """Return *exc* followed by its ``__cause__`` / ``__context__`` ancestors (cycle-safe)."""
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+def classify_download_failure(exc: BaseException) -> tuple[str, str | None]:
+    """Decide whether a failed download is ``interrupted`` (resumable) or ``failed``.
+
+    Returns ``(outcome, reason)``. ``interrupted`` keeps the partial transfer so
+    the user (or startup reconciliation) can resume: a full disk (``ENOSPC`` /
+    ``EDQUOT`` anywhere in the cause chain — the HTTP adapter wraps local write
+    errors in a ``RommConnectionError``), an auth failure (401/403/token bound to
+    another server — fixable by signing in again), or any transport / server
+    failure (unreachable, timeout, 5xx, a stream cut short). ``failed`` is only
+    for what can never succeed as-is: the ROM is gone (404) or another 4xx, the
+    transfer overshot its declared size or produced nothing, or a local
+    invariant / path-safety / archive error.
+    """
+    chain = _exception_chain(exc)
+    for link in chain:
+        if isinstance(link, OSError) and link.errno in _DISK_FULL_ERRNOS:
+            return (_OUTCOME_INTERRUPTED, INTERRUPT_DISK_FULL)
+    if isinstance(exc, RommAuthError | RommForbiddenError | TokenHostMismatchError):
+        return (_OUTCOME_INTERRUPTED, INTERRUPT_AUTH_FAILED)
+    if isinstance(exc, RommNotFoundError):
+        return (_OUTCOME_FAILED, None)
+    if isinstance(exc, RommServerError):
+        return (_OUTCOME_INTERRUPTED, INTERRUPT_SERVER_UNREACHABLE)  # 5xx / 429 rate limit
+    if isinstance(exc, RommApiError):
+        status = exc.status_code
+        if status is None:
+            match = _HTTP_STATUS_RE.match(str(exc))
+            status = int(match.group(1)) if match is not None else None
+        if isinstance(status, int) and 400 <= status < 500 and status not in (408, 429):
+            return (_OUTCOME_FAILED, None)
+        for link in chain:
+            text = str(link)
+            if "Download produced 0 bytes" in text:
+                return (_OUTCOME_FAILED, None)
+            match = _INCOMPLETE_RE.search(text)
+            if match is not None and int(match.group(1)) > int(match.group(2)):
+                return (_OUTCOME_FAILED, None)
+        return (_OUTCOME_INTERRUPTED, INTERRUPT_SERVER_UNREACHABLE)
+    return (_OUTCOME_FAILED, None)
 
 
 class _DownloadControl:
@@ -67,19 +149,21 @@ class _DownloadControl:
 
     ``cancelled`` and ``paused`` differ only in the terminal handling: a cancel
     deletes the partial ``.tmp``; a pause keeps it so the transfer can resume
-    from where it stopped. The abort mechanism (raise to unwind the executor
-    transfer) is identical.
+    from where it stopped. ``shutdown`` (plugin unload) keeps the partial AND
+    the job row untouched so startup reconciliation resumes it. The abort
+    mechanism (raise to unwind the executor transfer) is identical.
 
     Plain bools — not ``threading.Event`` — because the import-linter
     ``no-stdlib-io-in-services`` contract forbids ``threading`` in services, and
     under the GIL a one-way set-once bool flip needs no synchronisation.
     """
 
-    __slots__ = ("cancelled", "paused")
+    __slots__ = ("cancelled", "paused", "shutdown")
 
     def __init__(self) -> None:
         self.cancelled = False
         self.paused = False
+        self.shutdown = False
 
 
 @dataclass(frozen=True)
@@ -140,10 +224,20 @@ class DownloadService:
         self._download_in_progress: set[int] = set()
         self._download_queue: dict[int, dict[str, Any]] = {}
         self._download_tasks: dict[int, asyncio.Task[None]] = {}
-        # Bounded concurrency: at most two ROMs transfer at once. Excess
-        # downloads enter the queue with status "queued" and acquire the
-        # semaphore in FIFO order inside ``_do_download``.
-        self._download_semaphore = asyncio.Semaphore(2)
+        # One-at-a-time transfer scheduler. ``_active_control`` is the control
+        # token of the download holding the single transfer slot; every other
+        # download waits in ``_slot_waiters`` and the slot is handed to the
+        # waiter with the lowest DownloadJob ``position`` (FIFO on ties).
+        self._active_control: _DownloadControl | None = None
+        self._slot_waiters: list[tuple[int, _DownloadControl, asyncio.Future[None]]] = []
+        # In-memory mirror of each persisted job's queue position, kept in step
+        # with every row write so the scheduler never reads SQLite to pick.
+        self._job_positions: dict[int, int] = {}
+        # rom_ids whose transfer total has been persisted for this attempt, so
+        # the first progress tick writes it once (never per tick).
+        self._persisted_totals: set[int] = set()
+        # Background auto-resume of interrupted jobs after startup reconciliation.
+        self._auto_resume_task: asyncio.Task[None] | None = None
         # Reserved bytes per in-flight ROM, so the disk pre-flight accounts for
         # siblings already committed to download but not yet written to disk.
         self._reserved_bytes: dict[int, int] = {}
@@ -160,6 +254,14 @@ class DownloadService:
         clauses run on the event loop after this method returns, which
         is acceptable on plugin unload.
         """
+        # Mark every live attempt as shutting down BEFORE cancelling, so the
+        # terminal handler keeps the partial transfer and the job row (the next
+        # startup reconciles it) instead of treating the cancel as a user cancel.
+        for control in self._control_tokens.values():
+            control.shutdown = True
+        if self._auto_resume_task is not None:
+            self._auto_resume_task.cancel()
+            self._auto_resume_task = None
         for task in self._download_tasks.values():
             task.cancel()
         self._download_tasks.clear()
@@ -202,33 +304,273 @@ class DownloadService:
                 self._logger.warning(f"Failed to remove tmp file {path}: {e}")
         return removed
 
-    def _clean_rom_tmp_files(self):
-        """Remove leftover .tmp and .zip.tmp files from ROM directories."""
-        roms_base = self._retrodeck_paths.roms_path()
-        if not roms_base:
-            return 0
-        paths = self._download_file_store.walk_files_matching_suffixes(roms_base, (_TMP_EXT, _ZIP_TMP_EXT))
-        return self._remove_tmp_files(paths)
-
     def _clean_bios_tmp_files(self):
-        """Remove leftover .tmp files from BIOS directory."""
+        """Remove leftover .tmp files from BIOS directory (firmware has no durable queue yet)."""
         bios_base = self._retrodeck_paths.bios_path()
         if not bios_base:
             return 0
         paths = self._download_file_store.walk_files_matching_suffixes(bios_base, (_TMP_EXT,))
         return self._remove_tmp_files(paths)
 
-    def cleanup_leftover_tmp_files(self):
-        """Remove leftover .tmp and .zip.tmp files from ROM and BIOS directories on startup.
+    def _clean_orphan_rom_tmp_files(self, keep: set[str]) -> int:
+        """Remove ``.tmp`` / ``.zip.tmp`` files under the ROM tree that belong to no job."""
+        roms_base = self._retrodeck_paths.roms_path()
+        if not roms_base:
+            return 0
+        paths = self._download_file_store.walk_files_matching_suffixes(roms_base, (_TMP_EXT, _ZIP_TMP_EXT))
+        return self._remove_tmp_files([path for path in paths if path not in keep])
 
-        v1 note: this also deletes the ``.tmp`` of a download paused before a
-        plugin reload. That is acceptable — the in-memory download queue does not
-        survive a reload either, so a paused download could not have been resumed
-        across one regardless; the next download restarts from scratch.
+    # ── Durable queue (DownloadJob rows) ─────────────────────────────
+
+    def _now_iso(self) -> str:
+        return self._clock.now().isoformat()
+
+    def _load_job(self, rom_id: int) -> DownloadJob | None:
+        """Read the persisted job for *rom_id* in a short UoW (``None`` on miss or DB error)."""
+        try:
+            with self._uow_factory() as uow:
+                return uow.download_jobs.get(rom_id)
+        except Exception as e:
+            self._logger.warning(f"Failed to read download job for ROM {rom_id}: {e}")
+            return None
+
+    def _mutate_job(self, rom_id: int, mutate: Callable[[DownloadJob], None]) -> DownloadJob | None:
+        """Apply one verb to the persisted job in a short write UoW.
+
+        A missing row (a download driven without a job, or one already evicted)
+        is a no-op. An illegal transition or a DB failure is logged and swallowed
+        — persistence must never break the transfer itself. Never called while
+        another UoW is open.
         """
-        cleaned = self._clean_rom_tmp_files() + self._clean_bios_tmp_files()
+        try:
+            with self._uow_factory() as uow:
+                job = uow.download_jobs.get(rom_id)
+                if job is None:
+                    return None
+                mutate(job)
+                uow.download_jobs.save(job)
+        except InvalidJobTransitionError as e:
+            self._logger.warning(f"Download job {rom_id}: {e}")
+            return None
+        except Exception as e:
+            self._logger.warning(f"Failed to persist download job for ROM {rom_id}: {e}")
+            return None
+        self._job_positions[rom_id] = job.position
+        return job
+
+    def _enqueue_job(
+        self,
+        *,
+        rom_id: int,
+        rom_name: str,
+        platform_name: str,
+        file_name: str,
+        target_path: str,
+        tmp_path: str,
+        is_multi: bool,
+        total_bytes: int | None,
+    ) -> DownloadJob | None:
+        """Persist the job as ``queued``: requeue a paused/interrupted row in place, else append.
+
+        A paused or interrupted job keeps its queue position (resume never jumps
+        the line). A fresh download takes ``max(position) + 1``.
+        """
+        now = self._now_iso()
+        try:
+            with self._uow_factory() as uow:
+                existing = uow.download_jobs.get(rom_id)
+                if existing is not None and existing.status in _RESUMABLE_STATUSES:
+                    existing.requeue(now)
+                    job = existing
+                else:
+                    position = existing.position if existing is not None else uow.download_jobs.next_position()
+                    job = DownloadJob.enqueue(
+                        rom_id=rom_id,
+                        rom_name=rom_name,
+                        platform_name=platform_name,
+                        file_name=file_name,
+                        target_path=target_path,
+                        tmp_path=tmp_path,
+                        is_multi=is_multi,
+                        position=position,
+                        now=now,
+                        total_bytes=total_bytes,
+                    )
+                uow.download_jobs.save(job)
+        except Exception as e:
+            self._logger.warning(f"Failed to persist queued download job for ROM {rom_id}: {e}")
+            return None
+        self._job_positions[rom_id] = job.position
+        return job
+
+    def _drop_job(self, rom_id: int) -> None:
+        """Delete the job row for *rom_id* (completed / cancelled / failed / evicted)."""
+        self._job_positions.pop(rom_id, None)
+        self._persisted_totals.discard(rom_id)
+        try:
+            with self._uow_factory() as uow:
+                uow.download_jobs.delete(rom_id)
+        except Exception as e:
+            self._logger.warning(f"Failed to delete download job for ROM {rom_id}: {e}")
+
+    def _persist_transfer_observation(self, rom_id: int, total: int) -> None:
+        """Record the transfer's full size + Range verdict once per attempt (first progress tick)."""
+        if rom_id in self._persisted_totals or not total:
+            return
+        self._persisted_totals.add(rom_id)
+        entry = self._download_queue.get(rom_id, {})
+        resumable = entry.get("resumable")
+        now = self._now_iso()
+        self._mutate_job(
+            rom_id,
+            lambda job: job.observe_transfer(
+                total_bytes=total,
+                range_supported=None if resumable is None else bool(resumable),
+                now=now,
+            ),
+        )
+
+    def move_to_front(self, rom_id: int | str) -> dict[str, Any]:
+        """Move an unfinished download to the head of the queue.
+
+        The job takes a position below every other job's, so the scheduler
+        hands it the transfer slot next (it does not pre-empt a transfer that
+        is already running).
+        """
+        rom_id = int(rom_id)
+        now = self._now_iso()
+        try:
+            with self._uow_factory() as uow:
+                job = uow.download_jobs.get(rom_id)
+                if job is None:
+                    return {"success": False, "reason": "not_queued", "message": "No queued download for this ROM"}
+                lowest = uow.download_jobs.min_position()
+                if lowest is not None and lowest < job.position:
+                    job.move_to_front(lowest - 1, now)
+                    uow.download_jobs.save(job)
+        except Exception as e:
+            self._logger.warning(f"Failed to move download {rom_id} to the front: {e}")
+            return {"success": False, "reason": ErrorCode.UNKNOWN.value, "message": "Failed to reorder the queue"}
+        self._job_positions[rom_id] = job.position
+        return {"success": True, "message": "Moved to front"}
+
+    # ── Transfer scheduler ───────────────────────────────────────────
+
+    async def _acquire_transfer_slot(self, rom_id: int, control: _DownloadControl) -> None:
+        """Wait until *control*'s download holds the single transfer slot.
+
+        Free slot → taken immediately. Otherwise the caller waits; on release
+        the slot goes to the waiter with the lowest job position. A waiter that
+        is cancelled after being granted the slot releases it again so the next
+        job is not starved.
+        """
+        if self._active_control is None:
+            self._active_control = control
+            return
+        future: asyncio.Future[None] = self._loop.create_future()
+        waiter = (rom_id, control, future)
+        self._slot_waiters.append(waiter)
+        try:
+            await future
+        except BaseException:
+            if waiter in self._slot_waiters:
+                self._slot_waiters.remove(waiter)
+            self._release_transfer_slot(control)
+            raise
+
+    def _release_transfer_slot(self, control: _DownloadControl) -> None:
+        """Release the slot if *control* holds it and hand it to the next waiter by position."""
+        if self._active_control is not control:
+            return
+        self._active_control = None
+        live = [(index, w) for index, w in enumerate(self._slot_waiters) if not w[2].done()]
+        if not live:
+            self._slot_waiters = []
+            return
+        _index, chosen = min(live, key=lambda item: (self._job_positions.get(item[1][0], float("inf")), item[0]))
+        self._slot_waiters.remove(chosen)
+        self._active_control = chosen[1]
+        chosen[2].set_result(None)
+
+    # ── Startup reconciliation ───────────────────────────────────────
+
+    def reconcile_persisted_downloads(self) -> None:
+        """Restore the durable download queue after a plugin (re)start.
+
+        Every persisted job keeps its partial transfer — the file's real size is
+        the resume point. Jobs that were queued, transferring, extracting, or
+        interrupted become ``interrupted`` (reason ``restart`` unless already
+        set); a user-paused job stays paused and is never auto-resumed. The
+        in-memory queue is rebuilt so ``get_download_queue`` shows the jobs
+        immediately. ``.tmp`` / ``.zip.tmp`` files that belong to no job (and
+        every BIOS ``.tmp``) are deleted. Finally the interrupted jobs are
+        auto-resumed in queue order in the background.
+        """
+        now = self._now_iso()
+        jobs_loaded = True
+        try:
+            with self._uow_factory() as uow:
+                jobs = list(uow.download_jobs.iter_all())
+                for job in jobs:
+                    job.reconcile_after_restart(now)
+                    uow.download_jobs.save(job)
+        except Exception as e:
+            self._logger.error(f"Failed to load persisted downloads: {e}")
+            jobs = []
+            jobs_loaded = False
+
+        keep: set[str] = set()
+        for job in jobs:
+            keep.add(job.tmp_path)
+            self._job_positions[job.rom_id] = job.position
+            on_disk = self._download_file_store.file_size(job.tmp_path)
+            total = job.total_bytes or 0
+            entry: dict[str, Any] = {
+                "rom_id": job.rom_id,
+                "rom_name": job.rom_name,
+                "platform_name": job.platform_name,
+                "file_name": job.file_name,
+                "status": job.status,
+                "progress": min(on_disk / total, 1.0) if total else 0,
+                "bytes_downloaded": on_disk,
+                "total_bytes": total,
+                "resumable": bool(job.range_supported),
+            }
+            if job.interrupt_reason:
+                entry["reason"] = job.interrupt_reason
+            self._download_queue[job.rom_id] = entry
+
+        # Without the job list we cannot tell orphans from resumable partials, so a
+        # failed load must never fall through to deleting every ROM .tmp.
+        rom_cleaned = self._clean_orphan_rom_tmp_files(keep) if jobs_loaded else 0
+        cleaned = rom_cleaned + self._clean_bios_tmp_files()
         if cleaned:
-            self._logger.info(f"Cleaned {cleaned} leftover tmp file(s)")
+            self._logger.info(f"Cleaned {cleaned} orphan tmp file(s)")
+        if jobs:
+            self._logger.info(f"Restored {len(jobs)} unfinished download(s)")
+
+        to_resume = [job.rom_id for job in jobs if job.status == "interrupted"]
+        if to_resume:
+            self._auto_resume_task = self._loop.create_task(self._auto_resume(to_resume))
+
+    async def _auto_resume(self, rom_ids: list[int]) -> None:
+        """Resume interrupted jobs in queue order; stop at the first unreachable server.
+
+        Each resume re-fetches the ROM from RomM. When that fetch fails because
+        the server is unreachable (or the login is rejected), the job stays
+        interrupted with that reason, and every remaining job is marked the same
+        way without another attempt — no retry loop; the user resumes later.
+        """
+        for index, rom_id in enumerate(rom_ids):
+            result = await self.resume_download(rom_id)
+            if result.get("success"):
+                continue
+            reason = result.get("reason")
+            if reason in (INTERRUPT_SERVER_UNREACHABLE, INTERRUPT_AUTH_FAILED):
+                for remaining in rom_ids[index + 1 :]:
+                    await self._mark_interrupted(remaining, reason)
+                return
+            self._logger.info(f"Auto-resume of ROM {rom_id} skipped: {result.get('message')}")
 
     async def start_download(self, rom_id):
         rom_id = int(rom_id)
@@ -292,13 +634,14 @@ class DownloadService:
     def _evict_if_paused(self, rom_id: int) -> None:
         """Drop a superseded sibling's queue entry when it is paused (#1298 S1).
 
-        A paused download whose install this supersede just removed is stale — its
-        "paused" row (and partial ``.tmp``) would otherwise linger and could be
-        resumed into a second installed version. Only a paused row is evicted; a
-        live or terminal row for the sibling is left to its own lifecycle.
+        A paused (or interrupted) download whose install this supersede just
+        removed is stale — its row (and partial ``.tmp``) would otherwise linger
+        and could be resumed into a second installed version. Only a paused or
+        interrupted row is evicted; a live or terminal row for the sibling is left
+        to its own lifecycle.
         """
         entry = self._download_queue.get(rom_id)
-        if entry is not None and entry.get("status") == "paused":
+        if entry is not None and entry.get("status") in _RESUMABLE_STATUSES:
             self.evict(rom_id)
 
     def _conflicting_sibling_install_ids(self, rom_id: int) -> list[int]:
@@ -331,13 +674,19 @@ class DownloadService:
         """Shared core of ``start_download`` and ``resume_download``.
 
         Fetches ROM detail, resolves the platform path, runs the disk pre-flight,
-        then registers the queue entry, task, byte reservation, and control token.
-        On ``resume=True`` the disk pre-flight discounts the bytes already on the
-        existing ``.tmp`` (only the remainder is still needed) and ``_do_download``
-        is started with ``resume=True`` so the transfer appends rather than restarts.
+        then registers the queue entry, task, byte reservation, control token,
+        and the persisted ``queued`` job. On ``resume=True`` the disk pre-flight
+        discounts the bytes already on the existing ``.tmp`` (only the remainder
+        is still needed) and ``_do_download`` is started with ``resume=True`` so
+        the transfer appends rather than restarts.
+
+        A resume that cannot proceed keeps the partial whenever it could succeed
+        later: an unreachable server / rejected login / full disk leaves the job
+        ``interrupted`` with that reason; only a can-never-succeed failure (the
+        ROM is gone, an unsafe path) drops the job and its partial.
 
         The ``already_downloading`` guard stays with ``start_download``;
-        ``resume_download`` validates the paused entry before calling here.
+        ``resume_download`` validates the paused/interrupted entry before calling here.
         """
         self._download_in_progress.add(rom_id)
         try:
@@ -345,7 +694,15 @@ class DownloadService:
         except Exception as e:
             self._download_in_progress.discard(rom_id)
             self._logger.error(f"Failed to fetch ROM {rom_id}: {e}")
-            return error_response(e)
+            response = error_response(e)
+            if resume:
+                outcome, reason = classify_download_failure(e)
+                if outcome == _OUTCOME_INTERRUPTED and reason is not None:
+                    await self._mark_interrupted(rom_id, reason)
+                    response["reason"] = reason
+                else:
+                    await self._discard_resumable(rom_id, status="failed", error=response["message"])
+            return response
 
         platform_slug = rom_detail.get("platform_slug", "")
         platform_fs_slug = rom_detail.get("platform_fs_slug")
@@ -367,20 +724,19 @@ class DownloadService:
             except PathTraversalError as e:
                 self._download_in_progress.discard(rom_id)
                 self._logger.error(f"Rejected download for ROM {rom_id}: unsafe platform slug {system!r}: {e}")
+                message = "Server sent an unsafe platform path — download aborted"
+                if resume:
+                    await self._discard_resumable(rom_id, status="failed", error=message)
                 await self._emit(
                     "download_failed",
                     {
                         "rom_id": rom_id,
                         "rom_name": rom_detail.get("name", ""),
                         "platform_name": rom_detail.get("platform_name", platform_slug),
-                        "error_message": "Server sent an unsafe platform path — download aborted",
+                        "error_message": message,
                     },
                 )
-                return {
-                    "success": False,
-                    "reason": "path_traversal",
-                    "message": "Server sent an unsafe platform path — download aborted",
-                }
+                return {"success": False, "reason": "path_traversal", "message": message}
             file_name, files_missing = resolve_local_file_name(rom_detail)
             if files_missing:
                 self._logger.warning(
@@ -396,25 +752,30 @@ class DownloadService:
                 file_name = safe_name
             file_size = rom_detail.get("fs_size_bytes", 0)
             target_path = os.path.join(roms_dir, file_name)
+            is_multi = is_multi_file_download(rom_detail)
+            partial_bytes = self._partial_tmp_size(target_path, rom_detail) if resume else 0
 
             # Check disk space: multi-file ROMs need space for ZIP + extracted contents
             self._download_file_store.make_dirs(roms_dir)
             free_space = self._download_file_store.disk_free(roms_dir)
             buffer = 100 * 1024 * 1024
-            required = file_size * 2 + buffer if is_multi_file_download(rom_detail) else file_size + buffer
+            required = file_size * 2 + buffer if is_multi else file_size + buffer
             # On resume, the partial ``.tmp`` already holds some of the bytes, so
             # only the remainder still needs free space — discount what's on disk
             # so a near-complete resume isn't rejected for the full size.
             if resume:
-                required = max(required - self._partial_tmp_size(target_path, rom_detail), 0)
+                required = max(required - partial_bytes, 0)
             # Account for siblings already reserved but not yet written to disk,
-            # so two concurrent downloads can't each pass a pre-flight that only
-            # one of them actually fits (#1053).
+            # so two queued downloads can't each pass a pre-flight that only one
+            # of them actually fits (#1053).
             reserved_total = sum(self._reserved_bytes.values())
             if file_size and free_space - reserved_total < required:
                 self._download_in_progress.discard(rom_id)
                 free_mb = max(free_space - reserved_total, 0) // (1024 * 1024)
                 need_mb = required // (1024 * 1024)
+                if resume:
+                    # The partial is kept: free some space and resume.
+                    await self._mark_interrupted(rom_id, INTERRUPT_DISK_FULL)
                 return {
                     "success": False,
                     "reason": "insufficient_space",
@@ -446,29 +807,98 @@ class DownloadService:
             self._logger.error(f"Failed to start download task for ROM {rom_id}: {e}")
             return {"success": False, "reason": ErrorCode.UNKNOWN.value, "message": "Failed to start download"}
 
+        tmp_path = target_path + (_ZIP_TMP_EXT if is_multi else _TMP_EXT)
+        job = self._enqueue_job(
+            rom_id=rom_id,
+            rom_name=rom_name,
+            platform_name=platform_name,
+            file_name=file_name,
+            target_path=target_path,
+            tmp_path=tmp_path,
+            is_multi=is_multi,
+            total_bytes=None if is_multi else file_size,
+        )
+        self._persisted_totals.discard(rom_id)
+        total_bytes = (job.total_bytes if job is not None and job.total_bytes else None) or file_size
+
         self._download_queue[rom_id] = {
             "rom_id": rom_id,
             "rom_name": rom_name,
             "platform_name": platform_name,
             "file_name": file_name,
-            # Honest initial status: the task hasn't acquired the concurrency
-            # semaphore yet. ``_do_download`` flips this to "downloading" once it
-            # enters the critical section (#1053).
+            # Honest initial status: the task hasn't been handed the transfer
+            # slot yet. ``_do_download`` flips this to "downloading" once the
+            # scheduler grants it (#1053).
             "status": "queued",
-            "progress": 0,
-            "bytes_downloaded": 0,
-            "total_bytes": file_size,
+            "progress": min(partial_bytes / total_bytes, 1.0) if total_bytes else 0,
+            "bytes_downloaded": partial_bytes,
+            "total_bytes": total_bytes,
             # Whether the server proved byte-range resume support for this ROM.
             # Re-confirmed live by the ``on_meta`` callback once headers arrive.
             "resumable": resumable,
         }
         self._download_tasks[rom_id] = task
-        # Reserve this download's required bytes so a concurrent sibling's
+        # Reserve this download's required bytes so a queued sibling's
         # pre-flight sees the outstanding claim (released in ``_do_download``'s
         # ``finally``).
         self._reserved_bytes[rom_id] = required
         self._control_tokens[rom_id] = control
         return {"success": True, "message": "Download started"}
+
+    async def _mark_interrupted(self, rom_id: int, reason: str) -> None:
+        """Flip a job to ``interrupted`` (row + queue entry) and emit the frame. Partial kept."""
+        now = self._now_iso()
+        self._mutate_job(rom_id, lambda job: job.interrupt(reason, now))
+        entry = self._download_queue.get(rom_id)
+        if entry is None:
+            return
+        entry["status"] = "interrupted"
+        entry["reason"] = reason
+        await self._emit_entry_frame(rom_id, entry)
+
+    async def _discard_resumable(self, rom_id: int, *, status: str, error: str | None = None) -> None:
+        """Drop a paused/interrupted job for good: delete its row and partial, finish its entry."""
+        job = self._load_job(rom_id)
+        if job is not None:
+            self._remove_tmp_files([job.tmp_path])
+        self._drop_job(rom_id)
+        entry = self._download_queue.get(rom_id)
+        if entry is None:
+            return
+        entry["status"] = status
+        entry.pop("reason", None)
+        if error is not None:
+            entry["error"] = error
+        if status == "failed":
+            await self._emit(
+                "download_failed",
+                {
+                    "rom_id": rom_id,
+                    "rom_name": entry.get("rom_name", ""),
+                    "platform_name": entry.get("platform_name", ""),
+                    "error_message": error or "Download failed",
+                },
+            )
+        else:
+            await self._emit_entry_frame(rom_id, entry)
+        self._prune_download_queue()
+
+    async def _emit_entry_frame(self, rom_id: int, entry: dict[str, Any]) -> None:
+        """Emit a ``download_progress`` frame mirroring the queue entry's current state."""
+        frame: dict[str, Any] = {
+            "rom_id": rom_id,
+            "rom_name": entry.get("rom_name", ""),
+            "platform_name": entry.get("platform_name", ""),
+            "file_name": entry.get("file_name", ""),
+            "status": entry.get("status", ""),
+            "progress": entry.get("progress", 0),
+            "bytes_downloaded": entry.get("bytes_downloaded", 0),
+            "total_bytes": entry.get("total_bytes", 0),
+            "resumable": entry.get("resumable", False),
+        }
+        if entry.get("reason"):
+            frame["reason"] = entry["reason"]
+        await self._emit("download_progress", frame)
 
     def _partial_tmp_size(self, target_path, rom_detail) -> int:
         """Bytes already on disk in the partial ``.tmp`` for *target_path*.
@@ -530,17 +960,23 @@ class DownloadService:
             self._logger.warning(f"Sanitized extract dir name from '{raw}' to '{safe}'")
         return safe
 
-    def _post_download_multi_io(self, rom_id, rom_detail, target_path, file_name, system, extract_dir_name):
+    def _post_download_multi_io(
+        self, rom_id, rom_detail, target_path, file_name, system, extract_dir_name, *, fresh_extract=False
+    ):
         """Sync helper for _do_download multi-file — extraction + renames in executor.
 
         *extract_dir_name* is the ROM-identity-derived, sanitized base name for
         the extract directory (``_resolve_safe_extract_dir_name``) — never a
-        name derived from ``files[0]``. Returns ``(launch_file, error)``.
-        ``error`` is a string when the RomM data fails the ``RomInstall``
-        invariant — the extracted directory is removed and nothing is
-        persisted — otherwise ``None``.
+        name derived from ``files[0]``. *fresh_extract* is set when the archive
+        was already complete on disk (an earlier attempt died mid-extraction):
+        the half-extracted staging dir is removed first so extraction starts
+        clean. Returns ``(launch_file, error)``. ``error`` is a string when the
+        RomM data fails the ``RomInstall`` invariant — the extracted directory
+        is removed and nothing is persisted — otherwise ``None``.
         """
         extract_dir = os.path.join(os.path.dirname(target_path), extract_dir_name)
+        if fresh_extract:
+            self._download_file_store.remove_tree(extract_dir)
         self._download_file_store.make_dirs(extract_dir)
         roms_base = self._retrodeck_paths.roms_path()
         tmp_zip = target_path + _ZIP_TMP_EXT
@@ -665,7 +1101,7 @@ class DownloadService:
         last_log = [0.0]
 
         def progress_callback(downloaded, total):
-            if control.cancelled or control.paused:
+            if control.cancelled or control.paused or control.shutdown:
                 # Abort the in-flight transfer thread (#144). CancelledError is a
                 # BaseException, so it propagates untouched through the adapter's
                 # Exception-only retry/translate — no retry, no error translation.
@@ -721,6 +1157,9 @@ class DownloadService:
                 "total_bytes": total,
             }
         )
+        # Once per attempt: persist the server's full size so a restart can tell
+        # a complete partial (skip the transfer) from an incomplete one.
+        self._persist_transfer_observation(rom_id, total)
         self._loop.create_task(
             self._emit(
                 "download_progress",
@@ -833,9 +1272,11 @@ class DownloadService:
         reinstall. Called from the normal success path and from the cancel handler
         when the install committed before the cancel landed (#1049).
         """
+        self._drop_job(rom_id)
         entry = self._download_queue[rom_id]
         entry["status"] = "completed"
         entry["progress"] = 1.0
+        entry.pop("reason", None)
         app_id, emulator, bake_path = await self._loop.run_in_executor(
             None, self._resolve_bound_app_id, rom_id, final_path
         )
@@ -913,6 +1354,61 @@ class DownloadService:
 
         return on_meta
 
+    def _expected_transfer_total(self, rom_id: int, rom_detail: dict[str, Any], has_multiple: bool) -> int:
+        """Full size of the transfer file, or 0 when unknown.
+
+        The server-reported total persisted on the job wins; a single-file ROM
+        falls back to RomM's ``fs_size_bytes`` (the file IS the transfer). A
+        multi-file ZIP's size is only known once the server has reported it.
+        """
+        job = self._load_job(rom_id)
+        if job is not None and job.total_bytes:
+            return job.total_bytes
+        if has_multiple:
+            return 0
+        return int(rom_detail.get("fs_size_bytes") or 0)
+
+    async def _transfer(self, rom_id, rom_detail, tmp_path, file_name, progress_callback, on_meta, *, resume, has_multiple):
+        """Run the HTTP transfer into *tmp_path* unless the partial is already complete.
+
+        Returns ``True`` when the transfer was skipped because the ``.tmp``
+        already holds the full file (a resume after a crash between transfer
+        and install — re-requesting would draw a 416). A partial LARGER than
+        the expected size is stale: it is deleted and the transfer restarts.
+        """
+        if resume:
+            expected = self._expected_transfer_total(rom_id, rom_detail, has_multiple)
+            on_disk = self._download_file_store.file_size(tmp_path)
+            if expected and on_disk == expected:
+                self._logger.info(f"Partial for ROM {rom_id} is already complete ({on_disk} bytes); skipping transfer")
+                self._apply_download_progress_entry(rom_id, on_disk, expected)
+                return True
+            if expected and on_disk > expected:
+                self._logger.warning(
+                    f"Partial for ROM {rom_id} exceeds the expected size ({on_disk} > {expected}); restarting"
+                )
+                self._remove_tmp_files([tmp_path])
+                resume = False
+        await self._loop.run_in_executor(
+            None,
+            partial(
+                self._romm_api.download_rom_content,
+                rom_id,
+                file_name,
+                tmp_path,
+                progress_callback,
+                resume=resume,
+                on_meta=on_meta,
+            ),
+        )
+        return False
+
+    def _apply_download_progress_entry(self, rom_id: int, downloaded: int, total: int) -> None:
+        entry = self._download_queue.get(rom_id)
+        if entry is None:
+            return
+        entry.update({"progress": downloaded / total if total else 0, "bytes_downloaded": downloaded, "total_bytes": total})
+
     async def _do_download(self, rom_id, rom_detail, target_path, system, file_name, control=None, *, resume=False):
         if control is None:
             # Direct invocation (no ``_begin_download``): own + register a control
@@ -937,16 +1433,16 @@ class DownloadService:
         final_path: str | None = None
         # The post-IO commit future, declared before the try so the cancel
         # handler can reconcile a race-committed install (#1049). Stays ``None``
-        # while waiting on the concurrency semaphore or during the transfer.
+        # while waiting for the transfer slot or during the transfer.
         post_io_future: asyncio.Future[tuple[str | None, str | None]] | None = None
 
         try:
             self._logger.info(f"Download starting: {rom_name} (rom_id={rom_id}, multi={has_multiple}) -> {target_path}")
 
-            # Bounded concurrency (#1053): only two ROMs transfer at once. If the
-            # semaphore is already held, surface an honest "queued" frame so the
-            # UI shows the wait instead of a stalled "downloading" bar.
-            if self._download_semaphore.locked():
+            # One transfer at a time (D5). If the slot is taken, surface an honest
+            # "queued" frame so the UI shows the wait instead of a stalled
+            # "downloading" bar.
+            if self._active_control is not None and self._active_control is not control:
                 entry = self._download_queue[rom_id]
                 entry["status"] = "queued"
                 await self._emit(
@@ -957,78 +1453,79 @@ class DownloadService:
                         "platform_name": platform_name,
                         "file_name": file_name,
                         "status": "queued",
-                        "progress": 0,
-                        "bytes_downloaded": 0,
-                        "total_bytes": rom_detail.get("fs_size_bytes", 0),
+                        "progress": entry.get("progress", 0),
+                        "bytes_downloaded": entry.get("bytes_downloaded", 0),
+                        "total_bytes": entry.get("total_bytes", rom_detail.get("fs_size_bytes", 0)),
                         "resumable": entry.get("resumable", False),
                     },
                 )
 
-            async with self._download_semaphore:
-                self._download_queue[rom_id]["status"] = "downloading"
+            await self._acquire_transfer_slot(rom_id, control)
+            self._download_queue[rom_id]["status"] = "downloading"
+            self._download_queue[rom_id].pop("reason", None)
+            started_at = self._now_iso()
+            self._mutate_job(rom_id, lambda job: job.start(started_at))
 
-                if has_multiple:
-                    # Multi-file ROM: API returns ZIP, download to temp then extract
-                    tmp_zip = target_path + _ZIP_TMP_EXT
-                    await self._loop.run_in_executor(
-                        None,
-                        partial(
-                            self._romm_api.download_rom_content,
-                            rom_id,
-                            file_name,
-                            tmp_zip,
-                            progress_callback,
-                            resume=resume,
-                            on_meta=on_meta,
-                        ),
-                    )
-                    post_io_future = self._loop.run_in_executor(
-                        None,
-                        self._post_download_multi_io,
-                        rom_id,
-                        rom_detail,
-                        target_path,
-                        file_name,
-                        system,
-                        extract_dir_name,
-                    )
-                    # Shield the commit await: a cancel here must propagate to this
-                    # coroutine WITHOUT cancelling the underlying future, so
-                    # ``_reconcile_post_io`` can re-await it for the real result. A
-                    # bare ``await`` cancels the asyncio future (the executor thread
-                    # still commits), so the re-await would raise CancelledError and
-                    # the committed install would be mis-reported as not committed
-                    # → torn down (#1049).
-                    final_path, post_io_error = await asyncio.shield(post_io_future)
-                else:
-                    tmp_path = target_path + _TMP_EXT
-                    await self._loop.run_in_executor(
-                        None,
-                        partial(
-                            self._romm_api.download_rom_content,
-                            rom_id,
-                            file_name,
-                            tmp_path,
-                            progress_callback,
-                            resume=resume,
-                            on_meta=on_meta,
-                        ),
-                    )
-                    post_io_future = self._loop.run_in_executor(
-                        None, self._post_download_single_io, rom_id, rom_detail, target_path, system
-                    )
-                    # Shielded so a racing cancel leaves the future intact for
-                    # ``_reconcile_post_io`` to re-await (see the multi-file branch).
-                    final_path, post_io_error = await asyncio.shield(post_io_future)
+            if has_multiple:
+                # Multi-file ROM: API returns ZIP, download to temp then extract
+                tmp_zip = target_path + _ZIP_TMP_EXT
+                skipped = await self._transfer(
+                    rom_id,
+                    rom_detail,
+                    tmp_zip,
+                    file_name,
+                    progress_callback,
+                    on_meta,
+                    resume=resume,
+                    has_multiple=True,
+                )
+                extract_at = self._now_iso()
+                self._mutate_job(rom_id, lambda job: job.begin_extract(extract_at))
+                # A complete archive left by an attempt that died mid-extraction
+                # re-extracts into a clean staging dir.
+                post_io = (
+                    partial(self._post_download_multi_io, fresh_extract=True)
+                    if skipped
+                    else self._post_download_multi_io
+                )
+                post_io_future = self._loop.run_in_executor(
+                    None, post_io, rom_id, rom_detail, target_path, file_name, system, extract_dir_name
+                )
+                # Shield the commit await: a cancel here must propagate to this
+                # coroutine WITHOUT cancelling the underlying future, so
+                # ``_reconcile_post_io`` can re-await it for the real result. A
+                # bare ``await`` cancels the asyncio future (the executor thread
+                # still commits), so the re-await would raise CancelledError and
+                # the committed install would be mis-reported as not committed
+                # → torn down (#1049).
+                final_path, post_io_error = await asyncio.shield(post_io_future)
+            else:
+                tmp_path = target_path + _TMP_EXT
+                await self._transfer(
+                    rom_id,
+                    rom_detail,
+                    tmp_path,
+                    file_name,
+                    progress_callback,
+                    on_meta,
+                    resume=resume,
+                    has_multiple=False,
+                )
+                post_io_future = self._loop.run_in_executor(
+                    None, self._post_download_single_io, rom_id, rom_detail, target_path, system
+                )
+                # Shielded so a racing cancel leaves the future intact for
+                # ``_reconcile_post_io`` to re-await (see the multi-file branch).
+                final_path, post_io_error = await asyncio.shield(post_io_future)
 
-                if post_io_error is not None or final_path is None:
-                    # The download succeeded but the install record failed its
-                    # invariant; the artifact was already cleaned up by the worker.
-                    # ``final_path is None`` always coincides with a non-None error
-                    # — the guard narrows the type for the launch-command build below.
-                    raise ValueError(post_io_error or "install record produced no launch path")
+            if post_io_error is not None or final_path is None:
+                # The download succeeded but the install record failed its
+                # invariant; the artifact was already cleaned up by the worker.
+                # ``final_path is None`` always coincides with a non-None error
+                # — the guard narrows the type for the launch-command build below.
+                raise ValueError(post_io_error or "install record produced no launch path")
 
-                await self._finalize_download_complete(rom_id, rom_detail, final_path, rom_name, platform_name)
+            await self._finalize_download_complete(rom_id, rom_detail, final_path, rom_name, platform_name)
 
         except asyncio.CancelledError:
             # The cancel/pause may have raced a committing install. Executor
@@ -1040,67 +1537,64 @@ class DownloadService:
                 # This also bakes launch_options for the just-committed install.
                 await self._finalize_download_complete(rom_id, rom_detail, committed_path, rom_name, platform_name)
                 self._logger.info(f"Download cancelled after install committed; surfaced as complete: {rom_name}")
+            elif control.shutdown:
+                # PLUGIN UNLOAD: keep the partial AND the job row exactly as they
+                # are — the next startup reconciles the job to "interrupted" and
+                # resumes it. Nothing is emitted (the frontend is going away too).
+                self._logger.info(f"Download stopped by plugin shutdown; will resume on restart: {rom_name}")
             elif control.paused:
                 # PAUSE: keep the partial ``.tmp`` so the transfer can resume from
                 # where it stopped. NOTHING is cleaned up. The entry stays "paused"
                 # in the queue (``_prune_download_queue`` only prunes terminal
-                # completed/failed/cancelled, so "paused" is retained).
+                # completed/failed/cancelled, so "paused" is retained) and the job
+                # row survives a restart without auto-resuming.
+                paused_at = self._now_iso()
+                self._mutate_job(rom_id, lambda job: job.pause(paused_at))
                 entry = self._download_queue[rom_id]
                 entry["status"] = "paused"
-                await self._emit(
-                    "download_progress",
-                    {
-                        "rom_id": rom_id,
-                        "rom_name": rom_name,
-                        "platform_name": platform_name,
-                        "file_name": file_name,
-                        "status": "paused",
-                        "progress": entry.get("progress", 0),
-                        "bytes_downloaded": entry.get("bytes_downloaded", 0),
-                        "total_bytes": entry.get("total_bytes", 0),
-                        "resumable": entry.get("resumable", False),
-                    },
-                )
+                entry.pop("reason", None)
+                await self._emit_entry_frame(rom_id, entry)
                 self._logger.info(f"Download paused: {rom_name}")
             else:
                 entry = self._download_queue[rom_id]
                 entry["status"] = "cancelled"
+                entry.pop("reason", None)
+                self._drop_job(rom_id)
                 self._cleanup_partial_download(target_path, has_multiple, extract_dir_name, final_path)
                 # #1017: emit a terminal frame so the frontend resets the button
                 # out of its downloading state (the global cancel path was silent).
-                await self._emit(
-                    "download_progress",
-                    {
-                        "rom_id": rom_id,
-                        "rom_name": rom_name,
-                        "platform_name": platform_name,
-                        "file_name": file_name,
-                        "status": "cancelled",
-                        "progress": entry.get("progress", 0),
-                        "bytes_downloaded": entry.get("bytes_downloaded", 0),
-                        "total_bytes": entry.get("total_bytes", 0),
-                        "resumable": entry.get("resumable", False),
-                    },
-                )
+                await self._emit_entry_frame(rom_id, entry)
                 self._logger.info(f"Download cancelled: {rom_name}")
             raise
 
         except Exception as e:
-            self._download_queue[rom_id]["status"] = "failed"
-            self._download_queue[rom_id]["error"] = str(e)
-            self._cleanup_partial_download(target_path, has_multiple, extract_dir_name, final_path)
-            self._logger.error(f"Download failed for {rom_name}: {e}")
-            await self._emit(
-                "download_failed",
-                {
-                    "rom_id": rom_id,
-                    "rom_name": rom_name,
-                    "platform_name": platform_name,
-                    "error_message": str(e),
-                },
-            )
+            outcome, reason = classify_download_failure(e)
+            if outcome == _OUTCOME_INTERRUPTED and reason is not None:
+                # Transient: keep the partial so the user (or the next startup)
+                # resumes from where it stopped.
+                self._logger.warning(f"Download interrupted for {rom_name} ({reason}): {e}")
+                await self._mark_interrupted(rom_id, reason)
+            else:
+                self._download_queue[rom_id]["status"] = "failed"
+                self._download_queue[rom_id]["error"] = str(e)
+                self._download_queue[rom_id].pop("reason", None)
+                self._drop_job(rom_id)
+                self._cleanup_partial_download(target_path, has_multiple, extract_dir_name, final_path)
+                self._logger.error(f"Download failed for {rom_name}: {e}")
+                await self._emit(
+                    "download_failed",
+                    {
+                        "rom_id": rom_id,
+                        "rom_name": rom_name,
+                        "platform_name": platform_name,
+                        "error_message": str(e),
+                    },
+                )
 
         finally:
+            # Hand the transfer slot to the next queued job (no-op when this
+            # attempt never held it).
+            self._release_transfer_slot(control)
             # A re-download (or resume) can overwrite these per-download
             # registrations with a fresh attempt's BEFORE this (older/superseded)
             # task's finally runs. Gate ALL of them on the control-token identity
@@ -1234,9 +1728,20 @@ class DownloadService:
                     self._logger.warning(f"Cleanup failed for directory {extract_dir}: {e}")
 
     def cancel_download(self, rom_id):
+        """Cancel a download: abort a live one, or discard a paused/interrupted one.
+
+        A live (queued or transferring) download is aborted through its control
+        token + task; ``_do_download``'s cancel branch deletes the partial and the
+        job row. A paused or interrupted download has no task — it is discarded
+        here directly (row + partial deleted, entry marked ``cancelled``).
+        """
         rom_id = int(rom_id)
         task = self._download_tasks.get(rom_id)
         if not task:
+            entry = self._download_queue.get(rom_id)
+            if entry is not None and entry.get("status") in _RESUMABLE_STATUSES:
+                self._loop.create_task(self._discard_resumable(rom_id, status="cancelled"))
+                return {"success": True, "message": "Download cancelled"}
             return {"success": False, "reason": "no_active_download", "message": "No active download for this ROM"}
         token = self._control_tokens.get(rom_id)
         if token is not None:
@@ -1264,10 +1769,10 @@ class DownloadService:
         return {"success": True, "message": "Download paused"}
 
     async def resume_download(self, rom_id):
-        """Resume a previously paused download from its partial ``.tmp``.
+        """Resume a paused or interrupted download from its partial ``.tmp``.
 
-        Requires a queue entry in status "paused"; otherwise returns the
-        ``not_paused`` failure shape. A switch may have moved the group's shortcut
+        Requires a queue entry in status "paused" or "interrupted"; otherwise
+        returns the ``not_paused`` failure shape. A switch may have moved the group's shortcut
         binding to a sibling while this download was paused (#1298 S1): if another
         member now owns the shortcut, this target is stale — the resume is refused
         (``superseded``) and its queue entry dropped rather than re-downloading a
@@ -1280,8 +1785,10 @@ class DownloadService:
         """
         rom_id = int(rom_id)
         entry = self._download_queue.get(rom_id)
-        if entry is None or entry.get("status") != "paused":
+        if entry is None or entry.get("status") not in _RESUMABLE_STATUSES:
             return {"success": False, "reason": "not_paused", "message": "No paused download for this ROM"}
+        if rom_id in self._download_in_progress:
+            return {"success": False, "reason": "already_downloading", "message": "Already downloading"}
         if self._resume_target_superseded(rom_id):
             self.evict(rom_id)
             return {"success": False, "reason": "superseded", "message": "Another version is now active"}
@@ -1329,7 +1836,8 @@ class DownloadService:
         first). A *paused* download is not in this set — its task's ``finally``
         already released the in-progress claim — so a switch is allowed while a
         sibling is paused, and a later resume of a superseded target is refused by
-        ``resume_download`` instead. Returns a copy so the caller cannot mutate the
+        ``resume_download`` instead. An *interrupted* download (transient failure
+        or plugin restart, not yet auto-resumed) is excluded the same way. Returns a copy so the caller cannot mutate the
         live control set.
         """
         return set(self._download_in_progress)
@@ -1359,9 +1867,22 @@ class DownloadService:
     # ── DownloadQueueCleanup Protocol ──────────────────────────────
 
     def evict(self, rom_id: int) -> None:
-        """Remove the queue entry for *rom_id* if present. Idempotent."""
-        self._download_queue.pop(int(rom_id), None)
+        """Remove the queue entry and job row for *rom_id* if present. Idempotent.
+
+        A paused or interrupted download's partial is deleted with it (nothing
+        will resume it any more); a live transfer's partial is left to that
+        transfer's own terminal handling.
+        """
+        rom_id = int(rom_id)
+        entry = self._download_queue.pop(rom_id, None)
+        if entry is not None and entry.get("status") in _RESUMABLE_STATUSES and rom_id not in self._download_tasks:
+            job = self._load_job(rom_id)
+            if job is not None:
+                self._remove_tmp_files([job.tmp_path])
+        self._drop_job(rom_id)
 
     def clear(self) -> None:
-        """Remove all entries from the download queue."""
+        """Remove all entries from the download queue, with their job rows."""
+        for rom_id in list(self._download_queue):
+            self.evict(rom_id)
         self._download_queue.clear()

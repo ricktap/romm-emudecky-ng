@@ -159,19 +159,41 @@ The callable and event parity checks survive as contract tests. `CLAUDE.md` is a
 
 ### Phase 1 — Durable download queue (brief §5.1) — _highest priority_
 
-- New SQLite aggregate `DownloadJob`, added via a `sqlite_migrations` step, a repository, and `UnitOfWork` per
-  `docs/architecture/database-design.md`. Columns: `rom_id` / `firmware_id` (kind discriminator), `target_path`,
-  `tmp_path`, `total_size`, `bytes_downloaded`, `status` (`queued` / `downloading` / `paused` / `failed` / `completed`),
-  `range_supported`, `sibling_group_key`, `position` (queue order), `created_at`, `updated_at`. Verb-named mutations
-  (`enqueue`, `record_progress`, `pause`, `resume`, `fail`, `complete`, `move_to_front`).
-- Write progress at most every ~N MB or ~5 s. Do not write per chunk, to spare the SSD.
-- **Startup reconciliation replaces `cleanup_leftover_tmp_files` blanket deletion:**
-  - a `.tmp` that has a live job row → stat the real size, correct `bytes_downloaded`, and mark it resumable;
-  - an orphan `.tmp` with no job row → delete it (today's behaviour).
-- After reconciling, auto-resume in the background with a visible "Resuming…" state.
-- Existing HTTP Range logic (`adapters/romm/http.py`, `_range_supported`) is reused unchanged.
+Design agreed 2026-11-08:
+
+- **Table `download_jobs`** (migration 012), aggregate `DownloadJob`. It has one row per ROM whose download is not
+  finished, with status `queued` / `downloading` / `extracting` / `paused` / `interrupted` and an `interrupt_reason`.
+  It stores the paths, `total_bytes` and `position` (queue order). Completed, cancelled and failed jobs delete their
+  row; the recent-downloads history stays in memory. Mutations are verb-named (`enqueue`, `start`, `begin_extract`,
+  `pause`, `interrupt`, `move_to_front`, …). Firmware joins in Phase 7.
+- **No progress writes.** The `.tmp` file size is the progress; rows change only on status transitions (no SSD wear).
+- **Errors.**
+  - Network/server-unreachable, auth, and **disk-full** errors → `interrupted`. The partial is kept, so the user can
+    free space and resume.
+  - Only errors that can never succeed as-is (404, size mismatch, unsafe path) → `failed`, and the partial is deleted.
+- **Startup reconciliation** replaces the blanket `.tmp` deletion:
+  - A `.tmp` with a job row is kept; its real size is the resume point.
+  - Orphan `.tmp` files are deleted.
+  - A job that died in multi-file extraction re-extracts from its complete `.zip.tmp`.
+  - Jobs that were running or queued at the crash become `interrupted` and auto-resume in the background, in order.
+  - **User-paused jobs stay paused** across restarts and never auto-resume.
+  - If RomM is unreachable, jobs stay `interrupted` and the user resumes them.
+- **One download at a time** (D5). A scheduler picks the next `queued` job by `position`, replacing the 2-slot
+  semaphore. `move_to_front` exists in the backend; its UI is Phase 4.
+- HTTP Range logic (`adapters/romm/http.py`) is reused unchanged. A `.tmp` already at full size skips the transfer.
 - **Accept:** kill `plugin_loader` (and separately power off) mid-transfer on a multi-GB ROM. After restart the download
   continues near where it stopped, and the user only had to reopen the QAM.
+
+**Status:** implemented on `feat/durable-download-queue`; the on-device acceptance test is open. Notes from the build:
+
+- A stream cut short counts as a network drop (`interrupted`). Only an overshoot, 0 bytes, or a 4xx other than 408/429
+  is `failed`.
+- `ENOSPC` is detected anywhere in the exception cause chain.
+- Plugin unload (`shutdown`) keeps job rows and partials, so the next start resumes them.
+- Cancel works on paused and interrupted jobs too, deleting the row and the partial.
+- Auto-resume stops at the first unreachable server or rejected sign-in, and marks the remaining jobs with that reason.
+- If the job table can't be read at startup, no ROM `.tmp` is deleted.
+- BIOS `.tmp` files are still wiped at startup until firmware joins the queue (Phase 7).
 
 ### Phase 2 — EmuDeck install detection + launch resolution (brief §5.2)
 

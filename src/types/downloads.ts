@@ -3,22 +3,35 @@
  * for individual ROM file downloads triggered from the UI.
  */
 
+/**
+ * Queue status of one ROM download. `paused` (user) and `interrupted` (a
+ * transient failure — server unreachable, sign-in, full disk — or a plugin
+ * restart) are both stopped-but-unfinished: the partial transfer is kept on
+ * disk and the download can be resumed. Only `interrupted` downloads are
+ * auto-resumed when the plugin starts.
+ */
+export type DownloadStatus =
+  "queued" | "downloading" | "extracting" | "completed" | "failed" | "cancelled" | "paused" | "interrupted";
+
 export interface DownloadItem {
   rom_id: number;
   rom_name: string;
   platform_name: string;
   file_name: string;
-  status: "queued" | "downloading" | "extracting" | "completed" | "failed" | "cancelled" | "paused";
+  status: DownloadStatus;
   progress: number;
   bytes_downloaded: number;
   total_bytes: number;
   /**
-   * Whether the in-flight transfer can be paused and resumed. True only for
-   * single-file ROMs on a direct connection where the server honoured the
-   * Range probe; false for multi-file (zip) ROMs and servers behind Cloudflare.
-   * The frontend offers Pause/Resume only when this is true.
+   * Whether the server honoured the HTTP Range probe for this transfer, so a
+   * paused download continues from its partial instead of restarting. Set live
+   * once the response headers arrive (single-file and multi-file ZIP alike);
+   * false behind Cloudflare or a server that ignores Range. The frontend offers
+   * Pause only when this is true; Resume of a stopped download is always offered.
    */
   resumable: boolean;
+  /** Why an `interrupted` download stopped: `server_unreachable`, `auth_failed`, `disk_full`, `restart`. */
+  reason?: string;
   error?: string;
 }
 
@@ -33,6 +46,8 @@ export interface DownloadProgressEvent {
   total_bytes: number;
   /** Server's Range-support verdict; carried live once response headers arrive. */
   resumable?: boolean;
+  /** Present on `interrupted` frames: why the download stopped. */
+  reason?: string;
 }
 
 export interface DownloadCompleteEvent {

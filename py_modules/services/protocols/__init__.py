@@ -93,6 +93,7 @@ from services.protocols.persistence import (
 )
 from services.protocols.repositories import (
     BiosFileRepository,
+    DownloadJobRepository,
     FirmwareCacheRepository,
     KvConfigRepository,
     PlaytimeRepository,
@@ -138,6 +139,7 @@ __all__ = [
     "DeviceForgetFn",
     "DeviceIdProvider",
     "DirectoryFileListerFn",
+    "DownloadJobRepository",
     "DiscResolver",
     "DownloadFileStore",
     "DownloadQueueCleanup",

@@ -9,9 +9,10 @@ One Repository per aggregate root, not per table. ``RomSaveStateRepository``
 spans two tables (``rom_save_states`` + ``rom_save_files``); that is an adapter
 concern — services see a single aggregate.
 
-The 9 Protocols match the 9 aggregate roots settled in ADR-0003: ``Rom``,
+The Protocols match the aggregate roots — the nine settled in ADR-0003: ``Rom``,
 ``RomInstall``, ``RomMetadata``, ``Playtime``, ``RomSaveState``, ``BiosFile``,
-``FirmwareCacheEntry``, ``SyncRun``, and the ``kv_config`` key-value surface.
+``FirmwareCacheEntry``, ``SyncRun``, and the ``kv_config`` key-value surface —
+plus ``DownloadJob`` (the durable download queue).
 ``SyncSettings``/``Platform``/``Device`` are NOT repositories — ADR-0003 dropped
 those aggregates.
 
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from domain.bios_file import BiosFile
+    from domain.download_job import DownloadJob
     from domain.firmware_cache import FirmwareCacheEntry
     from domain.playtime import PendingSessionRow, Playtime
     from domain.rom import Rom
@@ -224,6 +226,37 @@ class BiosFileRepository(Protocol):
 
     def iter_by_platform(self, platform_slug: str) -> Iterator[BiosFile]:
         """Iterate BIOS records on *platform_slug*. (firmware.py delete platform BIOS)"""
+        ...
+
+
+class DownloadJobRepository(Protocol):
+    """Persistence seam for the ``DownloadJob`` aggregate (the durable download queue).
+
+    Identity is ``rom_id`` — at most one unfinished download per ROM.
+    """
+
+    def get(self, rom_id: int) -> DownloadJob | None:
+        """Return the job for *rom_id*, or ``None``. (downloads.py)"""
+        ...
+
+    def save(self, job: DownloadJob) -> None:
+        """Upsert *job*. (downloads.py status transitions)"""
+        ...
+
+    def delete(self, rom_id: int) -> None:
+        """Remove the job for *rom_id*. Idempotent. (downloads.py terminal outcomes)"""
+        ...
+
+    def iter_all(self) -> Iterator[DownloadJob]:
+        """Iterate every job ordered by ``position`` ascending. (downloads.py reconciliation)"""
+        ...
+
+    def next_position(self) -> int:
+        """Return one more than the highest stored ``position`` (1 when empty)."""
+        ...
+
+    def min_position(self) -> int | None:
+        """Return the lowest stored ``position``, or ``None`` when empty. (move_to_front)"""
         ...
 
 

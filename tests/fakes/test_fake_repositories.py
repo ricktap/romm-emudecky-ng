@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from domain.bios_file import BiosFile
+from domain.download_job import DownloadJob
 from domain.firmware_cache import FirmwareCacheEntry
 from domain.playtime import Playtime
 from domain.rom import Rom
@@ -21,6 +22,7 @@ from domain.rom_metadata import RomMetadata
 from domain.rom_save_state import FileSyncState, RomSaveState
 from domain.sync_run import SyncRun
 from fakes.fake_bios_file_repository import FakeBiosFileRepository
+from fakes.fake_download_job_repository import FakeDownloadJobRepository
 from fakes.fake_firmware_cache_repository import FakeFirmwareCacheRepository
 from fakes.fake_kv_config_repository import FakeKvConfigRepository
 from fakes.fake_playtime_repository import FakePlaytimeRepository
@@ -34,6 +36,7 @@ from fakes.fake_unit_of_work import FakeUnitOfWork, FakeUnitOfWorkFactory
 if TYPE_CHECKING:
     from services.protocols import (
         BiosFileRepository,
+        DownloadJobRepository,
         FirmwareCacheRepository,
         KvConfigRepository,
         PlaytimeRepository,
@@ -71,8 +74,10 @@ class TestProtocolSatisfaction:
         firmware: FirmwareCacheRepository = FakeFirmwareCacheRepository()
         runs: SyncRunRepository = FakeSyncRunRepository()
         kv: KvConfigRepository = FakeKvConfigRepository()
+        jobs: DownloadJobRepository = FakeDownloadJobRepository()
         assert all(
-            obj is not None for obj in (roms, installs, metadata, playtime, save_states, bios, firmware, runs, kv)
+            obj is not None
+            for obj in (roms, installs, metadata, playtime, save_states, bios, firmware, runs, kv, jobs)
         )
 
     def test_fake_uow_and_factory_satisfy_protocols(self):
@@ -294,6 +299,48 @@ class TestFakeKvConfigRepository:
         assert repo.set_count == 1
         repo.delete("k")
         assert repo.get("k") is None
+
+
+class TestFakeDownloadJobRepository:
+    @staticmethod
+    def _job(rom_id: int, position: int) -> DownloadJob:
+        return DownloadJob.enqueue(
+            rom_id=rom_id,
+            rom_name="G",
+            platform_name="P",
+            file_name="g.bin",
+            target_path=f"/r/{rom_id}.bin",
+            tmp_path=f"/r/{rom_id}.bin.tmp",
+            is_multi=False,
+            position=position,
+            now="2026-01-01T00:00:00Z",
+        )
+
+    def test_round_trip_ordering_positions_delete(self):
+        repo = FakeDownloadJobRepository()
+        assert repo.next_position() == 1
+        assert repo.min_position() is None
+        repo.save(self._job(1, 5))
+        repo.save(self._job(2, -1))
+        assert repo.get(1) == self._job(1, 5)
+        assert repo.get(3) is None
+        assert [j.rom_id for j in repo.iter_all()] == [2, 1]
+        assert repo.next_position() == 6
+        assert repo.min_position() == -1
+        repo.delete(2)
+        repo.delete(2)
+        assert repo.get(2) is None
+
+    def test_rolled_back_with_the_unit(self):
+        uow = FakeUnitOfWork()
+
+        class Boom(Exception):
+            pass
+
+        with pytest.raises(Boom), uow:
+            uow.download_jobs.save(self._job(1, 1))
+            raise Boom
+        assert uow.download_jobs.get(1) is None
 
 
 class TestFakeUnitOfWork:

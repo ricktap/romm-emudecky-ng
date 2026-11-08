@@ -118,6 +118,7 @@ class TestRepositoryWiring:
             "firmware_cache",
             "sync_runs",
             "kv_config",
+            "download_jobs",
         ):
             assert getattr(uow, name) is not None
 

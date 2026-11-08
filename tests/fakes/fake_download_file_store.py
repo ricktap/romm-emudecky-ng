@@ -32,7 +32,7 @@ class FakeDownloadFileStore:
       behaviour.
     - ``remove_failures`` / ``remove_tree_failures`` — sets of paths that
       raise ``OSError`` on the respective operation; used by partial-
-      failure tests in ``cleanup_leftover_tmp_files`` and
+      failure tests in ``reconcile_persisted_downloads`` and
       ``_cleanup_partial_download``.
     - ``decode_calls`` / ``extract_calls`` / ``walk_calls`` — captured
       argument lists for tests that need to assert on adapter calls.
@@ -111,6 +111,10 @@ class FakeDownloadFileStore:
 
     def disk_free(self, path: str) -> int:
         return self.disk_free_bytes
+
+    def file_size(self, path: str) -> int:
+        data = self.files.get(path)
+        return len(data) if data is not None else 0
 
     def is_dir(self, path: str) -> bool:
         if path in self.dirs:
