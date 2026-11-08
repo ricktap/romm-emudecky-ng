@@ -1,4 +1,3 @@
-from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
@@ -33,6 +32,7 @@ from services.library import LibraryService, LibraryServiceConfig
 from services.migration import MigrationService, MigrationServiceConfig
 from services.playtime import PlaytimeService, PlaytimeServiceConfig
 from services.saves import SaveService, SaveServiceConfig
+from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 
 
 @pytest.fixture

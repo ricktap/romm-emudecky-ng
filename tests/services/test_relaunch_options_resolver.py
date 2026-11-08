@@ -9,9 +9,8 @@ fake active-core / disc seams and the fake UoW, for both the batch
 (``installed_relaunch_items``) and single-ROM (``relaunch_item_for_rom``)
 entry points that share the one resolve body.
 """
-from __future__ import annotations
 
-from tests.fakes.fake_launch_resolver import FakeLaunchResolver
+from __future__ import annotations
 
 from fakes.fake_active_core_resolver import FakeActiveCoreResolver
 from fakes.fake_disc_resolver import FakeDiscResolver
@@ -21,6 +20,7 @@ from domain.disc_selection import Disc
 from domain.rom import Rom
 from domain.rom_install import RomInstall
 from services.relaunch_options_resolver import RelaunchOptionsResolver, RelaunchOptionsResolverConfig
+from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 
 
 def _make_rom(rom_id: int, *, shortcut_app_id: int | None) -> Rom:

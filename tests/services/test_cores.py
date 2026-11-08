@@ -1,7 +1,6 @@
 """Tests for CoreService — per-platform core write + fan-out + per-game pin/clear + core menu."""
-from __future__ import annotations
 
-from tests.fakes.fake_launch_resolver import FakeLaunchResolver
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -20,6 +19,7 @@ from domain.rom import Rom
 from domain.rom_install import RomInstall
 from domain.shortcut_data import EmulatorInvocation
 from services.cores import CoreService, CoreServiceConfig
+from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 
 
 class FakeSystemResolver:

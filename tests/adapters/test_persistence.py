@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import stat
 import threading
 from datetime import UTC, datetime
 
@@ -212,7 +213,7 @@ class TestCrashSafeWrite:
         def spy_fsync(fd):
             # A directory fd is not writable; distinguish it from the file fd by
             # checking whether the fd refers to a directory.
-            kind = "dir" if os.path.isdir(f"/proc/self/fd/{fd}") else "file"
+            kind = "dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file"
             events.append(f"fsync_{kind}")
             return real_fsync(fd)
 

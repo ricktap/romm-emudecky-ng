@@ -1,4 +1,3 @@
-from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,6 +17,7 @@ from domain.rom import Rom
 from services.achievements import AchievementsService, AchievementsServiceConfig
 from services.game_detail import GameDetailService, GameDetailServiceConfig
 from services.library import LibraryService, LibraryServiceConfig
+from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 
 
 def _seed_rom(uow: FakeUnitOfWork, rom_id: int, *, app_id=None, ra_id=None, name="Game", platform_slug="snes") -> None:

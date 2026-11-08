@@ -1,4 +1,3 @@
-from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 import asyncio
 import json
 import os
@@ -28,6 +27,7 @@ from services.library import LibraryService, LibraryServiceConfig
 from services.settings import SettingsService, SettingsServiceConfig
 from services.startup_healing import StartupHealingService, StartupHealingServiceConfig
 from services.steamgrid import SteamGridService, SteamGridServiceConfig
+from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 
 
 @pytest.fixture

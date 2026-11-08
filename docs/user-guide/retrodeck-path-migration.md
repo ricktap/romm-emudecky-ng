@@ -6,11 +6,11 @@ vice versa — the plugin detects the change and helps you migrate your download
 ## How It Works
 
 Every time the plugin starts, it compares the current EmuDeck home path with the path it had stored from your last
-session. If the paths differ, the plugin flags a migration. This typically happens after you use EmuDeck's built-in
-move tool or manually relocate your `Emulation/` directory under storagePath.
+session. If the paths differ, the plugin flags a migration. This typically happens after you use EmuDeck's built-in move
+tool or manually relocate your `Emulation/` directory under storagePath.
 
-The plugin does not move your EmuDeck files — EmuDeck handles that. What the plugin migrates are the files _it_
-manages: downloaded ROMs, BIOS files, and save files that it tracks for sync purposes.
+The plugin does not move your EmuDeck files — EmuDeck handles that. What the plugin migrates are the files _it_ manages:
+downloaded ROMs, BIOS files, and save files that it tracks for sync purposes.
 
 ## Moving Again Before Migrating
 
@@ -68,8 +68,8 @@ The migration covers three categories of files:
   (e.g. files you placed manually that the plugin recognizes)
 - **Save files** — Recursively scanned from the save directories, excluding hidden directories (like `.git` or `.tmp`)
 
-Files that the plugin doesn't know about — ROMs you added outside the plugin, for instance — are not affected.
-EmuDeck's own move tool handles those.
+Files that the plugin doesn't know about — ROMs you added outside the plugin, for instance — are not affected. EmuDeck's
+own move tool handles those.
 
 ---
 

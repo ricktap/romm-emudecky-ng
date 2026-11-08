@@ -126,12 +126,12 @@ class EmuDeckLauncherAdapter:
             if not launchers_path or not self._launcher_exists(launcher_script):
                 return EmuDeckLaunchResolution(status=RESOLUTION_LAUNCHER_MISSING, reason=launcher_script)
         # For libretro we need the RetroArch launcher script on disk.
-        if emulator is not None and emulator.kind == "libretro" and (
-            not launchers_path or not self._launcher_exists(self._retroarch_launcher_script)
+        if (
+            emulator is not None
+            and emulator.kind == "libretro"
+            and (not launchers_path or not self._launcher_exists(self._retroarch_launcher_script))
         ):
-            return EmuDeckLaunchResolution(
-                status=RESOLUTION_LAUNCHER_MISSING, reason=self._retroarch_launcher_script
-            )
+            return EmuDeckLaunchResolution(status=RESOLUTION_LAUNCHER_MISSING, reason=self._retroarch_launcher_script)
 
         # The launcher is mapped AND on disk — delegate to the pure resolver,
         # which always returns ok for this branch.

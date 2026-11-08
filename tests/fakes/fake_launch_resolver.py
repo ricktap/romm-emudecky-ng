@@ -70,7 +70,8 @@ class FakeLaunchResolver:
         if emulator.kind == "standalone" and emulator.command:
             return f'{_RETRODECK_INVOCATION} -e "{emulator.command}"'
         if emulator.kind == "libretro" and emulator.core_so:
-            return f'{_RETRODECK_INVOCATION} -e "%EMULATOR_RETROARCH% -L {_RETROARCH_CORES_DIR}/{emulator.core_so}.so %ROM%"'
+            core_path = f"{_RETROARCH_CORES_DIR}/{emulator.core_so}.so"
+            return f'{_RETRODECK_INVOCATION} -e "%EMULATOR_RETROARCH% -L {core_path} %ROM%"'
         return _RETRODECK_INVOCATION
 
     def resolve_for(self, rom, emulator, system):

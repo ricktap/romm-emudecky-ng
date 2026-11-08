@@ -1,4 +1,3 @@
-from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 import asyncio
 import os
 import sqlite3
@@ -28,6 +27,7 @@ from services.active_core_resolver import ActiveCoreResolver, ActiveCoreResolver
 from services.downloads import DownloadService, DownloadServiceConfig, _DownloadControl
 from services.library import LibraryService, LibraryServiceConfig
 from services.rom_removal import RomRemovalService, RomRemovalServiceConfig
+from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 
 
 def _seed_rom(uow: FakeUnitOfWork, rom_id: int, *, platform_slug: str = "n64") -> None:

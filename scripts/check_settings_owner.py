@@ -23,6 +23,12 @@ string-constant ``"settings.json"`` does (a docstring's constant value is the
 whole docstring text, not the bare filename). ``tests/`` is not scanned: tests
 legitimately reference the filename.
 
+``FOREIGN_SETTINGS_READERS`` lists the few adapters that read a *different
+program's* ``settings.json`` (e.g. EmuDeck's ``~/.config/EmuDeck/settings.json``).
+They share only the filename, not the file, so the literal is allowed there. Each
+entry must be read-only and carry its reason; never add a module that touches the
+plugin's own settings file.
+
 Exit 0 when the literal is confined to the owner, 1 (one line per offending
 site) otherwise.
 """
@@ -41,17 +47,23 @@ MAIN_PY = REPO_ROOT / "main.py"
 # The single module allowed to name settings.json — its crash-safe owner.
 OWNER = REPO_ROOT / "py_modules" / "adapters" / "persistence.py"
 
+# Read-only adapters for OTHER programs' settings.json (same filename, different
+# file). Each maps to the reason it is exempt.
+FOREIGN_SETTINGS_READERS: dict[Path, str] = {
+    REPO_ROOT / "py_modules" / "adapters" / "emudeck_paths.py": "reads EmuDeck's ~/.config/EmuDeck/settings.json",
+}
+
 # The confined literal.
 SETTINGS_FILENAME = "settings.json"
 
 
 def _iter_scanned_files() -> list[Path]:
     """Every backend ``.py`` to scan: py_modules/ minus _vendor/ and the owner, plus main.py."""
-    owner = OWNER.resolve()
+    exempt = {OWNER.resolve(), *(path.resolve() for path in FOREIGN_SETTINGS_READERS)}
     files = sorted(
         p
         for p in PY_MODULES_DIR.rglob("*.py")
-        if VENDOR_DIR not in p.parents and p != VENDOR_DIR and p.resolve() != owner
+        if VENDOR_DIR not in p.parents and p != VENDOR_DIR and p.resolve() not in exempt
     )
     if MAIN_PY.is_file():
         files.append(MAIN_PY)

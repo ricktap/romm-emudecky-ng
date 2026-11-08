@@ -49,6 +49,7 @@ from bootstrap import (
 from fakes.fake_romm_api import FakeRommApi
 from fakes.fake_steamgrid_db_api import FakeSteamGridDbApi
 from fakes.system_time import FakeClock, FakeSleeper, FakeUuidGen
+
 from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 
 if TYPE_CHECKING:

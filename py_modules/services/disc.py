@@ -166,7 +166,12 @@ class DiscService:
         return {"success": True, "launch_options": launch_options, "selected": selected}
 
     def _bake_launch_options(
-        self, rom_id: int, install: RomInstall, discs: list[Disc], selected_disc: str | None, platform_slug: str | None = None
+        self,
+        rom_id: int,
+        install: RomInstall,
+        discs: list[Disc],
+        selected_disc: str | None,
+        platform_slug: str | None = None,
     ) -> str:
         """Bake the launch command for the now-selected disc + the ROM's active core.
 

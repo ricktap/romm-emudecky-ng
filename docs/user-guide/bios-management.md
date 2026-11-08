@@ -59,9 +59,9 @@ if your RomM server has BIOS files for them.
 
 <!-- Screenshot: System page showing per-platform Emulator Core button above BIOS download counts -->
 
-BIOS files are downloaded to your EmuDeck BIOS directory (e.g. `<storagePath>/Emulation/bios/`). Some platforms use subdirectories
-— for example, Dreamcast BIOS goes into `bios/dc/` and PS2 BIOS goes into `bios/pcsx2/bios/`. The plugin handles the
-correct placement automatically.
+BIOS files are downloaded to your EmuDeck BIOS directory (e.g. `<storagePath>/Emulation/bios/`). Some platforms use
+subdirectories — for example, Dreamcast BIOS goes into `bios/dc/` and PS2 BIOS goes into `bios/pcsx2/bios/`. The plugin
+handles the correct placement automatically.
 
 ### Deleting BIOS Files
 
@@ -151,8 +151,8 @@ menu.
 3. Press the **Emulator Core** button and pick an emulator from the menu
 4. The BIOS file list below updates immediately to show files relevant to the new choice
 
-If EmuDeck can't be found (no `es_systems.xml`), the menu shows "Emulator list unavailable — EmuDeck installation
-not found" instead of a list.
+If EmuDeck can't be found (no `es_systems.xml`), the menu shows "Emulator list unavailable — EmuDeck installation not
+found" instead of a list.
 
 The plugin stores the choice in its own settings and **immediately re-applies it** to every installed game on that
 platform — the change takes effect right away, with no sync needed (games that already have a per-game core keep their

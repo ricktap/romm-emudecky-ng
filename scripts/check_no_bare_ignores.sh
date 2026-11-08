@@ -51,7 +51,7 @@ report() {
 # --- Python -----------------------------------------------------------------
 # Bare `# type: ignore` — flag when NOT immediately followed by `[`.
 py_type_ignore=$(
-    grep -rnE '#\s*type:\s*ignore([^[]|$)' "${PY_PATHS[@]}" \
+    grep -rnE --include='*.py' '#\s*type:\s*ignore([^[]|$)' "${PY_PATHS[@]}" \
         --include='*.py' "${EXCLUDE_DIRS[@]}" 2>/dev/null || true
 )
 if [[ -n "$py_type_ignore" ]]; then
@@ -60,7 +60,7 @@ fi
 
 # Bare `# noqa` — flag when NOT followed by `:`.
 py_noqa=$(
-    grep -rnE '#\s*noqa([^:]|$)' "${PY_PATHS[@]}" \
+    grep -rnE --include='*.py' '#\s*noqa([^:]|$)' "${PY_PATHS[@]}" \
         --include='*.py' "${EXCLUDE_DIRS[@]}" 2>/dev/null || true
 )
 if [[ -n "$py_noqa" ]]; then
