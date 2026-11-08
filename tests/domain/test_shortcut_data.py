@@ -309,3 +309,34 @@ class TestBuildShortcutsDataVersionMetadata:
 
         emitted = collapse_sibling_groups(result, registry={}, installed_rom_ids=set(), complete_group_view=True)
         assert len(emitted) == 1
+
+
+class TestQuoteLaunchArg:
+    def test_plain_and_nasty_values_survive_shell_tokenizing(self):
+        from domain.shortcut_data import quote_launch_arg
+
+        for value in ["a b", "it's [v0] (USA)", 'say "hi"', "back\\slash", ""]:
+            assert shlex.split(quote_launch_arg(value)) == [value]
+
+    def test_values_survive_a_real_shell_without_expansion(self):
+        """Steam hands launch options to a shell: $ and backticks must stay literal."""
+        import subprocess
+
+        from domain.shortcut_data import quote_launch_arg
+
+        values = [
+            "Pokemon Shining Pearl [010018E011D92000][v0].nsp",
+            "$(touch /tmp/romm_pwned).nsp",
+            "`id`.xci",
+            "price $HOME and ${PATH}",
+            'quote " and back\\slash \\" mix',
+            "it's (USA) & more; | pipes",
+        ]
+        for value in values:
+            out = subprocess.run(
+                ["/bin/sh", "-c", "printf '%s' " + quote_launch_arg(value)],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+            assert out == value

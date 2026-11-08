@@ -106,7 +106,10 @@ class CoreService:
         whether a per-game pin is set — the menu can't infer this from the active
         emulator alone (pinning the same emulator as the per-platform override is
         indistinguishable), so the flag drives the "follow the system" reset
-        item's checkmark. ``emulator_data_available`` is ``False`` when
+        item's checkmark. ``game_override_label`` is the pinned label itself, so
+        the menu can say when the pinned emulator is no longer available (not
+        installed) and the game is launching with the default instead.
+        ``emulator_data_available`` is ``False`` when
         ``es_systems.xml`` cannot be read (RetroDECK not detected), so the menu
         can say so instead of showing an empty list. When ``rom_id`` is unknown
         the emulator list is empty and the active emulator is ``(None, None)``.
@@ -123,6 +126,7 @@ class CoreService:
                 "active_core_label": None,
                 "platform_core_label": None,
                 "has_game_override": False,
+                "game_override_label": None,
             }
         system = self._resolve_system(rom.platform_slug)
         options = self._core_info.get_emulator_options(system)
@@ -134,6 +138,7 @@ class CoreService:
             "active_core_label": active_label,
             "platform_core_label": self._settings.get("platform_cores", {}).get(rom.platform_slug),
             "has_game_override": rom.emulator_override is not None,
+            "game_override_label": rom.emulator_override,
         }
 
     def _set_system_core_io(self, platform_slug: str, core_label: str) -> list[dict[str, Any]]:

@@ -22,7 +22,7 @@ from adapters.steam_config import SteamConfigAdapter
 from lib.retrodeck_health import RetroDeckConfigHealth
 
 # conftest.py patches decky before this import
-from main import Plugin
+from backend import Backend
 from services.connection import ConnectionService, ConnectionServiceConfig
 from services.library import LibraryService, LibraryServiceConfig
 from services.settings import SettingsService, SettingsServiceConfig
@@ -33,7 +33,7 @@ from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 
 @pytest.fixture
 def plugin():
-    p = Plugin()
+    p = Backend()
     p.settings = {"romm_url": "", "romm_user": "", "romm_pass": "", "enabled_platforms": {}}
     p._http_adapter = MagicMock()
     p._romm_api = MagicMock()
@@ -110,7 +110,7 @@ def plugin():
             settings_persister=p._settings_persister,
             loop=asyncio.get_event_loop(),
             logger=decky.logger,
-            min_required_version=Plugin._MIN_REQUIRED_VERSION,
+            min_required_version=Backend._MIN_REQUIRED_VERSION,
             forget_device=MagicMock(),
             clear_playtime_scope_notice=MagicMock(),
         ),
@@ -139,18 +139,18 @@ class TestPersistenceAttributeIsLoud:
 
     def test_attribute_missing_on_bare_plugin(self):
         """Direct access to _persistence pre-_main() raises — no lazy fallback."""
-        from main import Plugin
+        from backend import Backend
 
-        bare = Plugin()
+        bare = Backend()
 
         with pytest.raises(AttributeError, match="_persistence"):
             _ = bare._persistence
 
     def test_settings_persister_missing_on_bare_plugin(self):
         """``_settings_persister`` is bound only by ``_main()``; bare access raises."""
-        from main import Plugin
+        from backend import Backend
 
-        bare = Plugin()
+        bare = Backend()
 
         with pytest.raises(AttributeError, match="_settings_persister"):
             _ = bare._settings_persister
@@ -209,7 +209,7 @@ class TestConnection:
                 settings_persister=MagicMock(),
                 loop=plugin.loop,
                 logger=decky.logger,
-                min_required_version=Plugin._MIN_REQUIRED_VERSION,
+                min_required_version=Backend._MIN_REQUIRED_VERSION,
                 forget_device=MagicMock(),
                 clear_playtime_scope_notice=MagicMock(),
             ),
@@ -852,10 +852,10 @@ class TestMigrationBlockedDecoratorCoverage:
     def test_all_callables_either_whitelisted_or_decorated(self):
         import inspect
 
-        from main import Plugin
+        from backend import Backend
 
         unclassified: list[str] = []
-        for name, value in inspect.getmembers(Plugin, predicate=inspect.iscoroutinefunction):
+        for name, value in inspect.getmembers(Backend, predicate=inspect.iscoroutinefunction):
             if name.startswith("_"):
                 continue  # lifecycle hooks (_main, _unload) are not callables
             if name in _MIGRATION_BLOCKED_WHITELIST:
@@ -875,10 +875,10 @@ class TestMigrationBlockedDecoratorCoverage:
         passing the coverage check — likely a misclassification. Catch it."""
         import inspect
 
-        from main import Plugin
+        from backend import Backend
 
         double_classified: list[str] = []
-        for name, value in inspect.getmembers(Plugin, predicate=inspect.iscoroutinefunction):
+        for name, value in inspect.getmembers(Backend, predicate=inspect.iscoroutinefunction):
             if name.startswith("_"):
                 continue
             if name in _MIGRATION_BLOCKED_WHITELIST and getattr(value, "_migration_blocked", False):
@@ -893,11 +893,11 @@ class TestMigrationBlockedDecoratorCoverage:
         """Every name in _MIGRATION_BLOCKED_WHITELIST must NOT carry the
         @migration_blocked marker. Symmetric to the prior check, but reads
         from the whitelist side."""
-        from main import Plugin
+        from backend import Backend
 
         decorated: list[str] = []
         for name in _MIGRATION_BLOCKED_WHITELIST:
-            method = getattr(Plugin, name, None)
+            method = getattr(Backend, name, None)
             if method is None:
                 continue
             if getattr(method, "_migration_blocked", False) is True:
@@ -925,9 +925,9 @@ class TestMainStartupOrdering:
             StateBundle,
         )
 
-        from main import Plugin
+        from backend import Backend
 
-        plugin = Plugin()
+        plugin = Backend()
 
         call_order: list[str] = []
 
@@ -1035,10 +1035,21 @@ class TestMainStartupOrdering:
         )
 
         with (
-            patch("main.bootstrap", return_value=bootstrap_result),
-            patch("main.wire_services", return_value=wired_services),
+            patch("backend.bootstrap", return_value=bootstrap_result),
+            patch("backend.wire_services", return_value=wired_services),
         ):
-            await plugin._main()
+            from backend import BackendEnv
+
+            await plugin._main(
+                BackendEnv(
+                    settings_dir="/tmp/s",
+                    runtime_dir="/tmp/r",
+                    plugin_dir="/tmp/p",
+                    user_home="/tmp/h",
+                    logger=MagicMock(),
+                    emit=AsyncMock(),
+                )
+            )
 
         assert "detect_retrodeck_path_change" in call_order
         assert "prune_stale_installed_roms" in call_order
@@ -1124,7 +1135,7 @@ class TestPlaytimeFlushTaskLifecycle:
     schedule, pruned on completion, and cancelled+awaited on unload."""
 
     def _plugin_with_playtime(self):
-        p = Plugin()
+        p = Backend()
         p.loop = asyncio.get_event_loop()
         p._playtime_service = MagicMock()
         p._playtime_service.record_session_start.return_value = {"success": True}

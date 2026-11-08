@@ -32,6 +32,16 @@ class DirectoryFileListerFn(Protocol):
     def __call__(self, directory: str) -> list[str]: ...
 
 
+class FileSizeFn(Protocol):
+    """Return the size in bytes of the file at a path (``0`` when it is missing).
+
+    The narrow read seam the disc resolver uses to rank a folder install's
+    launch-file candidates by size (Switch: the largest ``.xci``/``.nsp``).
+    """
+
+    def __call__(self, path: str) -> int: ...
+
+
 class CoverArtFileStore(Protocol):
     """Filesystem seam for cover-art file operations.
 

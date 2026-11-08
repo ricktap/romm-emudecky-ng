@@ -61,8 +61,8 @@ def _relaunch_payload(harness):
 
 async def _detect_at(harness, home: str) -> None:
     """Point the RetroDECK home at *home* and run one detection pass."""
-    harness.plugin._migration_service._retrodeck_paths = FakeRetroDeckPaths(home=home)
-    harness.plugin._migration_service.detect_retrodeck_path_change()
+    harness.backend._migration_service._retrodeck_paths = FakeRetroDeckPaths(home=home)
+    harness.backend._migration_service.detect_retrodeck_path_change()
     await asyncio.sleep(0)  # drain the spawned retrodeck_path_changed emit
 
 

@@ -159,6 +159,29 @@ describe("buildEmulatorMenu", () => {
     expect(items(menu).find((i) => i.text.startsWith("Use System Override"))!.text).toContain("✓");
   });
 
+  it("says when the per-game pin names an emulator that is not available", () => {
+    const menu = buildEmulatorMenu(
+      baseConfig({
+        emulators: [
+          standaloneEmu("Eden", true),
+          standaloneEmu("yuzu", false, { bakeable: false, reason: "not_installed" }),
+        ],
+        activeLabel: "Eden",
+        followSystem: { hasGameOverride: true, gameOverrideLabel: "yuzu", onFollowSystem: vi.fn() },
+      }),
+    );
+    const notice = items(menu).find((i) => i.text.startsWith("yuzu is not available"))!;
+    expect(notice.text).toBe("yuzu is not available — using Eden");
+    expect(notice.disabled).toBe(true);
+  });
+
+  it("shows no unavailable notice when the pinned emulator is bakeable", () => {
+    const menu = buildEmulatorMenu(
+      baseConfig({ followSystem: { hasGameOverride: true, gameOverrideLabel: "VBA-M", onFollowSystem: vi.fn() } }),
+    );
+    expect(items(menu).some((i) => i.text.includes("is not available"))).toBe(false);
+  });
+
   it("omits the follow-system item on the System page (no followSystem)", () => {
     const menu = buildEmulatorMenu(baseConfig());
     expect(items(menu).some((i) => i.text.startsWith("Use System Override"))).toBe(false);

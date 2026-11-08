@@ -244,7 +244,7 @@ def _seed_bound_drift(harness, bound_id: int, *, baseline: str) -> None:
     reproduces a synced state. The save discovery keys the filename off the
     install path stem (``game`` → ``game.srm``), matching ``_DRIFT_CONTENT``.
     """
-    saves_dir = os.path.join(harness.plugin._retrodeck_paths.saves_path(), "gba")
+    saves_dir = os.path.join(harness.backend._retrodeck_paths.saves_path(), "gba")
     os.makedirs(saves_dir, exist_ok=True)
     with open(os.path.join(saves_dir, "game.srm"), "wb") as fh:
         fh.write(_DRIFT_CONTENT)
@@ -315,7 +315,7 @@ async def test_switch_version_blocked_by_active_download(harness):
     seed_group_member(harness, 1, group_key=_GROUP, shortcut_app_id=_APP_ID)
     seed_group_member(harness, 2, group_key=_GROUP, shortcut_app_id=None)
     # Mark sibling 2 as actively downloading in the real DownloadService state.
-    harness.plugin._download_service._download_in_progress.add(2)
+    harness.backend._download_service._download_in_progress.add(2)
 
     result = await harness.plugin.switch_version(_APP_ID, 2, False)
     assert result["success"] is False

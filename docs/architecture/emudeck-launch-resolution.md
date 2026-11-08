@@ -205,6 +205,52 @@ def resolve_launch_command(
     )
 ```
 
+## Emulator table (Switch)
+
+EmuDeck ships no readable ES-DE `es_systems.xml`, so the ES-DE lookup resolves every system to `needs_setup`. For the
+systems it covers, the plugin's own emulator table replaces that lookup (EmuDeck port plan, Phase 2). Today it covers
+`switch` only; other systems keep the ES-DE path until they are verified.
+
+- **Table** (`py_modules/domain/emulator_table.py`, pure data): system → emulators in preference order. Each entry has an
+  id, a label (the per-game override pick key), a locate glob relative to the user's home, and an args template whose
+  last token is `{rom}`.
+
+  | id        | label   | locate (under home)               | args           |
+  | --------- | ------- | --------------------------------- | -------------- |
+  | `eden`    | Eden    | `Applications/Eden*.AppImage`     | `-f -g {rom}`  |
+  | `ryujinx` | Ryujinx | `Applications/publish/Ryujinx.sh` | `{rom}`        |
+  | `yuzu`    | yuzu    | `Applications/yuzu*.AppImage`     | `-f -g {rom}`  |
+
+- **Detection** (`py_modules/adapters/emulator_table.py`, `EmulatorLocatorAdapter`): globs under `DECKY_USER_HOME`
+  (falling back to `$HOME`, never hardcoded), matching each path component case-insensitively like EmuDeck's
+  `find -iname`. "Installed" = an executable regular file.
+- **Core info**: `TableAwareCoreInfoAdapter` wraps the ES-DE `CoreResolver`. For a covered system it answers
+  `get_emulator_options` from the table (installed entries bakeable, the rest `not_installed`) and `get_default_emulator`
+  with the first installed entry. Options and invocations carry `kind="table"` (`command` = emulator id, `launcher` =
+  located path); the picker payload reports them as `standalone`.
+- **Selection** stays in `ActiveCoreResolver`: per-game `emulator_override` → per-platform core → table default. A pinned
+  label naming an emulator that is not installed does not resolve, so the game falls back to the default (with a
+  warning). `get_platform_core_info` returns `game_override_label` so the picker can say "yuzu is not available — using
+  Eden". `set_game_core` refuses a not-installed label (`core_unavailable`).
+- **Rendering**: `resolve_emudeck_invocation` gains a `table` branch. Per plan D4 the emulator is called directly through
+  `bin/rom-launcher-ng` (never EmuDeck's launcher scripts, which `git pull` and cloud-sync on every launch):
+
+  ```
+  vblank_mode=0 %command% "/home/deck/Applications/Eden.AppImage" -f -g "/run/media/mmcblk0p1/Emulation/roms/switch/Pokemon Shining Pearl [010018E011D92000][v0].nsp"
+  ```
+
+  Steam replaces `%command%` with the shortcut exe (`bin/rom-launcher-ng`). The emulator path and ROM path are
+  double-quoted with `\` and `"` escaped (`quote_launch_arg`). `EmuDeckLauncherAdapter` re-probes the located file and
+  reports `launcher_missing` if it vanished. No installed emulator → `needs_setup` (`no_emulator_resolved`).
+- **Folder games** (base game + updates/DLC in one folder): `DiscLaunchResolver` lists the folder's `.xci`/`.nsp` files
+  (case-insensitive, `LAUNCH_FILE_EXTENSIONS`) largest first. The default launch file is the largest; the per-game pick
+  reuses `roms.selected_disc` (ADR-0014) and the disc picker on the game page, which titles itself "Launch file" when
+  `get_disc_selection` reports `default.kind == "file"`. Picking a file re-bakes through `select_disc`.
+
+Every bake site (sync, download-complete, page-time adoption, version switch, override change, launch-file pick,
+relaunch re-confirm, startup reconcile) goes through `ActiveCoreResolver` → `LaunchResolverFn` → `DiscLaunchResolver`,
+so they all produce the same command. `tests/contract/test_switch_launch.py` drives each of them.
+
 ## System Default Launchers
 
 **File:** `py_modules/domain/emudeck_launch.py`

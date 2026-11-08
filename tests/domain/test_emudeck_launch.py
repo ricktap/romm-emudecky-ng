@@ -281,3 +281,34 @@ class TestPathSeparation:
         assert res.launch_options.endswith(
             os.path.join("/home/deck/.var/app/org.libretro.RetroArch/config/retroarch/cores", "gambatte.so")
         )
+
+
+class TestTableEmulatorBranch:
+    def _resolve(self, emulator):
+        from domain.emudeck_launch import resolve_emudeck_invocation
+
+        return resolve_emudeck_invocation(
+            {"id": 1},
+            emulator,
+            launchers_path="",
+            retroarch_cores_dir="",
+            system="switch",
+            system_launcher_map=None,
+        )
+
+    def test_located_eden_renders(self):
+        res = self._resolve(EmulatorInvocation.table("eden", "/h/Applications/Eden.AppImage", "Eden"))
+        assert res.status == "ok"
+        assert res.launch_options == 'vblank_mode=0 %command% "/h/Applications/Eden.AppImage" -f -g'
+
+    def test_ryujinx_renders_without_flags(self):
+        res = self._resolve(EmulatorInvocation.table("ryujinx", "/h/Applications/publish/Ryujinx.sh", "Ryujinx"))
+        assert res.launch_options == 'vblank_mode=0 %command% "/h/Applications/publish/Ryujinx.sh"'
+
+    def test_unlocated_emulator_is_needs_setup(self):
+        res = self._resolve(EmulatorInvocation.table("eden", None, "Eden"))
+        assert (res.status, res.reason, res.launch_options) == ("needs_setup", "emulator_not_installed", "")
+
+    def test_unknown_table_id_is_needs_setup(self):
+        res = self._resolve(EmulatorInvocation.table("citra", "/x", "Citra"))
+        assert (res.status, res.reason) == ("needs_setup", "unknown_table_emulator")

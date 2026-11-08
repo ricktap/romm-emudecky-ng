@@ -2,7 +2,7 @@
 
 Loaded via ``importlib`` because ``scripts/`` is not on ``sys.path`` (and is
 excluded from ruff/basedpyright). Parser edge cases feed synthetic ``.ts`` /
-``main.py`` files under ``tmp_path``; the happy-path test asserts the real repo
+``backend.py`` files under ``tmp_path``; the happy-path test asserts the real repo
 tree is clean (the regression that protects the live frontend↔backend wire).
 """
 
@@ -43,8 +43,8 @@ def _write_ts(tmp_path: Path, name: str, body: str) -> Path:
 
 
 def _write_main(tmp_path: Path, body: str) -> Path:
-    """Write a synthetic ``main.py`` with a ``Plugin`` class body and return its path."""
-    path = tmp_path / "main.py"
+    """Write a synthetic ``backend.py`` with a ``Backend`` class body and return its path."""
+    path = tmp_path / "backend.py"
     path.write_text(body, encoding="utf-8")
     return path
 
@@ -222,7 +222,7 @@ class TestParseBackendCallables:
     def test_public_methods_with_arity(self, tmp_path: Path):
         body = textwrap.dedent(
             """\
-            class Plugin:
+            class Backend:
                 async def get_settings(self):
                     ...
                 async def start_download(self, rom_id):
@@ -241,7 +241,7 @@ class TestParseBackendCallables:
     def test_underscore_internal_excluded(self, tmp_path: Path):
         body = textwrap.dedent(
             """\
-            class Plugin:
+            class Backend:
                 async def _main(self):
                     ...
                 async def _unload(self):
@@ -256,7 +256,7 @@ class TestParseBackendCallables:
     def test_default_param_counts_as_positional_slot(self, tmp_path: Path):
         body = textwrap.dedent(
             """\
-            class Plugin:
+            class Backend:
                 async def connect_with_credentials(self, url, user, pw, allow_insecure_ssl=None):
                     ...
             """
@@ -267,7 +267,7 @@ class TestParseBackendCallables:
     def test_vararg_method_has_none_arity_name_recorded(self, tmp_path: Path):
         body = textwrap.dedent(
             """\
-            class Plugin:
+            class Backend:
                 async def flexible(self, *args):
                     ...
             """
@@ -278,7 +278,7 @@ class TestParseBackendCallables:
     def test_sync_methods_ignored(self, tmp_path: Path):
         body = textwrap.dedent(
             """\
-            class Plugin:
+            class Backend:
                 def helper(self):
                     ...
                 async def real_callable(self):
@@ -297,7 +297,7 @@ class TestParseBackendCallables:
         # so arity counts only the positional params (a, b) -> 2.
         body = textwrap.dedent(
             """\
-            class Plugin:
+            class Backend:
                 async def m(self, a, b, *, c):
                     ...
             """
@@ -309,7 +309,7 @@ class TestParseBackendCallables:
         # **kwargs is not positional — the two positional params still count as 2.
         body = textwrap.dedent(
             """\
-            class Plugin:
+            class Backend:
                 async def m(self, a, b, **kwargs):
                     ...
             """
@@ -367,7 +367,7 @@ class TestMainEntryPoint:
 
     def test_real_repo_run_is_clean(self, capsys: pytest.CaptureFixture[str]):
         # Locks the actual src/**/*.ts callable declarations in sync with the
-        # Plugin async methods in main.py. If this fails, a callable was
+        # Backend async methods in py_modules/backend.py. If this fails, a callable was
         # added/renamed/removed on one side only, or an arity drifted.
         rc = check.main([])
         assert rc == 0
@@ -379,10 +379,10 @@ class TestMainEntryPoint:
         src = _write_ts(tmp_path, "a.ts", 'callable<[], A>("present");\ncallable<[number], B>("frontend_only");')
         main_py = _write_main(
             tmp_path,
-            "class Plugin:\n    async def present(self):\n        ...\n",
+            "class Backend:\n    async def present(self):\n        ...\n",
         )
         monkeypatch.setattr(check, "SRC_DIR", src)
-        monkeypatch.setattr(check, "MAIN_PY", main_py)
+        monkeypatch.setattr(check, "BACKEND_PY", main_py)
         monkeypatch.setattr(check, "EXEMPT", frozenset())
         rc = check.main([])
         assert rc == 1
@@ -392,8 +392,8 @@ class TestMainEntryPoint:
 
     def test_in_sync_fake_repo_returns_zero(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         src = _write_ts(tmp_path, "a.ts", 'callable<[number], A>("match");')
-        main_py = _write_main(tmp_path, "class Plugin:\n    async def match(self, rom_id):\n        ...\n")
+        main_py = _write_main(tmp_path, "class Backend:\n    async def match(self, rom_id):\n        ...\n")
         monkeypatch.setattr(check, "SRC_DIR", src)
-        monkeypatch.setattr(check, "MAIN_PY", main_py)
+        monkeypatch.setattr(check, "BACKEND_PY", main_py)
         monkeypatch.setattr(check, "EXEMPT", frozenset())
         assert check.main([]) == 0

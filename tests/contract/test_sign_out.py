@@ -14,12 +14,12 @@ from __future__ import annotations
 
 
 def _seed_signed_in(harness) -> None:
-    harness.plugin.settings["romm_url"] = "http://romm.local"
-    harness.plugin.settings["romm_allow_insecure_ssl"] = False
-    harness.plugin.settings["romm_api_token"] = "rmm_token"
-    harness.plugin.settings["romm_api_token_id"] = 42
-    harness.plugin.settings["romm_api_token_origin"] = "http://romm.local"
-    harness.plugin.settings["romm_api_token_source"] = "minted"
+    harness.backend.settings["romm_url"] = "http://romm.local"
+    harness.backend.settings["romm_allow_insecure_ssl"] = False
+    harness.backend.settings["romm_api_token"] = "rmm_token"
+    harness.backend.settings["romm_api_token_id"] = 42
+    harness.backend.settings["romm_api_token_origin"] = "http://romm.local"
+    harness.backend.settings["romm_api_token_source"] = "minted"
 
 
 async def test_sign_out_clears_token_locally_and_keeps_url(harness):
@@ -30,12 +30,12 @@ async def test_sign_out_clears_token_locally_and_keeps_url(harness):
     assert result["success"] is True
     assert "Signed out" in result["message"]
     # Token trio + provenance cleared; URL + SSL flag kept.
-    assert harness.plugin.settings["romm_api_token"] is None
-    assert harness.plugin.settings["romm_api_token_id"] is None
-    assert harness.plugin.settings["romm_api_token_origin"] is None
-    assert harness.plugin.settings["romm_api_token_source"] is None
-    assert harness.plugin.settings["romm_url"] == "http://romm.local"
-    assert harness.plugin.settings["romm_allow_insecure_ssl"] is False
+    assert harness.backend.settings["romm_api_token"] is None
+    assert harness.backend.settings["romm_api_token_id"] is None
+    assert harness.backend.settings["romm_api_token_origin"] is None
+    assert harness.backend.settings["romm_api_token_source"] is None
+    assert harness.backend.settings["romm_url"] == "http://romm.local"
+    assert harness.backend.settings["romm_allow_insecure_ssl"] is False
     # No server-side token deletion — sign-out is local-forget only.
     assert harness.romm.deleted_token_ids == []
 

@@ -29,6 +29,7 @@ export interface CoreInfoFields {
   emulatorDataAvailable: boolean;
   platformCoreLabel: string | null;
   hasGameOverride: boolean;
+  gameOverrideLabel?: string | null;
 }
 
 export interface SaveSyncResolution {
@@ -92,6 +93,7 @@ export function extractCoreInfo(coreInfo: CoreInfo): CoreInfoFields {
     emulatorDataAvailable: coreInfo.emulator_data_available,
     platformCoreLabel: coreInfo.platform_core_label ?? null,
     hasGameOverride: coreInfo.has_game_override,
+    gameOverrideLabel: coreInfo.game_override_label ?? null,
   };
 }
 

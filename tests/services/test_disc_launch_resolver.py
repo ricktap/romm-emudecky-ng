@@ -54,11 +54,22 @@ def logger() -> logging.Logger:
     return logging.getLogger("test_disc_launch_resolver")
 
 
-def _build(file_lister: FakeFileLister, system_extensions: FakeSystemExtensions, logger: logging.Logger):
+def _build(
+    file_lister: FakeFileLister,
+    system_extensions: FakeSystemExtensions,
+    logger: logging.Logger,
+    sizes: dict[str, int] | None = None,
+):
+    size_map = sizes or {}
+
+    def file_size(path: str) -> int:
+        return size_map.get(path, 0)
+
     return DiscLaunchResolver(
         config=DiscLaunchResolverConfig(
             list_files=file_lister,
             system_extensions=system_extensions,
+            file_size=file_size,
             logger=logger,
         ),
     )
@@ -231,3 +242,53 @@ class TestFolderBootTarget:
         resolver = _build(FakeFileLister(), FakeSystemExtensions(), logger)
         install = _install(file_path="/roms/snes/game.sfc", rom_dir=None)
         assert resolver.resolve_for_install(install, None) == "/roms/snes/game.sfc"
+
+
+class TestSwitchSizeRankedLaunchFile:
+    """Switch folder installs launch the largest ``.xci``/``.nsp`` unless a file is pinned."""
+
+    _DIR = "/roms/switch/Pokemon Shining Pearl"
+    _BASE = f"{_DIR}/Pokemon Shining Pearl [010018E011D92000][v0].nsp"
+    _UPDATE = f"{_DIR}/Pokemon Shining Pearl [010018E011D92800][v196608].NSP"
+    _DLC = f"{_DIR}/dlc.xci"
+    _README = f"{_DIR}/readme.txt"
+
+    def _resolver(self, logger):
+        files = {self._DIR: [self._UPDATE, self._README, self._BASE, self._DLC]}
+        sizes = {self._BASE: 5_000, self._UPDATE: 900, self._DLC: 20, self._README: 99_999}
+        return _build(FakeFileLister(files), FakeSystemExtensions(), logger, sizes=sizes)
+
+    def _install(self, file_path=None):
+        return _install(file_path=file_path or self._README, rom_dir=self._DIR, system="switch")
+
+    def test_candidates_are_xci_nsp_largest_first(self, logger):
+        discs = self._resolver(logger).enumerate_discs(self._install())
+        assert [d.path for d in discs] == [self._BASE, self._UPDATE, self._DLC]
+        assert discs[0].label == "Pokemon Shining Pearl [010018E011D92000][v0]"
+
+    def test_default_is_largest_even_when_file_path_is_another_file(self, logger):
+        assert self._resolver(logger).resolve_for_install(self._install(), None) == self._BASE
+
+    def test_default_when_file_path_is_the_folder(self, logger):
+        install = self._install(file_path=self._DIR)
+        assert self._resolver(logger).resolve_for_install(install, None) == self._BASE
+
+    def test_pin_is_respected(self, logger):
+        pinned = "Pokemon Shining Pearl [010018E011D92800][v196608].NSP"
+        assert self._resolver(logger).resolve_for_install(self._install(), pinned) == self._UPDATE
+
+    def test_stale_pin_degrades_to_largest_and_warns(self, logger, caplog):
+        with caplog.at_level(logging.WARNING):
+            assert self._resolver(logger).resolve_for_install(self._install(), "gone.nsp") == self._BASE
+        assert "no longer present" in caplog.text
+
+    def test_single_file_switch_install_unchanged(self, logger):
+        resolver = _build(FakeFileLister(), FakeSystemExtensions(), logger)
+        install = _install(file_path="/roms/switch/game.xci", rom_dir=None, system="switch")
+        assert resolver.enumerate_discs(install) == []
+        assert resolver.resolve_for_install(install, None) == "/roms/switch/game.xci"
+
+    def test_folder_without_candidates_falls_back_to_file_path(self, logger):
+        files = {self._DIR: [self._README]}
+        resolver = _build(FakeFileLister(files), FakeSystemExtensions(), logger)
+        assert resolver.resolve_for_install(self._install(), None) == self._README

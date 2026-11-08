@@ -21,6 +21,7 @@ from adapters.debug_logger import SettingsAwareDebugLogger
 from adapters.download_file import DownloadFileAdapter
 from adapters.emudeck_launchers import EmuDeckLauncherAdapter
 from adapters.emudeck_paths import EmuDeckPathsAdapter
+from adapters.emulator_table import EmulatorLocatorAdapter, TableAwareCoreInfoAdapter
 from adapters.es_de_config import CoreResolver
 from adapters.firmware_file import FirmwareFileAdapter
 from adapters.github_releases import GitHubReleasesAdapter
@@ -312,6 +313,13 @@ def bootstrap(
         logger=logger,
         user_home=user_home,
     )
+    # The plugin's own emulator table answers the systems it covers (Switch)
+    # instead of the ES-DE XML lookup, which EmuDeck cannot satisfy; every other
+    # system still reads through the CoreResolver.
+    table_core_info = TableAwareCoreInfoAdapter(
+        inner=core_resolver,
+        locator=EmulatorLocatorAdapter(user_home=user_home, logger=logger),
+    )
     # EmuDeck launch resolver (EmuDeck port plan §7 invariant: a single
     # shared launch resolver for every shortcut ``launch_options`` bake).
     # RetroArch cores dir is sourced from EmuDeck's separate RetroArch
@@ -389,7 +397,7 @@ def bootstrap(
         rom_file_store=rom_file_store,
         save_file_store=save_file_store,
         path_probe=path_probe,
-        core_info_provider=core_resolver,
+        core_info_provider=table_core_info,
         release_api=release_api,
     )
     stores = StateBundle(
@@ -493,6 +501,7 @@ def wire_services(cfg: WiringConfig) -> dict[str, Any]:
         config=DiscLaunchResolverConfig(
             list_files=cfg.callbacks.list_rom_dir_files,
             system_extensions=cfg.callbacks.system_extensions,
+            file_size=cfg.adapters.download_file_store.file_size,
             logger=cfg.runtime.logger,
         ),
     )

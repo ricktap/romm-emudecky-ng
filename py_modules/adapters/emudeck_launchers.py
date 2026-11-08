@@ -117,6 +117,22 @@ class EmuDeckLauncherAdapter:
         system). Only delegates to the pure resolver once the launcher is
         confirmed on disk.
         """
+        # A table emulator carries its located executable; re-probe it so a
+        # since-removed AppImage reads as launcher_missing, not a dead command.
+        if emulator is not None and emulator.kind == "table":
+            executable = emulator.launcher
+            if executable and not (os.path.isfile(executable) and os.access(executable, os.X_OK)):
+                return EmuDeckLaunchResolution(
+                    status=RESOLUTION_LAUNCHER_MISSING, reason=os.path.basename(executable)
+                )
+            return resolve_emudeck_invocation(
+                rom,
+                emulator,
+                launchers_path="",
+                retroarch_cores_dir=self._retroarch_cores_dir,
+                system=system,
+                system_launcher_map=self._system_launcher_map,
+            )
         launchers_path = self._paths.launchers_path()
         # For standalone/direct kinds we need a per-system mapped launcher.
         if emulator is not None and emulator.kind in ("standalone", "direct"):

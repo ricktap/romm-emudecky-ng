@@ -184,3 +184,47 @@ class TestDiscImageExtensionsConstant:
         files = [_p(f"x{ext}") for ext in DISC_IMAGE_EXTENSIONS]
         discs = enumerate_discs(files, None)
         assert {d.filename for d in discs} == {f"x{ext}" for ext in DISC_IMAGE_EXTENSIONS}
+
+
+class TestSizeRankedLaunchFiles:
+    _EXTS = frozenset({".xci", ".nsp"})
+
+    def test_largest_first_case_insensitive_extension_filter(self):
+        from domain.disc_selection import enumerate_size_ranked
+
+        files = [("/g/upd.NSP", 10), ("/g/base.nsp", 500), ("/g/readme.txt", 9999), ("/g/dlc.XCI", 3)]
+        discs = enumerate_size_ranked(files, self._EXTS)
+        assert [d.filename for d in discs] == ["base.nsp", "upd.NSP", "dlc.XCI"]
+        assert [d.index for d in discs] == [1, 2, 3]
+        assert discs[0].label == "base"
+
+    def test_ties_break_by_name(self):
+        from domain.disc_selection import enumerate_size_ranked
+
+        discs = enumerate_size_ranked([("/g/b.nsp", 5), ("/g/A.nsp", 5)], self._EXTS)
+        assert [d.filename for d in discs] == ["A.nsp", "b.nsp"]
+
+    def test_resolution_default_pin_stale_empty(self):
+        from domain.disc_selection import enumerate_size_ranked, resolve_size_ranked_path
+
+        discs = enumerate_size_ranked([("/g/base.nsp", 500), ("/g/upd.nsp", 10)], self._EXTS)
+        assert resolve_size_ranked_path("/g", discs, None) == ("/g/base.nsp", False)
+        assert resolve_size_ranked_path("/g", discs, "upd.nsp") == ("/g/upd.nsp", False)
+        assert resolve_size_ranked_path("/g", discs, "gone.nsp") == ("/g/base.nsp", True)
+        assert resolve_size_ranked_path("/g/x.txt", [], None) == ("/g/x.txt", False)
+
+    def test_single_candidate_is_still_chosen(self):
+        from domain.disc_selection import enumerate_size_ranked, resolve_size_ranked_path
+
+        discs = enumerate_size_ranked([("/g/only.xci", 1)], self._EXTS)
+        assert resolve_size_ranked_path("/g", discs, None) == ("/g/only.xci", False)
+
+    def test_default_descriptor_file_kind(self):
+        from domain.disc_selection import default_descriptor, enumerate_size_ranked
+
+        discs = enumerate_size_ranked([("/g/base.nsp", 500), ("/g/upd.nsp", 10)], self._EXTS)
+        assert default_descriptor("/g", discs, size_ranked=True) == {
+            "kind": "file",
+            "label": "base",
+            "filename": "base.nsp",
+        }

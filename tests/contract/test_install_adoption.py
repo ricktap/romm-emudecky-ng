@@ -21,17 +21,21 @@ from __future__ import annotations
 import asyncio
 import os
 
+from ._harness import background_tasks
 from ._seed import seed_rom
 
 _APP_ID = 4242
 
 
-async def _drain_background_tasks() -> None:
+async def _drain_background_tasks(harness) -> None:
     for _ in range(6):
-        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
+        pending = background_tasks()
         if not pending:
-            return
+            break
         await asyncio.gather(*pending, return_exceptions=True)
+    # Events emitted by the drained work cross the socket; a round-trip makes
+    # sure the shim has relayed them to ``harness.emit``.
+    await harness.flush_events()
 
 
 def _server_rom(harness, rom_id: int, *, fs_name: str, size: int, platform_id: int = 1) -> None:
@@ -69,7 +73,7 @@ async def test_game_page_adopts_file_already_on_disk(harness):
     first = await harness.plugin.get_cached_game_detail(_APP_ID)
     assert first["found"] is True
     assert first["installed"] is False
-    await _drain_background_tasks()
+    await _drain_background_tasks(harness)
 
     # Same event a finished download emits — the frontend flips the page to Play
     # and confirm-sets the shortcut's launch options from this payload.
@@ -99,7 +103,7 @@ async def test_game_page_does_not_adopt_wrong_size(harness):
     _place_file(harness, "gba", "Pokemon Emerald (USA).gba", 63)
 
     await harness.plugin.get_cached_game_detail(_APP_ID)
-    await _drain_background_tasks()
+    await _drain_background_tasks(harness)
 
     assert _events(harness, "download_complete") == []
     assert (await harness.plugin.get_cached_game_detail(_APP_ID))["installed"] is False
@@ -112,7 +116,7 @@ async def test_game_page_server_unreachable_stays_not_installed(harness):
     harness.romm.get_rom_side_effect = ConnectionError("offline")
 
     detail = await harness.plugin.get_cached_game_detail(_APP_ID)
-    await _drain_background_tasks()
+    await _drain_background_tasks(harness)
 
     assert detail["installed"] is False
     assert _events(harness, "download_complete") == []
@@ -128,14 +132,14 @@ async def test_library_sync_adopts_and_bakes_launch_options(harness):
     harness.romm.platforms = [{"id": 1, "name": "Game Boy Advance", "slug": "gba", "rom_count": 2}]
     _server_rom(harness, 10, fs_name="On Disk.gba", size=32)
     _server_rom(harness, 11, fs_name="Not On Disk.gba", size=32)
-    harness.plugin.settings["enabled_platforms"] = {"1": True}
+    harness.backend.settings["enabled_platforms"] = {"1": True}
     path = _place_file(harness, "gba", "On Disk.gba", 32)
 
-    orch = harness.plugin._sync_service._orchestrator
+    orch = harness.backend._sync_service._orchestrator
     orch._wait_for_unit_complete = _ack_immediately
     # start_sync runs the per-unit pipeline as a background task.
     assert (await harness.plugin.start_sync())["success"] is True
-    await _drain_background_tasks()
+    await _drain_background_tasks(harness)
 
     [unit] = _events(harness, "sync_apply_unit")
     by_rom = {s["rom_id"]: s for s in unit["shortcuts"]}

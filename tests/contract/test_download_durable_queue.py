@@ -76,7 +76,7 @@ async def test_interrupted_download_resumes_from_partial_after_restart(harness, 
     while not stalled.is_set():
         await asyncio.sleep(0.01)
 
-    first_service = harness.plugin._download_service
+    first_service = harness.backend._download_service
     tasks = list(first_service._download_tasks.values())
     await first_service.shutdown()  # what _unload does
     release.set()
@@ -88,7 +88,7 @@ async def test_interrupted_download_resumes_from_partial_after_restart(harness, 
     assert os.path.getsize(tmp_file) == _PARTIAL
 
     # Second plugin instance over the SAME tmp_path: real SQLite + the partial.
-    restarted = build_contract_harness(tmp_path)
+    restarted = await build_contract_harness(tmp_path)
     _seed_server_rom(restarted)
     calls: list[dict[str, Any]] = []
 
@@ -105,15 +105,17 @@ async def test_interrupted_download_resumes_from_partial_after_restart(harness, 
     restarted.romm.download_rom_content = ranged_transfer  # type: ignore[method-assign]
 
     # Startup reconciliation (main._main) restores the queue before anything resumes.
-    restarted.plugin._download_service.reconcile_persisted_downloads()
-    queue = await restarted.plugin.get_download_queue()
+    # Read the reconciled state synchronously, before the auto-resume task it
+    # schedules gets a turn on the loop (that resume is asserted below).
+    restarted.backend._download_service.reconcile_persisted_downloads()
+    queue = restarted.backend._download_service.get_download_queue()
     entry = next(d for d in queue["downloads"] if d["rom_id"] == _ROM_ID)
     assert entry["status"] == "interrupted"
     assert entry["reason"] == "restart"
     assert entry["bytes_downloaded"] == _PARTIAL
     assert entry["total_bytes"] == len(_PAYLOAD)
 
-    await _drain(restarted.plugin._download_service)
+    await _drain(restarted.backend._download_service)
 
     assert calls == [{"rom_id": _ROM_ID, "resume": True, "offset": _PARTIAL}]
     installed = await restarted.plugin.get_installed_rom(_ROM_ID)
@@ -127,3 +129,4 @@ async def test_interrupted_download_resumes_from_partial_after_restart(harness, 
     assert entry["status"] == "completed"
     with restarted.uow_factory() as uow:
         assert uow.download_jobs.get(_ROM_ID) is None
+    await restarted.close()

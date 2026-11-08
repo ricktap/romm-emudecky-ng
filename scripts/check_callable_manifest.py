@@ -3,7 +3,9 @@
 
 The Decky callable surface is declared twice: once on the frontend as
 ``callable<[Args], Return>("wire_name")`` (TypeScript) and once on the backend
-as a public ``async def`` method on the ``Plugin`` class in ``main.py``. Nothing
+as a public ``async def`` method on the ``Backend`` class in
+``py_modules/backend.py`` (the backend behind the protocol socket; the Decky shim
+in ``main.py`` generates one forwarder per name the backend lists). Nothing
 ties the two together at build time — a renamed/added/removed callable on either
 side, or an arg-count change that the other side doesn't follow, only surfaces as
 a runtime "method not found" / wrong-arity failure once the plugin is loaded.
@@ -41,7 +43,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = REPO_ROOT / "src"
-MAIN_PY = REPO_ROOT / "main.py"
+BACKEND_PY = REPO_ROOT / "py_modules" / "backend.py"
+BACKEND_CLASS = "Backend"
 
 # Wire names deliberately excluded from the parity check. Empty today; add an
 # entry only as a conscious decision (see the module docstring). Do NOT add a
@@ -301,11 +304,11 @@ def _parse_text_into(text: str, result: dict[str, int]) -> None:
         i = end
 
 
-def parse_backend_callables(main_py: Path) -> dict[str, int]:
-    """Parse the public ``async def`` methods of the ``Plugin`` class in *main_py*.
+def parse_backend_callables(backend_py: Path, class_name: str = BACKEND_CLASS) -> dict[str, int]:
+    """Parse the public ``async def`` methods of the *class_name* class in *backend_py*.
 
-    Uses ``ast`` (never imports ``main.py`` — it needs a decky runtime). Returns
-    ``{method_name: arity}`` for every ``AsyncFunctionDef`` on ``Plugin`` whose
+    Uses ``ast`` (never imports the backend — it needs the plugin runtime). Returns
+    ``{method_name: arity}`` for every ``AsyncFunctionDef`` on the class whose
     name does not start with ``_`` (those are internal lifecycle, not callables).
     Arity counts positional parameters only — ``posonlyargs`` + ``args`` minus
     ``self``; a method with ``*args`` has variable arity, recorded as ``None``
@@ -315,10 +318,10 @@ def parse_backend_callables(main_py: Path) -> dict[str, int]:
     callable surface).
     """
     result: dict[str, int | None] = {}
-    source = main_py.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(main_py))
+    source = backend_py.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(backend_py))
     plugin = next(
-        (node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Plugin"),
+        (node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name),
         None,
     )
     if plugin is None:
@@ -359,13 +362,13 @@ def find_discrepancies(
     backend_names = set(backend) - exempt
 
     findings.extend(
-        f'{name}: frontend declares callable("{name}") but main.py has no public '
-        f"async def {name} on Plugin — add the backend method, fix a rename, or "
+        f'{name}: frontend declares callable("{name}") but the backend has no public '
+        f"async def {name} on {BACKEND_CLASS} — add the backend method, fix a rename, or "
         f"add it to EXEMPT in this script if it is intentionally frontend-only."
         for name in sorted(frontend_names - backend_names)
     )
     findings.extend(
-        f"{name}: main.py exposes public async def {name} on Plugin but no frontend "
+        f"{name}: the backend exposes public async def {name} on {BACKEND_CLASS} but no frontend "
         f'callable("{name}") declares it — add the frontend declaration, fix a '
         f"rename, or add it to EXEMPT in this script if it is intentionally backend-only."
         for name in sorted(backend_names - frontend_names)
@@ -381,7 +384,7 @@ def find_discrepancies(
         if fe_arity != be_arity:
             findings.append(
                 f"{name}: arity mismatch — frontend declares {fe_arity} arg(s) "
-                f"(callable<[...]>) but main.py async def {name} takes {be_arity} "
+                f"(callable<[...]>) but backend async def {name} takes {be_arity} "
                 f"(self dropped). Align the argument count on one side."
             )
 
@@ -393,7 +396,7 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 0
     frontend = parse_frontend_callables(SRC_DIR)
-    backend = parse_backend_callables(MAIN_PY)
+    backend = parse_backend_callables(BACKEND_PY)
     findings = find_discrepancies(frontend, backend, EXEMPT)
     if findings:
         for line in findings:
@@ -401,7 +404,7 @@ def main(argv: list[str]) -> int:
         print()
         print(
             "ERROR: the frontend (src/**/*.ts callable declarations) and backend "
-            "(Plugin async methods in main.py) callable surfaces have drifted. Every "
+            "(Backend async methods in py_modules/backend.py) callable surfaces have drifted. Every "
             "callable must be declared on both sides with matching arity (or be "
             "explicitly EXEMPT) so the frontend↔backend wire stays one source of truth."
         )

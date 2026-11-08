@@ -221,3 +221,39 @@ class TestNoRetrodeckLeak:
         assert "/var/config/retroarch/cores" not in res.launch_options
         assert "%EMULATOR_" not in res.launch_options
         assert "%ROM%" not in res.launch_options
+
+
+class TestTableEmulatorResolution:
+    """Table emulators render directly — no EmuDeck launcher scripts involved (plan D4)."""
+
+    def _adapter(self) -> EmuDeckLauncherAdapter:
+        return EmuDeckLauncherAdapter(
+            paths=_FakePaths(launchers=""), retroarch_cores_dir="", logger=logging.getLogger("t")
+        )
+
+    def test_located_executable_renders_eden_command(self, tmp_path):
+        exe = tmp_path / "Eden.AppImage"
+        exe.write_text("#!/bin/sh\n")
+        exe.chmod(0o755)
+        res = self._adapter().resolve_for({"id": 1}, EmulatorInvocation.table("eden", str(exe), "Eden"), "switch")
+        assert res.status == RESOLUTION_OK
+        assert res.launch_options == f'vblank_mode=0 %command% "{exe}" -f -g'
+        assert res.launcher_path == str(exe)
+
+    def test_vanished_executable_is_launcher_missing(self, tmp_path):
+        exe = tmp_path / "Eden.AppImage"
+        res = self._adapter().resolve_for({"id": 1}, EmulatorInvocation.table("eden", str(exe), "Eden"), "switch")
+        assert res.status == RESOLUTION_LAUNCHER_MISSING
+        assert res.reason == "Eden.AppImage"
+
+    def test_non_executable_file_is_launcher_missing(self, tmp_path):
+        exe = tmp_path / "Eden.AppImage"
+        exe.write_text("x")
+        exe.chmod(0o644)
+        res = self._adapter().resolve_for({"id": 1}, EmulatorInvocation.table("eden", str(exe), "Eden"), "switch")
+        assert res.status == RESOLUTION_LAUNCHER_MISSING
+
+    def test_no_emulator_for_switch_is_needs_setup(self):
+        res = self._adapter().resolve_for({"id": 1}, None, "switch")
+        assert res.status == RESOLUTION_NEEDS_SETUP
+        assert res.launch_options == ""

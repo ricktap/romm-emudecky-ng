@@ -13,19 +13,23 @@ plugin. Code is split into four layers with a strictly enforced dependency direc
 
 Services depend on **Protocols** (defined in `services/protocols/`), never on concrete adapter classes. Adapters
 implement those Protocols. `bootstrap.py` is the composition root — the only place where concrete adapters meet
-services. `main.py` owns the Decky lifecycle and the callable surface; it holds no business logic.
+services. `backend.py` (`Backend`) owns the callable surface and the startup/shutdown work; `main.py` is a thin Decky
+shim that forwards every callable to the backend over a Unix socket (see [Backend protocol](backend-protocol.md)).
+Neither holds business logic.
 
 ```python
-class Plugin:
+class Backend:
     # No base classes — pure composition
-    # Owns: the Decky lifecycle (_main / _unload) and the callable surface
+    # Owns: startup/shutdown (_main / _unload) and the callable surface
     # Delegates: all business logic to services, all I/O to adapters
 ```
 
 ## Dependency Diagram
 
 ```text
-main.py (Plugin — Decky lifecycle + callable routing)
+main.py (Plugin — Decky shim: generated forwarders, event relay)
+    ↓ newline-delimited JSON over backend.sock (rpc/)
+backend.py (Backend — callable surface + startup/shutdown)
     ↓ calls
 bootstrap.py (composition root: bootstrap() builds adapters, wire_services() builds services)
     ↓ creates
@@ -707,7 +711,9 @@ nothing from the other layers.
 
 | File                 | Role                                                                                                          |
 | -------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `main.py`            | Plugin class — Decky lifecycle (`_main`/`_unload`) and the callable surface (one `async def` per `@callable`) |
+| `main.py`            | Decky shim — launches the backend, generates one forwarder per callable, relays events                       |
+| `backend.py`         | `Backend` — the callable surface (one public `async def` per callable) and startup/shutdown work              |
+| `rpc/`               | Backend protocol: framing (`protocol.py`), backend-side server, shim-side client                             |
 | `bootstrap.py`       | Composition root — `bootstrap()` builds adapters, `wire_services()` builds services                           |
 | `lib/errors.py`      | Exception hierarchy (`RommApiError`, `classify_error`)                                                        |
 | `lib/list_result.py` | `ErrorCode` and the canonical callable failure shape                                                          |
@@ -724,14 +730,14 @@ The composition root has two functions:
 2. **`wire_services()`** — takes a `WiringConfig` (the four bundles plus `min_required_version`) and constructs every
    service, injecting each one's `*ServiceConfig`. Returns a dict of named service instances.
 
-The two-phase split exists because adapter instantiation and state loading happen first (`bootstrap()`), then `main.py`
-composes the runtime bundle (event loop, `decky.emit`) and calls `wire_services()`. Services receive the `settings` dict
+The two-phase split exists because adapter instantiation and state loading happen first (`bootstrap()`), then
+`Backend._main` composes the runtime bundle (event loop, the protocol server's `emit`) and calls `wire_services()`. Services receive the `settings` dict
 (the only field on `StateBundle`) plus the SQLite Unit-of-Work factory / repository handles for all relational state —
 no plural in-memory state dicts remain. Some services are constructed before others to satisfy ordering constraints
 (e.g. `MigrationService` before `SaveService` so save sync observes fresh save-sort state). Forward references between
 peers are threaded via `LateBinding`.
 
-Per the process-boundary rule, adapter instantiation never happens in `main.py`, and no service wiring happens in
+Per the process-boundary rule, adapter instantiation never happens in `main.py` or `backend.py`, and no service wiring happens in
 `bootstrap.py`'s caller other than via `wire_services()`.
 
 ## Protocol Interfaces
@@ -854,7 +860,7 @@ enum) plus bespoke plain-string reasons for non-server-reachability guards.
 
 ### 5. Enforced: underscore prefix
 
-All internal methods use a `_` prefix; public callables (exposed to the frontend via `callable()`) have none. `main.py`
+All internal methods use a `_` prefix; public callables (exposed to the frontend via `callable()`) have none. `Backend`
 callable methods delegate directly to the corresponding service method. Even synchronous callable bodies are `async def`
 — Decky's callable framework requires it.
 

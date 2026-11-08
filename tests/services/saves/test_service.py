@@ -361,14 +361,14 @@ class TestRetroDeckMigrationBlocksSaveSync:
         the internal do_sync_rom_saves call path is never reached when migration
         is pending. Protects against accidental decorator removal at the public
         callable layer."""
-        from main import Plugin
+        from backend import Backend
 
         svc, _ = make_service(tmp_path)
         svc._config.settings["save_sync_enabled"] = True
         _set_device_id(svc, "test-device")
         _install_rom(svc, tmp_path)
 
-        plugin = Plugin()
+        plugin = Backend()
         plugin._save_sync_service = svc
         plugin._migration_service = MagicMock()
         plugin._migration_service.is_retrodeck_migration_pending.return_value = True

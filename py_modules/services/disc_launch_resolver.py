@@ -23,7 +23,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from domain.disc_selection import Disc, enumerate_discs, resolve_launch_path
+from domain.disc_selection import (
+    Disc,
+    enumerate_discs,
+    enumerate_size_ranked,
+    resolve_launch_path,
+    resolve_size_ranked_path,
+)
+from domain.emulator_table import launch_file_extensions
 from domain.rom_files import folder_boot_root
 
 if TYPE_CHECKING:
@@ -32,6 +39,7 @@ if TYPE_CHECKING:
     from domain.rom_install import RomInstall
     from services.protocols import (
         DirectoryFileListerFn,
+        FileSizeFn,
         SystemSupportedExtensionsFn,
     )
 
@@ -43,12 +51,14 @@ class DiscLaunchResolverConfig:
     Carries the recursive directory file lister (to scan a folder-backed ROM's
     install directory for disc images), the live ES-DE per-system supported
     extensions reader (intersected with the disc-image set so a disc the
-    emulator cannot launch is never offered), and the logger used to warn on a
-    stale pin.
+    emulator cannot launch is never offered), the file-size reader (to rank a
+    size-ranked system's folder candidates, e.g. Switch ``.xci``/``.nsp``), and
+    the logger used to warn on a stale pin.
     """
 
     list_files: DirectoryFileListerFn
     system_extensions: SystemSupportedExtensionsFn
+    file_size: FileSizeFn
     logger: logging.Logger
 
 
@@ -58,6 +68,7 @@ class DiscLaunchResolver:
     def __init__(self, *, config: DiscLaunchResolverConfig) -> None:
         self._list_files = config.list_files
         self._system_extensions = config.system_extensions
+        self._file_size = config.file_size
         self._logger = config.logger
 
     def enumerate_discs(self, install: RomInstall) -> list[Disc]:
@@ -69,7 +80,19 @@ class DiscLaunchResolver:
         intersected with the disc-image set so a disc the emulator cannot launch
         is never listed (falling back to the full disc set when ES-DE is
         unavailable). Pure file listing — no mutation.
+
+        A system with emulator-table launch-file extensions (Switch) instead
+        lists its folder's ``.xci``/``.nsp`` files largest-first, so the
+        default (index 1) is the base game and the rest (updates, DLC, other
+        dumps) are offered as per-game picks.
         """
+        ranked_exts = launch_file_extensions(install.system)
+        if ranked_exts is not None:
+            folder = install.rom_dir
+            if folder is None:
+                return []
+            files = [(path, self._file_size(path)) for path in self._list_files(folder)]
+            return enumerate_size_ranked(files, ranked_exts)
         if install.rom_dir is None:
             return []
         files = self._list_files(install.rom_dir)
@@ -95,7 +118,10 @@ class DiscLaunchResolver:
         folder-boot marker, so a resolved disc path is never rewritten;
         ``file_path`` itself is left untouched.
         """
-        path, stale = resolve_launch_path(install.file_path, discs, selected_disc)
+        if launch_file_extensions(install.system) is not None:
+            path, stale = resolve_size_ranked_path(install.file_path, discs, selected_disc)
+        else:
+            path, stale = resolve_launch_path(install.file_path, discs, selected_disc)
         if stale:
             self._logger.warning(
                 "disc_launch_resolver: pinned disc '%s' for rom_id=%s is no longer present; "

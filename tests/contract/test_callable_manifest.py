@@ -2,8 +2,10 @@
 
 This pins the exact contract the CI gate (``scripts/check_callable_manifest.py``)
 enforces: every ``callable<[Args], Return>("name")`` declared on the frontend
-(``src/**/*.ts``) has a matching public ``async def name`` on the ``Plugin``
-class in ``main.py``, in both directions, with matching arity. It is the
+(``src/**/*.ts``) has a matching public ``async def name`` on the ``Backend``
+class in ``py_modules/backend.py`` (the callable surface the protocol server
+registers and the ``main.py`` shim forwards), in both directions, with matching
+arity. It is the
 static-parity sibling of the rest of ``tests/contract/`` — those tests *drive*
 the real callables frontend-shaped; this one asserts the two *declarations*
 agree before any callable is driven, so a renamed/added/removed callable or an
@@ -23,7 +25,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPT_PATH = _REPO_ROOT / "scripts" / "check_callable_manifest.py"
 _SRC_DIR = _REPO_ROOT / "src"
-_MAIN_PY = _REPO_ROOT / "main.py"
+_BACKEND_PY = _REPO_ROOT / "py_modules" / "backend.py"
 
 
 def _load_gate():
@@ -40,6 +42,6 @@ _gate = _load_gate()
 
 def test_frontend_backend_callable_manifest_matches():
     frontend = _gate.parse_frontend_callables(_SRC_DIR)
-    backend = _gate.parse_backend_callables(_MAIN_PY)
+    backend = _gate.parse_backend_callables(_BACKEND_PY)
     discrepancies = _gate.find_discrepancies(frontend, backend, _gate.EXEMPT)
     assert discrepancies == []

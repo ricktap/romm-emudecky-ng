@@ -28,7 +28,7 @@ async def test_reconcile_flushes_outbox_then_unions_server(harness):
     """A locally-recorded session is flushed, unioned with a foreign device's, and max'd in."""
     seed_rom(harness, 1)
     await _register(harness)
-    harness.plugin.settings["save_sync_enabled"] = False
+    harness.backend.settings["save_sync_enabled"] = False
 
     # Record a 300s local session (folded + ingested on exit).
     await harness.plugin.record_session_start(1)
@@ -56,7 +56,7 @@ async def test_reconcile_restores_session_count_and_last_played_from_server(harn
     """A fresh device with no local play restores session_count + last_played from the server union (#903)."""
     seed_rom(harness, 1)
     await _register(harness)
-    harness.plugin.settings["save_sync_enabled"] = False
+    harness.backend.settings["save_sync_enabled"] = False
 
     # The server already holds a prior device's two sessions — the cutover history.
     harness.romm.play_sessions[1] = [
@@ -76,7 +76,7 @@ async def test_reconcile_local_ahead_is_not_regressed(harness):
     """When local play exceeds the server union, reconcile never lowers the total."""
     seed_rom(harness, 1)
     await _register(harness)
-    harness.plugin.settings["save_sync_enabled"] = False
+    harness.backend.settings["save_sync_enabled"] = False
 
     await harness.plugin.record_session_start(1)
     harness.clock.advance(900)  # 900s local
@@ -93,7 +93,7 @@ async def test_reconcile_server_unreachable_keeps_local_total(harness):
     """A failed GET degrades to local-only with the partial-success flag set."""
     seed_rom(harness, 1)
     await _register(harness)
-    harness.plugin.settings["save_sync_enabled"] = False
+    harness.backend.settings["save_sync_enabled"] = False
 
     await harness.plugin.record_session_start(1)
     harness.clock.advance(120)
@@ -115,7 +115,7 @@ async def test_queued_poison_session_is_healed_on_flush(harness):
     """
     seed_rom(harness, 1)
     await _register(harness)
-    harness.plugin.settings["save_sync_enabled"] = False
+    harness.backend.settings["save_sync_enabled"] = False
 
     # Seed the outbox directly with a poison + a healthy row (bypassing the
     # recording seam, which now filters sub-second windows at enqueue).
@@ -153,7 +153,7 @@ async def test_forbidden_reconcile_raises_scope_notice_then_clears(harness):
     """A 403 GET (token lacks roms.user.read) sets the durable notice; a later 200 clears it."""
     seed_rom(harness, 1)
     await _register(harness)
-    harness.plugin.settings["save_sync_enabled"] = False
+    harness.backend.settings["save_sync_enabled"] = False
 
     # A token predating the roms.user.read scope: the reconcile GET is forbidden.
     harness.romm.list_play_sessions_side_effect = RommForbiddenError("token lacks roms.user.read")

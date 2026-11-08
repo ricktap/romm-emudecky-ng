@@ -41,7 +41,7 @@ export interface EmulatorMenuConfig {
    * per-game pin. Omit on the System page, where picking the default entry is
    * itself the clear-to-empty-label action.
    */
-  followSystem?: { hasGameOverride: boolean; onFollowSystem: () => void };
+  followSystem?: { hasGameOverride: boolean; gameOverrideLabel?: string | null; onFollowSystem: () => void };
   /** Called with the picked emulator LABEL when a bakeable entry is chosen. */
   onPick: (label: string) => void;
 }
@@ -71,6 +71,22 @@ export function buildEmulatorMenu(config: EmulatorMenuConfig): ReactNode {
     createElement(MenuItem, { key: "compat", disabled: true }, "Switching cores may affect save compatibility"),
     createElement(MenuSeparator, { key: "compat-sep" }),
   ];
+
+  // A per-game pin naming an emulator that is no longer launchable (e.g. its
+  // AppImage was removed): the backend already launches the default instead —
+  // say so, so the pin isn't silently ignored.
+  const pinned = followSystem?.gameOverrideLabel ?? null;
+  if (followSystem?.hasGameOverride && pinned && !emulators.some((e) => e.label === pinned && e.bakeable)) {
+    const fallback = activeLabel ?? defaultLabel;
+    children.push(
+      createElement(
+        MenuItem,
+        { key: "override-unavailable", disabled: true },
+        `${pinned} is not available — using ${fallback ?? "no emulator"}`,
+      ),
+      createElement(MenuSeparator, { key: "override-unavailable-sep" }),
+    );
+  }
 
   if (followSystem) {
     // The core the game falls back to with no per-game pin: the per-platform

@@ -124,6 +124,7 @@ interface InfoState {
   emulatorDataAvailable: boolean;
   platformCoreLabel: string | null;
   hasGameOverride: boolean;
+  gameOverrideLabel?: string | null;
   activeSlot: string | null;
   raId: number | null;
   achievementEarned: number;
@@ -268,6 +269,7 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
     emulatorDataAvailable: true,
     platformCoreLabel: null,
     hasGameOverride: false,
+    gameOverrideLabel: null,
     activeSlot: "default",
     raId: null,
     achievementEarned: 0,
@@ -940,6 +942,7 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
         platformCoreLabel: info.platformCoreLabel,
         followSystem: {
           hasGameOverride: info.hasGameOverride,
+          gameOverrideLabel: info.gameOverrideLabel ?? null,
           onFollowSystem: () => {
             detach(handleResetGameCore());
           },

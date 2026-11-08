@@ -31,7 +31,7 @@ from lib.errors import (
 )
 
 # conftest.py patches decky before this import
-from main import Plugin
+from backend import Backend
 from services.connection import ConnectionService, ConnectionServiceConfig
 from services.library import LibraryService, LibraryServiceConfig
 from tests.fakes.fake_launch_resolver import FakeLaunchResolver
@@ -41,7 +41,7 @@ from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 def plugin():
     import logging
 
-    p = Plugin()
+    p = Backend()
     p.settings = {"romm_url": "", "romm_user": "", "romm_pass": "", "enabled_platforms": {}}
     import decky
 
@@ -83,7 +83,7 @@ def plugin():
             settings_persister=MagicMock(),
             loop=asyncio.get_event_loop(),
             logger=decky.logger,
-            min_required_version=Plugin._MIN_REQUIRED_VERSION,
+            min_required_version=Backend._MIN_REQUIRED_VERSION,
             forget_device=MagicMock(),
             clear_playtime_scope_notice=MagicMock(),
         ),
@@ -826,7 +826,7 @@ def _setup_plugin(plugin):
             settings_persister=MagicMock(),
             loop=plugin.loop,
             logger=decky.logger,
-            min_required_version=Plugin._MIN_REQUIRED_VERSION,
+            min_required_version=Backend._MIN_REQUIRED_VERSION,
             forget_device=MagicMock(),
             clear_playtime_scope_notice=MagicMock(),
         ),

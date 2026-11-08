@@ -23,6 +23,7 @@ import os
 
 from domain.rom_save_state import RomSaveState
 
+from ._harness import background_tasks
 from ._seed import seed_install, seed_save_state
 
 
@@ -34,7 +35,7 @@ def _write_local_save(harness, *, system: str, content: bytes, filename: str = "
     the ROM's parent folder name (``seed_install`` lays the ROM under
     ``…/roms/<system>/<file>``), so it equals *system* here.
     """
-    saves_dir = os.path.join(harness.plugin._retrodeck_paths.saves_path(), system)
+    saves_dir = os.path.join(harness.backend._retrodeck_paths.saves_path(), system)
     os.makedirs(saves_dir, exist_ok=True)
     path = os.path.join(saves_dir, filename)
     with open(path, "wb") as fh:
@@ -111,14 +112,16 @@ async def test_refresh_save_status_returns_success_and_schedules_emit(harness):
     ``save_status_updated``; we let the loop drain and assert the emit fired.
     """
     seed_install(harness, 3, system="gba", file_name="game.gba")
-    harness.plugin.settings["save_sync_enabled"] = True
+    harness.backend.settings["save_sync_enabled"] = True
 
     result = await harness.plugin.refresh_save_status(3)
 
     assert result == {"success": True}
     # Drain the fire-and-forget task scheduled via loop.create_task.
-    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-    for task in pending:
+    for task in background_tasks():
         await task
+    # The event left the backend as a protocol frame; a round-trip guarantees
+    # the shim has relayed it.
+    await harness.flush_events()
     emitted = [call.args[0] for call in harness.emit.call_args_list]
     assert "save_status_updated" in emitted

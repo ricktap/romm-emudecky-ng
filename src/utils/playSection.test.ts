@@ -119,6 +119,11 @@ describe("extractCoreInfo", () => {
     expect(result.hasGameOverride).toBe(false);
   });
 
+  it("maps game_override_label through (null when absent)", () => {
+    expect(extractCoreInfo(baseCoreInfo).gameOverrideLabel).toBeNull();
+    expect(extractCoreInfo({ ...baseCoreInfo, game_override_label: "yuzu" }).gameOverrideLabel).toBe("yuzu");
+  });
+
   it("maps has_game_override=true through to hasGameOverride (#211)", () => {
     const result = extractCoreInfo({ ...baseCoreInfo, has_game_override: true });
     expect(result.hasGameOverride).toBe(true);

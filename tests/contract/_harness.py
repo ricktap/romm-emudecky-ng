@@ -1,7 +1,14 @@
-"""Contract-test harness — the real ``Plugin`` over the real ``bootstrap()``.
+"""Contract-test harness — the real shim over the real backend socket.
 
-This tier drives the actual ``main.py`` callable surface the way the
-frontend does. Anything that builds, wires, or seeds the real plugin for
+This tier drives the callable surface the way the frontend does: every
+callable goes through the real Decky shim (:class:`main.Plugin`), whose
+generated forwarders send newline-delimited JSON requests over a real Unix
+socket to the real backend protocol server (:class:`rpc.server.BackendServer`)
+fronting the real :class:`backend.Backend`. Arguments and results therefore
+cross a JSON round-trip exactly as they will for a native backend, and events
+reach ``harness.emit`` only via protocol event frames relayed by the shim.
+
+Anything that builds, wires, or seeds the real plugin for
 a contract test belongs here; the per-callable contract assertions live
 in the sibling ``test_*.py`` modules.
 
@@ -25,7 +32,15 @@ a pytest ``tmp_path`` and wires the **real** services via the real
   ``time.sleep`` (1s, 3s …). Everything else on the real
   ``RommHttpAdapter`` (``resolve_system``, settings binding) stays real —
   it is a pure settings/file read with no network on the read paths.
-* ``emit`` → an ``AsyncMock`` so tests assert emissions.
+* the shim's event relay (``decky.emit`` in production) → an ``AsyncMock``
+  (``harness.emit``) so tests assert the emissions that crossed the socket.
+* the launch resolver → :class:`FakeLaunchResolver` for systems the
+  emulator table does not cover; table systems (Switch) resolve through the
+  real :class:`EmuDeckLauncherAdapter` so their launch commands are real.
+
+``harness.plugin`` is the shim — call callables on it. ``harness.backend`` is
+the in-process :class:`backend.Backend`, for tests that seed or inspect
+service internals directly (never for driving a callable).
 
 The SQLite database, the file stores, and the settings file all write
 into ``tmp_path``; that is intended and isolated per test (pytest hands
@@ -51,7 +66,10 @@ from fakes.fake_release_feed_api import FakeReleaseFeedApi
 from fakes.fake_romm_api import FakeRommApi
 from fakes.fake_steamgrid_db_api import FakeSteamGridDbApi
 from fakes.system_time import FakeClock, FakeSleeper, FakeUuidGen
+from rpc.protocol import TASK_NAME_PREFIX, socket_path_for
+from rpc.server import BackendServer
 
+from domain.emulator_table import EMULATOR_TABLE
 from tests.fakes.fake_launch_resolver import FakeLaunchResolver
 
 if TYPE_CHECKING:
@@ -61,7 +79,7 @@ if TYPE_CHECKING:
 # up ``sys.path`` and the mock ``decky`` module) is respected before ``main``
 # is touched.
 
-# The service attributes ``main.py:_main`` binds onto ``Plugin``. The harness
+# The service attributes ``Backend._main`` binds. The harness
 # binds the same set; the loud-failure assert below checks every one is present
 # so a wiring drift (a renamed/added service key) fails the fixture instead of
 # surfacing as a confusing ``AttributeError`` mid-test.
@@ -94,9 +112,11 @@ _BOUND_SERVICE_ATTRS = {
 
 @dataclass
 class ContractHarness:
-    """What a contract test reaches for: the wired plugin + the fake edges.
+    """What a contract test reaches for: the shim, the backend, and the fake edges.
 
-    ``plugin`` is the real :class:`main.Plugin` with every service wired.
+    ``plugin`` is the real :class:`main.Plugin` shim connected to the backend
+    socket — every callable on it is a JSON round-trip. ``backend`` is the real
+    :class:`backend.Backend` with every service wired (for seeding/inspection).
     ``romm`` is the :class:`FakeRommApi` the plugin's services talk to —
     tests seed library/saves/server state on it and arm its failure seams.
     ``sgdb`` is the :class:`FakeSteamGridDbApi`. ``emit`` is the
@@ -106,6 +126,7 @@ class ContractHarness:
     """
 
     plugin: Any
+    backend: Any
     romm: FakeRommApi
     sgdb: FakeSteamGridDbApi
     emit: AsyncMock
@@ -121,6 +142,56 @@ class ContractHarness:
     retrodeck_paths: Any
     # The fake GitHub release feed the update service reads (outer network edge).
     release_feed: Any
+    # The protocol server fronting ``backend`` (socket path, close()).
+    server: Any = None
+
+    async def flush_events(self) -> None:
+        """Round-trip a request so every event emitted so far has been relayed.
+
+        Events and responses share one ordered stream, so once any response
+        arrives every earlier event frame has already reached ``emit``. Use after
+        draining background work whose events were emitted outside a callable.
+        """
+        await self.plugin._client.list_methods()
+
+    async def close(self) -> None:
+        """Disconnect the shim and stop the server (no backend shutdown hooks)."""
+        if self.plugin._client is not None:
+            await self.plugin._client.close()
+        if self.server is not None:
+            await self.server.close()
+
+
+def background_tasks() -> list[asyncio.Task[Any]]:
+    """Pending tasks other than the caller and the protocol's long-lived connection tasks.
+
+    The shim's reader loop and the server's connection handler never finish
+    while the harness is up; draining helpers must not wait on them.
+    """
+    current = asyncio.current_task()
+    return [
+        t
+        for t in asyncio.all_tasks()
+        if t is not current and not t.done() and not t.get_name().startswith(TASK_NAME_PREFIX)
+    ]
+
+
+class _HarnessLaunchResolver:
+    """Route emulator-table systems to the real resolver, everything else to the fake.
+
+    The fake keeps the pre-table contract tests' RetroDECK-shaped expectations;
+    the real :class:`EmuDeckLauncherAdapter` renders table emulators (Switch) so
+    their contract tests assert the actual baked command.
+    """
+
+    def __init__(self, real: Any, fake: FakeLaunchResolver) -> None:
+        self._real = real
+        self._fake = fake
+
+    def resolve_for(self, rom: Any, emulator: Any, system: Any) -> Any:
+        if (emulator is not None and emulator.kind == "table") or system in EMULATOR_TABLE:
+            return self._real.resolve_for(rom, emulator, system)
+        return self._fake.resolve_for(rom, emulator, system)
 
 
 def _single_attempt_pass_through(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -134,13 +205,15 @@ def _single_attempt_pass_through(fn: Callable[..., Any], *args: Any, **kwargs: A
     return fn(*args, **kwargs)
 
 
-def build_contract_harness(tmp_path: Any) -> ContractHarness:
-    """Build the real ``Plugin`` over the real ``bootstrap()``, faking only the edges.
+async def build_contract_harness(tmp_path: Any) -> ContractHarness:
+    """Build the real backend over the real ``bootstrap()`` and connect the real shim.
 
-    Mirrors ``main.py:_main`` bindings exactly (see ``_BOUND_SERVICE_ATTRS``)
-    so the wired plugin behaves as it does in production, then asserts every
+    Mirrors ``Backend._main`` bindings exactly (see ``_BOUND_SERVICE_ATTRS``)
+    so the wired backend behaves as it does in production, then asserts every
     expected service attribute is bound — a wiring drift fails loudly here.
+    The backend is served on a fresh socket and the shim attaches to it.
     """
+    from backend import Backend
     from main import Plugin
 
     logger = logging.getLogger("contract")
@@ -177,6 +250,9 @@ def build_contract_harness(tmp_path: Any) -> ContractHarness:
     fake_sleeper = FakeSleeper()
 
     emit = AsyncMock()
+    # The protocol server whose ``emit`` the services publish through; events
+    # reach ``emit`` (above) only after crossing the socket via the shim relay.
+    server = BackendServer(logger=logger)
     # The running loop the test executes in. The harness is built from inside an
     # async fixture so this is the *same* loop the callables will await on —
     # binding the loop captured at module import (a different loop) would make
@@ -188,10 +264,10 @@ def build_contract_harness(tmp_path: Any) -> ContractHarness:
     # callable orchestration (the real EmuDeckLauncherAdapter can't resolve
     # launchers on a non-EmuDeck host; the adapter has its own unit tests in
     # tests/adapters/test_emudeck_launchers.py).
-    fake_launch_resolver = FakeLaunchResolver()
+    launch_resolver = _HarnessLaunchResolver(result.callbacks.launch_resolver, FakeLaunchResolver())
     patched_callbacks = dataclasses.replace(
         result.callbacks,
-        launch_resolver=fake_launch_resolver,
+        launch_resolver=launch_resolver,
     )
     cfg = WiringConfig(
         adapters=patched_adapters,
@@ -201,7 +277,7 @@ def build_contract_harness(tmp_path: Any) -> ContractHarness:
             logger=logger,
             plugin_dir=str(tmp_path / "plugin"),
             runtime_dir=str(tmp_path / "runtime"),
-            emit=emit,
+            emit=server.emit,
             clock=fake_clock,
             uuid_gen=fake_uuid,
             sleeper=fake_sleeper,
@@ -209,27 +285,37 @@ def build_contract_harness(tmp_path: Any) -> ContractHarness:
             machine_id_provider=result.runtime_adapters.machine_id_provider,
         ),
         callbacks=patched_callbacks,
-        min_required_version=Plugin._MIN_REQUIRED_VERSION,
+        min_required_version=Backend._MIN_REQUIRED_VERSION,
     )
     services = wire_services(cfg)
 
-    # 4. Construct the real Plugin and bind exactly as main.py:_main does.
-    plugin = Plugin()
-    plugin.loop = loop
-    plugin.settings = result.stores.settings
-    plugin._debug_logger = result.handles.debug_logger
-    plugin._persistence = result.handles.persistence
-    plugin._retrodeck_paths = result.callbacks.retrodeck_paths
+    # 4. Construct the real Backend and bind exactly as Backend._main does.
+    backend = Backend()
+    backend.loop = loop
+    backend.settings = result.stores.settings
+    backend._logger = logger
+    backend._debug_logger = result.handles.debug_logger
+    backend._persistence = result.handles.persistence
+    backend._retrodeck_paths = result.callbacks.retrodeck_paths
     for attr, key in _BOUND_SERVICE_ATTRS.items():
-        setattr(plugin, attr, services[key])
+        setattr(backend, attr, services[key])
 
     # Loud-failure guard: a wiring drift (renamed/added service) must fail the
     # fixture here, not as a confusing AttributeError deep in a contract test.
-    missing = [attr for attr in _BOUND_SERVICE_ATTRS if getattr(plugin, attr, None) is None]
+    missing = [attr for attr in _BOUND_SERVICE_ATTRS if getattr(backend, attr, None) is None]
     assert not missing, f"contract harness wiring drift — unbound service attrs: {missing}"
+
+    # 5. Serve the backend on a real socket and attach the real shim to it.
+    server.set_registry(backend.callables())
+    server.set_shutdown_hook(backend._unload)
+    await server.start(socket_path_for(None))
+    plugin = Plugin()
+    assert server.socket_path is not None
+    await plugin._attach(server.socket_path, emit)
 
     return ContractHarness(
         plugin=plugin,
+        backend=backend,
         romm=fake_romm,
         sgdb=fake_sgdb,
         emit=emit,
@@ -238,4 +324,5 @@ def build_contract_harness(tmp_path: Any) -> ContractHarness:
         uow_factory=result.callbacks.uow_factory,
         retrodeck_paths=result.callbacks.retrodeck_paths,
         release_feed=fake_release_feed,
+        server=server,
     )

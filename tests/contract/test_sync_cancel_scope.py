@@ -17,7 +17,7 @@ from domain.sync_state import SyncState
 
 
 def _orchestrator(harness):
-    return harness.plugin._sync_service._orchestrator
+    return harness.backend._sync_service._orchestrator
 
 
 async def _ack_immediately(_unit, event):
@@ -57,7 +57,7 @@ async def test_cancel_sync_stale_run_does_not_abort_fresh_run(harness):
         "platform_name": "N64",
         "platform_slug": "n64",
     }
-    harness.plugin.settings["enabled_platforms"] = {"1": True}
+    harness.backend.settings["enabled_platforms"] = {"1": True}
 
     orch = _orchestrator(harness)
     orch._wait_for_unit_complete = _ack_immediately
@@ -68,24 +68,24 @@ async def test_cancel_sync_stale_run_does_not_abort_fresh_run(harness):
     run_a_id = "run-A"
     start_a = await harness.plugin.start_sync()
     assert start_a["success"] is True
-    harness.plugin._sync_service._box.current_sync_id = run_a_id
+    harness.backend._sync_service._box.current_sync_id = run_a_id
 
     # Finalize run A to IDLE exactly as the lifecycle's terminal finally does
     # (run-scoped compare-and-reset on the owning box).
-    harness.plugin._sync_service._box.finish_run(run_a_id)
-    assert harness.plugin._sync_service._sync_state == SyncState.IDLE
-    assert harness.plugin._sync_service._current_sync_id is None
+    harness.backend._sync_service._box.finish_run(run_a_id)
+    assert harness.backend._sync_service._sync_state == SyncState.IDLE
+    assert harness.backend._sync_service._current_sync_id is None
 
     # Run B: a fresh run with a distinct id.
     run_b_id = "run-B"
     start_b = await harness.plugin.start_sync()
     assert start_b["success"] is True
-    harness.plugin._sync_service._box.current_sync_id = run_b_id
+    harness.backend._sync_service._box.current_sync_id = run_b_id
 
     # Run A's Cancel click lands now — it must be ignored as stale.
     cancel = await harness.plugin.cancel_sync(run_a_id)
     assert cancel == {"success": True, "message": "Cancel ignored (stale run)"}
-    assert harness.plugin._sync_service._sync_state == SyncState.RUNNING
+    assert harness.backend._sync_service._sync_state == SyncState.RUNNING
 
     # Drive run B to completion. It was never cancelled.
     await orch._do_sync_per_unit()
@@ -93,27 +93,27 @@ async def test_cancel_sync_stale_run_does_not_abort_fresh_run(harness):
     completes = _sync_complete_payloads(harness)
     assert completes, "run B must emit a terminal sync_complete"
     assert "cancelled" not in completes[-1]
-    assert harness.plugin._sync_service._sync_state == SyncState.IDLE
+    assert harness.backend._sync_service._sync_state == SyncState.IDLE
 
 
 async def test_cancel_sync_matching_run_aborts_it(harness):
     """A cancel that matches the active run id flips it to CANCELLING."""
-    harness.plugin._sync_service._box.sync_state = SyncState.RUNNING
-    harness.plugin._sync_service._box.current_sync_id = "run-B"
+    harness.backend._sync_service._box.sync_state = SyncState.RUNNING
+    harness.backend._sync_service._box.current_sync_id = "run-B"
 
     cancel = await harness.plugin.cancel_sync("run-B")
     assert cancel == {"success": True, "message": "Sync cancelling..."}
-    assert harness.plugin._sync_service._sync_state == SyncState.CANCELLING
+    assert harness.backend._sync_service._sync_state == SyncState.CANCELLING
 
 
 async def test_cancel_sync_empty_run_id_cancels_unconditionally(harness):
     """The frontend's no-id-yet fallback (empty string) always cancels."""
-    harness.plugin._sync_service._box.sync_state = SyncState.RUNNING
-    harness.plugin._sync_service._box.current_sync_id = "run-B"
+    harness.backend._sync_service._box.sync_state = SyncState.RUNNING
+    harness.backend._sync_service._box.current_sync_id = "run-B"
 
     cancel = await harness.plugin.cancel_sync("")
     assert cancel == {"success": True, "message": "Sync cancelling..."}
-    assert harness.plugin._sync_service._sync_state == SyncState.CANCELLING
+    assert harness.backend._sync_service._sync_state == SyncState.CANCELLING
 
 
 async def test_apply_rejected_while_run_in_flight_emits_single_complete(harness):
@@ -133,11 +133,11 @@ async def test_apply_rejected_while_run_in_flight_emits_single_complete(harness)
         "platform_name": "N64",
         "platform_slug": "n64",
     }
-    harness.plugin.settings["enabled_platforms"] = {"1": True}
+    harness.backend.settings["enabled_platforms"] = {"1": True}
 
     orch = _orchestrator(harness)
     orch._wait_for_unit_complete = _ack_immediately
-    box = harness.plugin._sync_service._box
+    box = harness.backend._sync_service._box
 
     # A real preview stages a valid pending_delta (and finalizes to IDLE).
     preview = await harness.plugin.sync_preview()
@@ -157,7 +157,7 @@ async def test_apply_rejected_while_run_in_flight_emits_single_complete(harness)
     await orch._do_sync_per_unit()
     completes = _sync_complete_payloads(harness)
     assert len(completes) == 1
-    assert harness.plugin._sync_service._sync_state == SyncState.IDLE
+    assert harness.backend._sync_service._sync_state == SyncState.IDLE
 
 
 async def test_preview_cancel_after_unit_loop_returns_cancelled(harness):
@@ -173,10 +173,10 @@ async def test_preview_cancel_after_unit_loop_returns_cancelled(harness):
         "platform_name": "N64",
         "platform_slug": "n64",
     }
-    harness.plugin.settings["enabled_platforms"] = {"1": True}
+    harness.backend.settings["enabled_platforms"] = {"1": True}
 
     orch = _orchestrator(harness)
-    box = harness.plugin._sync_service._box
+    box = harness.backend._sync_service._box
     orig_fetch = orch._fetch_preview_unit
 
     async def fetch_then_cancel(unit, all_roms, platform_rom_ids, synced_rom_ids, collection_memberships):
@@ -190,4 +190,4 @@ async def test_preview_cancel_after_unit_loop_returns_cancelled(harness):
     result = await harness.plugin.sync_preview()
     assert result == {"success": False, "reason": "cancelled", "message": "Sync cancelled"}
     assert box.pending_delta is None
-    assert harness.plugin._sync_service._sync_state == SyncState.IDLE
+    assert harness.backend._sync_service._sync_state == SyncState.IDLE

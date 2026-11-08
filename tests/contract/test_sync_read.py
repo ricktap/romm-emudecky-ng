@@ -165,7 +165,7 @@ async def test_report_unit_results_signal_shape(harness):
     """The happy path (orchestrator still waiting): record + signal, pin the shape."""
     import asyncio
 
-    box = harness.plugin._sync_service._box
+    box = harness.backend._sync_service._box
     box.current_sync_id = "run-1"
     box.active_unit_id = 1
     box.unit_complete_event = asyncio.Event()
@@ -184,7 +184,7 @@ async def test_report_unit_results_stale_run_ignored(harness):
     the active run's wait event stays unset."""
     import asyncio
 
-    box = harness.plugin._sync_service._box
+    box = harness.backend._sync_service._box
     # Active run B, waiting on its own unit's event.
     box.current_sync_id = "run-B"
     box.active_unit_id = 7
@@ -207,7 +207,7 @@ async def test_report_unit_results_late_ack_binds_orphan(harness):
     End-to-end over the real Plugin/bootstrap: set the timeout state the
     orchestrator leaves behind, call the callable frontend-shaped, then assert
     ``get_app_id_rom_id_map`` resolves the appId to the rom_id."""
-    box = harness.plugin._sync_service._box
+    box = harness.backend._sync_service._box
     # The state a heartbeat timeout leaves: pending_sync staged, event already
     # None (the wait returned), unit flagged abandoned with its ROMs stashed.
     # Run + unit identity survives the abandon window so the late ack validates.
