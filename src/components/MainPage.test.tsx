@@ -774,28 +774,28 @@ describe("MainPage", () => {
 
     it("renders bytes < 1024 as '<n> B'", async () => {
       const c = await renderWithActiveDownload(512, 1024);
-      const remaining = c.querySelector('[data-testid="progress-remaining"]');
+      const remaining = c.querySelector('[data-testid="download-detail"]');
       expect(remaining?.textContent).toContain("512 B");
       expect(remaining?.textContent).toContain("1.0 KB");
     });
 
     it("renders bytes in MB range with 1 decimal", async () => {
       const c = await renderWithActiveDownload(2 * 1024 * 1024, 4 * 1024 * 1024);
-      const remaining = c.querySelector('[data-testid="progress-remaining"]');
+      const remaining = c.querySelector('[data-testid="download-detail"]');
       expect(remaining?.textContent).toContain("2.0 MB");
       expect(remaining?.textContent).toContain("4.0 MB");
     });
 
     it("renders bytes in GB range with 2 decimals", async () => {
       const c = await renderWithActiveDownload(Math.round(1.5 * 1024 * 1024 * 1024), 2 * 1024 * 1024 * 1024);
-      const remaining = c.querySelector('[data-testid="progress-remaining"]');
+      const remaining = c.querySelector('[data-testid="download-detail"]');
       expect(remaining?.textContent).toContain("1.50 GB");
       expect(remaining?.textContent).toContain("2.00 GB");
     });
 
     it("renders only the bytes_downloaded value when total_bytes is 0", async () => {
       const c = await renderWithActiveDownload(700, 0);
-      const remaining = c.querySelector('[data-testid="progress-remaining"]');
+      const remaining = c.querySelector('[data-testid="download-detail"]');
       expect(remaining?.textContent).toBe("700 B");
     });
   });
@@ -1881,7 +1881,7 @@ describe("MainPage", () => {
       expect(titles).toContain("Downloads");
     });
 
-    it("shows '+N more downloading' when more than 2 active downloads", async () => {
+    it("shows '+N more in queue' when more than 2 unfinished downloads", async () => {
       setDownloads([
         {
           rom_id: 1,
@@ -1918,7 +1918,7 @@ describe("MainPage", () => {
         },
       ]);
       const container = await renderAndTick();
-      expect(container.textContent).toContain("+1 more downloading");
+      expect(container.textContent).toContain("+1 more in queue");
     });
 
     it("shows 'N completed' count for finished items", async () => {
@@ -1969,6 +1969,58 @@ describe("MainPage", () => {
       expect(progress?.textContent).toBe("25");
       const indet = container.querySelector('[data-testid="progress-indeterminate"]');
       expect(indet?.textContent).toBe("false");
+    });
+
+    it("renders the name and the detail in separate full-width caption slots", async () => {
+      setDownloads([
+        {
+          rom_id: 1,
+          rom_name: "Catherine: Full Body",
+          platform_name: "Nintendo Switch",
+          file_name: "c.xci",
+          status: "downloading",
+          progress: 0,
+          bytes_downloaded: 0,
+          total_bytes: 1024,
+          resumable: true,
+        },
+      ]);
+      const container = await renderAndTick();
+      expect(container.querySelector('[data-testid="download-name"]')?.textContent).toBe("Catherine: Full Body");
+      expect(container.querySelector('[data-testid="download-detail"]')?.textContent).toBe("0 B / 1.0 KB");
+    });
+
+    it("lists paused and interrupted downloads with their status", async () => {
+      setDownloads([
+        {
+          rom_id: 1,
+          rom_name: "Paused Game",
+          platform_name: "X",
+          file_name: "p",
+          status: "paused",
+          progress: 0,
+          bytes_downloaded: 512,
+          total_bytes: 1024,
+          resumable: true,
+        },
+        {
+          rom_id: 2,
+          rom_name: "Dropped Game",
+          platform_name: "X",
+          file_name: "d",
+          status: "interrupted",
+          reason: "server_unreachable",
+          progress: 0,
+          bytes_downloaded: 256,
+          total_bytes: 1024,
+          resumable: true,
+        },
+      ]);
+      const container = await renderAndTick();
+      const details = Array.from(container.querySelectorAll('[data-testid="download-detail"]')).map(
+        (n) => n.textContent,
+      );
+      expect(details).toEqual(["Paused · 512 B / 1.0 KB", "Interrupted — server unreachable"]);
     });
 
     it("active item with total_bytes === 0 renders indeterminate=true", async () => {

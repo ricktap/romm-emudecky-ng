@@ -5,7 +5,6 @@ import {
   ButtonItem,
   Field,
   ProgressBar,
-  ProgressBarWithInfo,
   ToggleField,
   Spinner,
   DialogButton,
@@ -33,6 +32,7 @@ import { formatBytes } from "../utils/formatters";
 import { getSyncProgress, setSyncProgress as setStoredSyncProgress, onSyncProgressChange } from "../utils/syncProgress";
 import { scrollToTop } from "../utils/scrollHelpers";
 import { getDownloadState } from "../utils/downloadStore";
+import { isUnfinishedStatus, interruptedLabel } from "../utils/downloadStatus";
 import { getMigrationState, onMigrationChange, setMigrationStatus } from "../utils/migrationStore";
 import { getSettingsResetState, onSettingsResetChange } from "../utils/settingsResetStore";
 import { getPlaytimeScopeState, onPlaytimeScopeChange, fetchPlaytimeScopeState } from "../utils/playtimeScopeStore";
@@ -194,6 +194,26 @@ function formatPreviewDescription(s: SyncPreviewSummary): string {
     if (collChanges) sections.push(`Collections: ${collChanges}`);
   }
   return sections.length > 0 ? sections.join("; ") : "Everything is up to date.";
+}
+
+/** Right-hand caption for a QAM download row: transfer size, or the status when not transferring. */
+function downloadDetail(item: DownloadItem): string {
+  const size =
+    item.total_bytes > 0
+      ? `${formatBytes(item.bytes_downloaded)} / ${formatBytes(item.total_bytes)}`
+      : formatBytes(item.bytes_downloaded);
+  switch (item.status) {
+    case "queued":
+      return "Queued";
+    case "extracting":
+      return "Extracting";
+    case "paused":
+      return `Paused · ${size}`;
+    case "interrupted":
+      return interruptedLabel(item.reason);
+    default:
+      return size;
+  }
 }
 
 export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
@@ -512,7 +532,7 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
     : undefined;
   const hasFineDetail = !!(syncProgress?.total && syncProgress.message);
 
-  const activeDownloads = downloads.filter((d) => d.status === "queued" || d.status === "downloading");
+  const activeDownloads = downloads.filter((d) => isUnfinishedStatus(d.status));
   const completedDownloads = downloads.filter(
     (d) => d.status === "completed" || d.status === "failed" || d.status === "cancelled",
   );
@@ -817,21 +837,39 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
         <PanelSection title="Downloads">
           {activeDownloads.slice(0, 2).map((item) => (
             <PanelSectionRow key={item.rom_id}>
-              <ProgressBarWithInfo
-                {...(item.total_bytes > 0 ? { nProgress: (item.bytes_downloaded / item.total_bytes) * 100 } : {})}
-                indeterminate={item.total_bytes === 0}
-                sOperationText={item.rom_name}
-                sTimeRemaining={
-                  item.total_bytes > 0
-                    ? `${formatBytes(item.bytes_downloaded)} / ${formatBytes(item.total_bytes)}`
-                    : formatBytes(item.bytes_downloaded)
-                }
-              />
+              {/* Own the caption row and use the bare ProgressBar — ProgressBarWithInfo
+                  is a Steam Field (label column | bar column) that shoves the bar and
+                  text into the right half and clips them (same fix as #751). */}
+              <div style={{ width: "100%" }} data-testid="download-row">
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: "8px",
+                    fontSize: "12px",
+                    marginBottom: "4px",
+                  }}
+                >
+                  <span
+                    data-testid="download-name"
+                    style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  >
+                    {item.rom_name}
+                  </span>
+                  <span data-testid="download-detail" style={{ flexShrink: 0 }}>
+                    {downloadDetail(item)}
+                  </span>
+                </div>
+                <ProgressBar
+                  indeterminate={item.total_bytes === 0 || item.status === "extracting"}
+                  {...(item.total_bytes > 0 ? { nProgress: (item.bytes_downloaded / item.total_bytes) * 100 } : {})}
+                />
+              </div>
             </PanelSectionRow>
           ))}
           {activeDownloads.length > 2 && (
             <PanelSectionRow>
-              <Field label={`+${activeDownloads.length - 2} more downloading`} />
+              <Field label={`+${activeDownloads.length - 2} more in queue`} />
             </PanelSectionRow>
           )}
           {completedDownloads.length > 0 && (
