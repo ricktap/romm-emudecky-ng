@@ -22,3 +22,8 @@ pub mod sync_diff;
 pub mod shortcut_data;
 pub mod steam_input;
 pub mod sgdb_artwork;
+
+pub mod iso_time;
+pub mod playtime;
+pub mod self_update;
+pub mod version_picker;

@@ -426,3 +426,65 @@ pub trait SteamGridApi: Send + Sync {
     /// Image requests are unauthenticated, even on a different CDN origin.
     async fn download_image(&self, url: &str, dest: &str) -> anyhow::Result<()>;
 }
+
+/// The version picker snapshots all local siblings before any HTTP request.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VersionGroup {
+    pub bound: Value,
+    pub members: Vec<Value>,
+}
+#[async_trait]
+pub trait VersionRepo: Send + Sync {
+    async fn group(&self, app_id: i64) -> anyhow::Result<Option<VersionGroup>>;
+    async fn member(&self, rom_id: i64) -> anyhow::Result<Option<Value>>;
+    /// Conditional, narrow binding move; a server-only row is inserted, never replaced.
+    async fn bind_version(&self, expected: &VersionGroup, target: i64, server: Option<Value>, now: &str) -> anyhow::Result<Value>;
+}
+
+/// Step 5 supplies standalone save providers here. No guessed save paths.
+#[async_trait]
+pub trait SaveSafety: Send + Sync {
+    async fn status(&self, rom_id: i64) -> anyhow::Result<Value>;
+    async fn tracked(&self, rom_id: i64) -> anyhow::Result<bool>;
+    async fn drift(&self, rom_id: i64) -> anyhow::Result<bool>;
+    async fn core_change(&self, rom_id: i64) -> anyhow::Result<Value>;
+    async fn post_exit(&self, rom_id: i64) -> anyhow::Result<Value>;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ReleaseError {
+    #[error("GitHub rate limit reached")] RateLimited,
+    #[error("GitHub returned an unreadable response")] BadResponse,
+    #[error("Could not reach GitHub")] Unreachable,
+}
+#[async_trait]
+pub trait ReleaseFeed: Send + Sync {
+    async fn latest(&self) -> Result<Value, ReleaseError>;
+}
+#[async_trait]
+pub trait PluginMetadata: Send + Sync {
+    async fn metadata(&self) -> anyhow::Result<(String,String)>;
+}
+
+pub use crate::domain::playtime::{Playtime, PendingSession};
+#[derive(Debug, thiserror::Error)]
+pub enum PlaytimeApiError {
+    #[error("RomM play-session request failed")] Romm(#[from] RommError),
+    #[error("RomM rejected the play-session batch")] Rejected(Value),
+}
+#[async_trait]
+pub trait RommPlaytimeApi: Send + Sync {
+    async fn ingest(&self, device: &str, sessions: Vec<Value>) -> Result<Value, PlaytimeApiError>;
+    async fn sessions(&self, rom_id: i64) -> Result<Vec<Value>, RommError>;
+}
+#[async_trait]
+pub trait PlaytimeRepo: Send + Sync {
+    async fn begin(&self, rom_id: i64, now: &str, monotonic: f64) -> anyhow::Result<bool>;
+    async fn finish(&self, rom_id: i64, now: &str, monotonic: f64) -> anyhow::Result<Value>;
+    async fn get(&self, rom_id: i64) -> anyhow::Result<Option<Playtime>>;
+    async fn all(&self) -> anyhow::Result<Value>;
+    async fn pending(&self, limit: usize) -> anyhow::Result<Vec<PendingSession>>;
+    /// Outcomes only touch byte-identical submitted rows; concurrent recording survives.
+    async fn apply_outcomes(&self, outcomes: Vec<(PendingSession, bool)>) -> anyhow::Result<()>;
+    async fn reconcile(&self, rom_id: i64, sessions: Vec<Value>) -> anyhow::Result<Playtime>;
+}

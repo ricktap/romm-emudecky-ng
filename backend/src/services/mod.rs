@@ -24,3 +24,12 @@ pub mod steamgrid;
 
 #[cfg(test)]
 mod game_artwork_tests;
+
+pub mod versions;
+pub mod playtime;
+pub mod update;
+pub mod launch_gate;
+pub mod game_actions;
+
+#[cfg(test)]
+mod lifecycle_tests;

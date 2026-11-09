@@ -12,3 +12,8 @@ pub mod sync_library;
 pub mod steam_assets;
 pub mod game_reads;
 pub mod steamgrid;
+
+pub mod versions;
+pub mod playtime;
+pub mod releases;
+pub mod switch_save_safety;

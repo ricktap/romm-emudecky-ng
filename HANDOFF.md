@@ -7,7 +7,7 @@ then `EMUDECK_PORT_PLAN.md` (roadmap + decisions). Where this file and the code 
 
 A Decky Loader plugin (repo `ricktap/romm-emudecky-ng`, owner Patrick) that syncs a self-hosted RomM library onto
 **EmuDeck** machines (Steam Deck + two Bazzite PCs) as Steam shortcuts: install/uninstall, launch via emulators, save
-sync, firmware. **Switch only until v0.75** (Eden / Ryujinx / yuzu); other systems return by v0.90; Decky store at v1.0.0.
+sync, firmware. **Switch only until v0.70** (Eden / Ryujinx / yuzu); retro systems return in v0.80, modern consoles in v0.90; Decky store at v1.0.0.
 Fork chain: `danielcopper/decky-romm-sync` (RetroDECK) → `melikootje/Romm-emudecky` → this repo. `#NNN` refs inside old
 code/docs/ADRs are **upstream** issues.
 
@@ -32,8 +32,8 @@ Rewrite steps (GitHub milestone **0.40.0**, issues #8–#14; the Python code + i
 | 3a #11 part 1: removals (`REMOVED_TILL_0_90_0.md`) | merged into `rust` (PR #21); CI and the release dry-run are green |
 | 3a part 2: port library sync, shortcuts, collections | merged into `rust` (PR #22); CI green |
 | 3b part 1: emulator/launch-file choices and relaunch reconciliation | merged into `rust` (PR #23); CI and release dry run green |
-| 3b part 2: game page, metadata, cover refresh and SteamGridDB | [PR #24](https://github.com/ricktap/romm-emudecky-ng/pull/24) into `rust`; see PR state/checks for integration status |
-| 3b remainder: version choice, launch checks, removal, playtime, … | not started |
+| 3b part 2: game page, metadata, cover refresh and SteamGridDB | merged into `rust` (PR #24); CI and release dry run green |
+| 3b remainder: version choice, launch checks, removal, playtime, updates and Steam Input | implemented in [PR #25](https://github.com/ricktap/romm-emudecky-ng/pull/25) into `rust`; see PR checks for integration status |
 | 4 #12 firmware, 5 #13 save sync, 6 #14 delete Python | not started |
 
 After PR #22: Rust 365 tests / 96.90% lines, Python 5275, frontend 1530 (fewer because removed features' tests went).
@@ -100,8 +100,35 @@ Step-3b part-2 implementation in [PR #24](https://github.com/ricktap/romm-emudec
   simultaneous cover writers, binding changes and safe startup pruning.
 - Local validation: Rust **399 tests / 97.05% line coverage** (`--fail-under-lines 80`), Python **5275 passed**
   (the two pre-existing unawaited-download-coroutine warnings), frontend **1530 passed**, pinned pnpm build passed.
-  GitHub CI and a release dry run are required before merge; see PR checks for current results.
+  PR #24 merged into `rust` with green CI and [release dry run](https://github.com/ricktap/romm-emudecky-ng/actions/runs/42689842733).
 - No shipping version bump or tag; issue #11 still includes the remaining step-3b scope.
+
+Step-3b remainder in [PR #25](https://github.com/ricktap/romm-emudecky-ng/pull/25) (final part of #11):
+
+- Ported all 14 remaining callables: version list/switch, launch gate, local drift/core-change checks, individual/bulk
+  uninstall, Steam Input application, self-update checks, and all five playtime/session callables.
+- Version switching conditionally moves only the shortcut binding, preserves per-version installs, pins, saves and
+  history, rejects stale snapshots and canonical metadata conflicts, and shares the existing launch resolver.
+  Download admission, switching and uninstall share a mutation lock; running downloads block destructive uninstall.
+  Bulk uninstall reports partial failures and returns app IDs so the frontend clears launch options; failed installs
+  stay retryable. Shared system folders and shortcut identities survive.
+- Playtime uses the existing SQLite schema. Session folding and outbox enqueue are atomic, offline recording survives
+  restart, and boot-relative CLOCK_MONOTONIC matches Python's persisted suspend-aware markers. Native session POSTs
+  are not retried by HTTP: the outbox groups by recorded device, limits each flush to 100 rows, correlates results by
+  index, isolates malformed 422 batches, bounds acknowledged errors to five attempts, and protects newer rows from
+  stale acknowledgements. Reconciliation never lowers totals/counts and persists/clears the missing-scope notice.
+- GitHub update checks retain trusted asset/hash validation, six-hour success/fifteen-minute failure caching, forced
+  checks and background startup/shutdown. The feed uses a separate unauthenticated strict-TLS client.
+- Save-safety is an injected boundary for step 5. Production Switch save discovery is explicitly unsupported until the
+  ADR/provider exists: no guessed paths or save writes. Launch checks warn after a failed status read when tracked
+  saves exist; standalone emulators have no libretro core change. Local drift remains false until the provider can
+  enumerate files. Post-exit unsupported sync is a benign skip, and removed migration/achievement work is not revived.
+- Validation includes real SQLite/files, fake HTTP and real binary/socket calls, restart persistence, rejected/out-of-order
+  acknowledgements, save warnings, updater trust/caching, Steam Input backups, uninstall partial failure and paused
+  download cleanup. All 81 step-1–3 callables are ported; the remaining 25 belong to firmware and save sync (steps 4–5).
+- Local validation: Rust **431 tests / 97.12% line coverage** (`--fail-under-lines 80`), Python **5275 passed**
+  (the two known unawaited-download-coroutine warnings), frontend **1530 passed**, pinned pnpm production build passed.
+- No shipping version bump or release tag. The `rust` → `main` swap and milestone release still need Patrick's approval.
 
 ## How the rewrite works
 
@@ -126,10 +153,6 @@ Step-3b part-2 implementation in [PR #24](https://github.com/ricktap/romm-emudec
 
 ### Remaining scope
 
-- **3b remainder** — version choice (`get_version_list`, `switch_version`), core/save compatibility (`check_core_change`), launch checks (`evaluate_launch`,
-  `check_local_drift`), `remove_rom`, `uninstall_all_roms`, `check_for_update`, playtime (`record_session_start`,
-  `finalize_game_session`, `get_all_playtime`, `get_playtime_scope_notice`, `reconcile_playtime`), `apply_steam_input_setting`.
-  Run the same feature review as 3a before porting; anything dropped goes into `REMOVED_TILL_0_90_0.md`.
 - **4** firmware/keys for Switch (Phase 7 in the plan), **5** Switch save sync (Phase 6 — needs an ADR first: title IDs,
   Ryujinx index layout, folder-shaped saves), then **6**.
 - **Feature phases not yet built** (build them in Rust, after step 3): Phase 3 internal/external RomM URL with the token bound

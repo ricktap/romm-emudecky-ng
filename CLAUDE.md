@@ -8,7 +8,7 @@ a thin Decky shim (`main.py`), React/TypeScript frontend (`src/`). The backend i
 - **Start with [`HANDOFF.md`](HANDOFF.md)** — current state, the Rust-rewrite workflow and remaining steps, working
   agreements with Patrick, and gotchas.
 - **Roadmap and decisions:** [`EMUDECK_PORT_PLAN.md`](EMUDECK_PORT_PLAN.md) — read it before starting work.
-- `REMOVED_TILL_0_90_0.md` lists features deliberately dropped during the rewrite (Switch-only until v0.75).
+- `REMOVED_TILL_0_90_0.md` lists features deliberately dropped during the rewrite (Switch-only until v0.70).
 - **Fork of** `danielcopper/decky-romm-sync` (RetroDECK). `#NNN` refs in code/docs/ADRs are **upstream** issues.
   RetroDECK support is dropped; leftover RetroDECK names (e.g. `RetroDeckPaths`) are naming debt, not targets.
 - `docs/` is upstream reference material — useful, but not authoritative over the plan or the code.

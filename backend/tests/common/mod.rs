@@ -72,6 +72,7 @@ impl Dirs {
             .env("DECKY_USER_HOME", self.root.path().join("home"))
             .env("DECKY_PLUGIN_LOG_DIR", self.root.path().join("logs"))
             .env("ROMM_BACKEND_RETRY_BASE_MS", "1")
+            .env("ROMM_BACKEND_DISABLE_UPDATE_CHECK", "1")
             .stdin(Stdio::null())
             .kill_on_drop(true);
         cmd

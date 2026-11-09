@@ -187,3 +187,18 @@ impl crate::services::ports::RommCoverApi for RommApi {
         self.http.download(url,dest,false,TransferHooks{progress:Box::new(|_,_|{}),on_meta:None,cancel:tokio_util::sync::CancellationToken::new()}).await
     }
 }
+
+#[async_trait]
+impl crate::services::ports::RommPlaytimeApi for RommApi {
+    async fn ingest(&self,device:&str,sessions:Vec<Value>)->Result<Value,crate::services::ports::PlaytimeApiError>{
+        self.http.post_json_once("/api/play-sessions",&json!({"device_id":device,"sessions":sessions})).await
+    }
+    async fn sessions(&self,id:i64)->Result<Vec<Value>,RommError>{
+        let mut result=vec![];
+        for page in 0..50{
+            let response=self.http.get_json(&format!("/api/play-sessions?rom_id={id}&limit=100&offset={}",page*100)).await?;
+            let rows=response.as_array().or_else(||response["items"].as_array());
+            let Some(rows)=rows else{break;};result.extend(rows.iter().cloned());if rows.len()<100{break;}
+        }Ok(result)
+    }
+}
