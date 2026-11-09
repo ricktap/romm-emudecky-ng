@@ -9,15 +9,24 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use reqwest::header::HeaderMap;
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
 use serde_json::{Map, Value};
+use tokio::io::AsyncWriteExt;
 
+use crate::domain::download_failure::TransferCancelled;
 use crate::domain::errors::RommError;
 use crate::domain::url_host::same_origin;
-use crate::services::ports::SettingsStore;
+use crate::services::ports::{SettingsStore, TransferHooks};
+use crate::util::path_safety::quote;
 
 /// Per-request timeout of the normal API calls.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long a download waits for the response headers.
+pub const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a download waits for the next body chunk before it counts as stalled.
+pub const DOWNLOAD_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Called before each retry sleep with `(attempt about to run, max attempts, delay seconds)`.
 pub type RetryListener = Arc<dyn Fn(u32, u32, f64) + Send + Sync>;
@@ -193,6 +202,222 @@ impl RommHttp {
     }
 }
 
+impl RommHttp {
+    /// Stream `path` into the file `dest`, retried on transient failures.
+    ///
+    /// With `resume` and a partial already in `dest`, the request carries
+    /// `Range: bytes=<size>-` and the live response decides: a `206` whose
+    /// `Content-Range` starts at the partial's size appends; any other answer
+    /// (a `200` because the server or a Cloudflare edge ignored the Range, or
+    /// a `206` at the wrong offset) restarts from byte 0. `on_meta` fires once,
+    /// when the first response's headers arrive, with whether the transfer is
+    /// resumable. The written length is checked against the full size: a short
+    /// stream or an overshoot fails as `Download incomplete`, an empty unsized
+    /// body as `Download produced 0 bytes`. Local write failures keep their
+    /// `io::Error` (so a full disk is recognisable) under a `Connection` error.
+    /// A cancelled `hooks.cancel` stops the transfer with [`TransferCancelled`],
+    /// keeping the bytes already written.
+    pub async fn download(&self, path: &str, dest: &str, resume: bool, hooks: TransferHooks) -> anyhow::Result<()> {
+        let url = self.url(&quote(path, "/:?=&@"));
+        if let Some(parent) = std::path::Path::new(dest).parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| local_io(e, "creating the download directory"))?;
+        }
+        let TransferHooks {
+            mut progress,
+            mut on_meta,
+            cancel,
+        } = hooks;
+        let max = self.retry.max_attempts.max(1);
+        let mut attempt = 0;
+        loop {
+            let result = self
+                .download_once(&url, dest, resume, &mut *progress, &mut on_meta, &cancel)
+                .await;
+            let err = match result {
+                Ok(()) => return Ok(()),
+                Err(e) => e,
+            };
+            let retryable = err.downcast_ref::<RommError>().is_some_and(RommError::is_retryable);
+            if attempt + 1 >= max || !retryable || cancel.is_cancelled() {
+                return Err(err);
+            }
+            let delay = self.retry.base_delay * 3u32.pow(attempt);
+            tracing::info!("Retry {}/{max} after {:?}: {err}", attempt + 1, delay);
+            if let Some(listener) = &self.on_retry {
+                listener(attempt + 2, max, delay.as_secs_f64());
+            }
+            tokio::select! {
+                _ = cancel.cancelled() => return Err(TransferCancelled.into()),
+                _ = tokio::time::sleep(delay) => {}
+            }
+            attempt += 1;
+        }
+    }
+
+    async fn download_once(
+        &self,
+        url: &str,
+        dest: &str,
+        resume: bool,
+        progress: &mut (dyn FnMut(u64, u64) + Send),
+        on_meta: &mut Option<Box<dyn FnOnce(bool) + Send>>,
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> anyhow::Result<()> {
+        if cancel.is_cancelled() {
+            return Err(TransferCancelled.into());
+        }
+        let existing = if resume {
+            tokio::fs::metadata(dest).await.map_or(0, |m| m.len())
+        } else {
+            0
+        };
+        let mut req = self.client().get(url).header(reqwest::header::USER_AGENT, &self.user_agent);
+        if let Some(header) = self.auth_header()? {
+            req = req.header(reqwest::header::AUTHORIZATION, header);
+        }
+        if existing > 0 {
+            req = req.header(reqwest::header::RANGE, format!("bytes={existing}-"));
+        }
+        let sent = tokio::select! {
+            _ = cancel.cancelled() => return Err(TransferCancelled.into()),
+            r = tokio::time::timeout(DOWNLOAD_CONNECT_TIMEOUT, req.send()) => r,
+        };
+        let mut resp = match sent {
+            Err(_) => return Err(RommError::Timeout(format!("timed out connecting to {url}")).into()),
+            Ok(Err(e)) => return Err(translate_transport(&e, url).into()),
+            Ok(Ok(resp)) => resp,
+        };
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(translate_status(status, url, "GET", None).into());
+        }
+        if let Some(meta) = on_meta.take() {
+            meta(range_supported(status, resp.headers()));
+        }
+        let (append, mut downloaded, total) = resume_branch(status, resp.headers(), existing);
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(append)
+            .truncate(!append)
+            .open(dest)
+            .await
+            .map_err(|e| local_io(e, "opening the download file"))?;
+        let streamed: anyhow::Result<()> = async {
+            loop {
+                let chunk = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Err(TransferCancelled.into()),
+                    c = tokio::time::timeout(DOWNLOAD_READ_TIMEOUT, resp.chunk()) => c,
+                };
+                let bytes = match chunk {
+                    Err(_) => {
+                        return Err(RommError::Timeout(
+                            "Download stalled: no data received within read timeout".into(),
+                        )
+                        .into());
+                    }
+                    Ok(Err(e)) => return Err(translate_transport(&e, url).into()),
+                    Ok(Ok(None)) => return Ok(()),
+                    Ok(Ok(Some(bytes))) => bytes,
+                };
+                file.write_all(&bytes)
+                    .await
+                    .map_err(|e| local_io(e, "writing the download file"))?;
+                downloaded += bytes.len() as u64;
+                if total > 0 {
+                    progress(downloaded, total);
+                }
+            }
+        }
+        .await;
+        // Whatever happened, the bytes written so far stay on disk for a resume.
+        let flushed = file.flush().await;
+        streamed?;
+        flushed.map_err(|e| local_io(e, "writing the download file"))?;
+        validate_download(total, downloaded)
+    }
+}
+
+/// A local filesystem failure during a transfer: a `Connection` error that
+/// keeps the `io::Error` in its cause chain.
+fn local_io(err: std::io::Error, what: &str) -> anyhow::Error {
+    let message = format!("{what}: {err}");
+    anyhow::Error::new(err).context(RommError::Connection(message))
+}
+
+fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|v| v.to_str().ok())
+}
+
+/// The response came through a Cloudflare edge (which discards `Range`).
+pub fn is_cloudflare(headers: &HeaderMap) -> bool {
+    header(headers, "cf-ray").is_some_and(|v| !v.is_empty())
+        || header(headers, "server").is_some_and(|v| v.to_lowercase().contains("cloudflare"))
+}
+
+/// Whether the response proves the transfer can be resumed: a `206`, or
+/// `Accept-Ranges: bytes`, unless a Cloudflare edge served it.
+pub fn range_supported(status: StatusCode, headers: &HeaderMap) -> bool {
+    let ranged = status == StatusCode::PARTIAL_CONTENT
+        || header(headers, "accept-ranges").is_some_and(|v| v.eq_ignore_ascii_case("bytes"));
+    ranged && !is_cloudflare(headers)
+}
+
+/// `Content-Range: bytes start-end/total` → `(start, total)`; `None` when
+/// missing, malformed, or the total is unknown (`*`).
+pub fn parse_content_range(value: Option<&str>) -> Option<(u64, u64)> {
+    let (unit, spec) = value?.trim().split_once(' ')?;
+    if !unit.eq_ignore_ascii_case("bytes") {
+        return None;
+    }
+    let (range, total) = spec.split_once('/').unwrap_or((spec, ""));
+    if total == "*" {
+        return None;
+    }
+    let start = range.split('-').next()?.trim().parse().ok()?;
+    Some((start, total.trim().parse().ok()?))
+}
+
+/// `(append, bytes already on disk to count, full size)` from the live
+/// response. Only a `206` starting exactly at the partial's size appends; a
+/// `206` at another offset restarts but validates against the full size; any
+/// other status restarts against `Content-Length`.
+pub fn resume_branch(status: StatusCode, headers: &HeaderMap, existing: u64) -> (bool, u64, u64) {
+    if status == StatusCode::PARTIAL_CONTENT
+        && let Some((start, total)) = parse_content_range(header(headers, "content-range"))
+    {
+        if start == existing && existing > 0 {
+            return (true, existing, total);
+        }
+        return (false, 0, total);
+    }
+    let length = header(headers, "content-length")
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0);
+    (false, 0, length)
+}
+
+/// Fail a transfer whose length does not match its declared size, or that
+/// produced nothing without declaring one.
+pub fn validate_download(total: u64, downloaded: u64) -> anyhow::Result<()> {
+    if total > 0 && downloaded != total {
+        return Err(RommError::Connection(format!(
+            "Download incomplete: got {downloaded} bytes, expected {total}"
+        ))
+        .into());
+    }
+    if total == 0 && downloaded == 0 {
+        return Err(RommError::Connection(
+            "Download produced 0 bytes (no Content-Length header and no data received)".into(),
+        )
+        .into());
+    }
+    Ok(())
+}
+
 async fn send(req: RequestBuilder, url: &str, method: &str) -> Result<Response, RommError> {
     let resp = req.send().await.map_err(|e| translate_transport(&e, url))?;
     let status = resp.status();
@@ -259,3 +484,7 @@ pub fn translate_transport(err: &reqwest::Error, url: &str) -> RommError {
 #[cfg(test)]
 #[path = "http_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "download_tests.rs"]
+mod download_tests;

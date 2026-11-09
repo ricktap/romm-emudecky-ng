@@ -225,3 +225,495 @@ impl RommConnectionApi for FakeRomm {
         self.exchange.lock().unwrap().clone()
     }
 }
+
+// ── Downloads / adoption / launch fakes ───────────────────────────────────
+
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::sync::Notify;
+
+use crate::adapters::db::Db;
+use crate::adapters::download_files::LocalFiles;
+use crate::adapters::repositories::{SqliteDownloadJobs, SqliteLibrary};
+use crate::domain::download_failure::TransferCancelled;
+use crate::services::adoption::{InstallAdoptionService, InstallAdoptionServiceConfig};
+use crate::services::downloads::{DownloadService, DownloadServiceConfig};
+use crate::services::launch::{LaunchService, LaunchServiceConfig};
+use crate::services::ports::{
+    Clock, DownloadFiles, EmuDeckPaths, EmulatorLocator, EventSink, ExtractProgress, RommRomApi, SystemResolver,
+    TransferHooks,
+};
+use crate::services::rom_removal::{RomRemovalService, RomRemovalServiceConfig};
+
+/// Records every emitted event.
+#[derive(Default)]
+pub struct RecordingEvents(pub Mutex<Vec<(String, Value)>>);
+
+impl EventSink for RecordingEvents {
+    fn emit(&self, event: &str, payload: Value) {
+        self.0.lock().unwrap().push((event.to_string(), payload));
+    }
+}
+
+impl RecordingEvents {
+    pub fn named(&self, event: &str) -> Vec<Value> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(e, _)| e == event)
+            .map(|(_, v)| v.clone())
+            .collect()
+    }
+    pub fn statuses(&self, rom_id: i64) -> Vec<String> {
+        self.named("download_progress")
+            .iter()
+            .filter(|v| v["rom_id"] == rom_id)
+            .map(|v| v["status"].as_str().unwrap().to_string())
+            .collect()
+    }
+}
+
+/// Fixed wall clock; a monotonic clock that advances by `step` per read.
+pub struct FakeClock {
+    pub mono: Mutex<f64>,
+    pub step: f64,
+}
+
+impl Default for FakeClock {
+    fn default() -> Self {
+        Self {
+            mono: Mutex::new(0.0),
+            step: 1.0,
+        }
+    }
+}
+
+impl Clock for FakeClock {
+    fn now_iso(&self) -> String {
+        "2026-01-01T00:00:00+00:00".into()
+    }
+    fn monotonic(&self) -> f64 {
+        let mut m = self.mono.lock().unwrap();
+        *m += self.step;
+        *m
+    }
+}
+
+/// One recorded transfer call.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransferCall {
+    pub rom_id: i64,
+    pub file_name: String,
+    pub dest: String,
+    pub resume: bool,
+    pub offset: u64,
+}
+
+/// Scriptable RomM: ROM payloads per id, and transfers that write
+/// `content[rom_id]` honouring resume (append from the partial's size).
+/// With `stall_at`, a transfer writes that many bytes and then waits for
+/// `release` (or its cancel token).
+#[derive(Default)]
+pub struct FakeRomRomm {
+    pub roms: Mutex<HashMap<i64, Result<Value, RommError>>>,
+    pub content: Mutex<HashMap<i64, Vec<u8>>>,
+    pub transfer_error: Mutex<Option<Arc<dyn Fn() -> anyhow::Error + Send + Sync>>>,
+    pub range_supported: Mutex<bool>,
+    pub stall_at: Mutex<Option<u64>>,
+    pub stalled: Notify,
+    pub release: Notify,
+    pub calls: Mutex<Vec<TransferCall>>,
+    pub get_rom_calls: Mutex<Vec<i64>>,
+}
+
+impl FakeRomRomm {
+    pub fn set_rom(&self, rom: Value) {
+        let id = rom["id"].as_i64().unwrap();
+        self.roms.lock().unwrap().insert(id, Ok(rom));
+    }
+    pub fn fail_rom(&self, id: i64, err: RommError) {
+        self.roms.lock().unwrap().insert(id, Err(err));
+    }
+    pub fn set_content(&self, id: i64, bytes: Vec<u8>) {
+        self.content.lock().unwrap().insert(id, bytes);
+    }
+    pub fn fail_transfers(&self, f: impl Fn() -> anyhow::Error + Send + Sync + 'static) {
+        *self.transfer_error.lock().unwrap() = Some(Arc::new(f));
+    }
+    pub fn calls(&self) -> Vec<TransferCall> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl RommRomApi for FakeRomRomm {
+    async fn get_rom(&self, rom_id: i64) -> Result<Value, RommError> {
+        self.get_rom_calls.lock().unwrap().push(rom_id);
+        self.roms.lock().unwrap().get(&rom_id).cloned().unwrap_or_else(|| {
+            Err(RommError::NotFound {
+                message: "HTTP 404".into(),
+                detail: None,
+            })
+        })
+    }
+
+    async fn download_rom_content(
+        &self,
+        rom_id: i64,
+        file_name: &str,
+        dest: &str,
+        resume: bool,
+        mut hooks: TransferHooks,
+    ) -> anyhow::Result<()> {
+        let offset = if resume {
+            std::fs::metadata(dest).map_or(0, |m| m.len())
+        } else {
+            0
+        };
+        self.calls.lock().unwrap().push(TransferCall {
+            rom_id,
+            file_name: file_name.into(),
+            dest: dest.into(),
+            resume,
+            offset,
+        });
+        if let Some(f) = self.transfer_error.lock().unwrap().clone() {
+            return Err(f());
+        }
+        if let Some(meta) = hooks.on_meta.take() {
+            meta(*self.range_supported.lock().unwrap());
+        }
+        let body = self.content.lock().unwrap().get(&rom_id).cloned().unwrap_or_default();
+        let total = body.len() as u64;
+        if let Some(parent) = std::path::Path::new(dest).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut written = if offset > 0 { offset } else { 0 };
+        if offset == 0 {
+            std::fs::write(dest, b"")?;
+        }
+        let stall = *self.stall_at.lock().unwrap();
+        if let Some(stall) = stall.filter(|s| *s > written) {
+            let mut f = std::fs::OpenOptions::new().append(true).open(dest)?;
+            std::io::Write::write_all(&mut f, &body[written as usize..stall as usize])?;
+            written = stall;
+            (hooks.progress)(written, total);
+            self.stalled.notify_one();
+            tokio::select! {
+                () = hooks.cancel.cancelled() => return Err(TransferCancelled.into()),
+                () = self.release.notified() => {}
+            }
+        }
+        if hooks.cancel.is_cancelled() {
+            return Err(TransferCancelled.into());
+        }
+        let mut f = std::fs::OpenOptions::new().append(true).open(dest)?;
+        std::io::Write::write_all(&mut f, &body[written as usize..])?;
+        (hooks.progress)(total, total);
+        Ok(())
+    }
+}
+
+/// The real filesystem with an overridable free-space answer.
+#[derive(Default)]
+pub struct FakeFiles {
+    pub inner: LocalFiles,
+    pub free: Mutex<Option<u64>>,
+}
+
+#[async_trait]
+impl DownloadFiles for FakeFiles {
+    async fn exists(&self, path: &str) -> bool {
+        self.inner.exists(path).await
+    }
+    async fn remove_file(&self, path: &str) -> std::io::Result<()> {
+        self.inner.remove_file(path).await
+    }
+    async fn remove_tree(&self, path: &str) -> std::io::Result<()> {
+        self.inner.remove_tree(path).await
+    }
+    async fn make_dirs(&self, path: &str) -> std::io::Result<()> {
+        self.inner.make_dirs(path).await
+    }
+    async fn rename(&self, src: &str, dst: &str) -> std::io::Result<()> {
+        self.inner.rename(src, dst).await
+    }
+    async fn disk_free(&self, path: &str) -> std::io::Result<u64> {
+        let free = *self.free.lock().unwrap();
+        match free {
+            Some(free) => Ok(free),
+            None => self.inner.disk_free(path).await,
+        }
+    }
+    async fn file_size(&self, path: &str) -> u64 {
+        self.inner.file_size(path).await
+    }
+    async fn regular_file_size(&self, path: &str) -> Option<u64> {
+        self.inner.regular_file_size(path).await
+    }
+    async fn is_dir(&self, path: &str) -> bool {
+        self.inner.is_dir(path).await
+    }
+    async fn list_entries(&self, dir: &str) -> Vec<(String, bool, u64)> {
+        self.inner.list_entries(dir).await
+    }
+    async fn walk_files_matching_suffixes(&self, base: &str, suffixes: &[&str]) -> Vec<String> {
+        self.inner.walk_files_matching_suffixes(base, suffixes).await
+    }
+    async fn extract_zip(&self, a: &str, d: &str, s: &str, p: ExtractProgress) -> anyhow::Result<()> {
+        self.inner.extract_zip(a, d, s, p).await
+    }
+    async fn decode_url_encoded_names(&self, dir: &str) -> anyhow::Result<()> {
+        self.inner.decode_url_encoded_names(dir).await
+    }
+    async fn scan_files_with_sizes(&self, dir: &str) -> Vec<(String, u64)> {
+        self.inner.scan_files_with_sizes(dir).await
+    }
+}
+
+pub struct FixedPaths {
+    pub roms: String,
+    pub bios: String,
+}
+
+impl EmuDeckPaths for FixedPaths {
+    fn roms_path(&self) -> String {
+        self.roms.clone()
+    }
+    fn bios_path(&self) -> String {
+        self.bios.clone()
+    }
+}
+
+/// `nintendo-switch` → `switch`; everything else verbatim.
+pub struct TestSystems;
+
+impl SystemResolver for TestSystems {
+    fn resolve_system(&self, slug: &str, fs_slug: Option<&str>) -> String {
+        match slug {
+            "nintendo-switch" => "switch".into(),
+            "" => fs_slug.unwrap_or_default().into(),
+            other => other.into(),
+        }
+    }
+}
+
+/// Installed emulators by id; every listed path counts as executable.
+#[derive(Default)]
+pub struct FakeLocator {
+    pub installed: Mutex<HashMap<String, String>>,
+    pub missing: Mutex<HashSet<String>>,
+}
+
+impl EmulatorLocator for FakeLocator {
+    fn installed(&self, system: &str) -> HashMap<String, String> {
+        if system == "switch" {
+            self.installed.lock().unwrap().clone()
+        } else {
+            HashMap::new()
+        }
+    }
+    fn is_executable(&self, path: &str) -> bool {
+        !self.missing.lock().unwrap().contains(path)
+    }
+}
+
+pub const EDEN: &str = "/home/deck/Applications/Eden.AppImage";
+
+/// Real SQLite + real files under a temp dir, fake RomM / events / clock.
+pub struct DownloadEnv {
+    pub dir: tempfile::TempDir,
+    pub db: Db,
+    pub jobs: Arc<SqliteDownloadJobs>,
+    pub library: Arc<SqliteLibrary>,
+    pub romm: Arc<FakeRomRomm>,
+    pub events: Arc<RecordingEvents>,
+    pub files: Arc<FakeFiles>,
+    pub locator: Arc<FakeLocator>,
+    pub settings: SettingsStore,
+    pub launch: Arc<LaunchService>,
+    pub svc: Arc<DownloadService>,
+    pub adoption: Arc<InstallAdoptionService>,
+    pub clock: Arc<FakeClock>,
+}
+
+impl DownloadEnv {
+    pub async fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        Self::at(dir).await
+    }
+
+    pub async fn at(dir: tempfile::TempDir) -> Self {
+        let (db, _) = Db::open(&dir.path().join("db.sqlite")).await.unwrap();
+        let roms = dir.path().join("Emulation/roms");
+        let bios = dir.path().join("Emulation/bios");
+        std::fs::create_dir_all(&roms).unwrap();
+        std::fs::create_dir_all(&bios).unwrap();
+        let paths = Arc::new(FixedPaths {
+            roms: roms.to_string_lossy().into_owned(),
+            bios: bios.to_string_lossy().into_owned(),
+        });
+        let jobs = Arc::new(SqliteDownloadJobs::new(db.clone()));
+        let library = Arc::new(SqliteLibrary::new(db.clone()));
+        let romm = Arc::new(FakeRomRomm::default());
+        *romm.range_supported.lock().unwrap() = true;
+        let events = Arc::new(RecordingEvents::default());
+        let files = Arc::new(FakeFiles::default());
+        let locator = Arc::new(FakeLocator::default());
+        locator.installed.lock().unwrap().insert("eden".into(), EDEN.into());
+        let settings = SettingsStore::new(serde_json::Map::new());
+        let clock = Arc::new(FakeClock::default());
+        let launch = Arc::new(LaunchService::new(LaunchServiceConfig {
+            library: library.clone(),
+            locator: locator.clone(),
+            systems: Arc::new(TestSystems),
+            files: files.clone(),
+            settings: settings.clone(),
+        }));
+        let removal = Arc::new(RomRemovalService::new(RomRemovalServiceConfig {
+            library: library.clone(),
+            files: files.clone(),
+            paths: paths.clone(),
+        }));
+        let svc = DownloadService::new(DownloadServiceConfig {
+            romm: romm.clone(),
+            files: files.clone(),
+            jobs: jobs.clone(),
+            library: library.clone(),
+            paths: paths.clone(),
+            systems: Arc::new(TestSystems),
+            launch: launch.clone(),
+            removal,
+            events: events.clone(),
+            clock: clock.clone(),
+        });
+        let active = svc.clone();
+        let adoption = InstallAdoptionService::new(InstallAdoptionServiceConfig {
+            romm: romm.clone(),
+            files: files.clone(),
+            systems: Arc::new(TestSystems),
+            paths,
+            launch: launch.clone(),
+            library: library.clone(),
+            jobs: jobs.clone(),
+            active_downloads: Arc::new(move || active.active_download_rom_ids()),
+            events: events.clone(),
+            clock: clock.clone(),
+        });
+        Self {
+            dir,
+            db,
+            jobs,
+            library,
+            romm,
+            events,
+            files,
+            locator,
+            settings,
+            launch,
+            svc,
+            adoption,
+            clock,
+        }
+    }
+
+    pub fn roms(&self) -> PathBuf {
+        self.dir.path().join("Emulation/roms")
+    }
+
+    pub fn roms_s(&self) -> String {
+        self.roms().to_string_lossy().into_owned()
+    }
+
+    /// Insert a synced `roms` row.
+    pub async fn seed_rom(&self, rom_id: i64, slug: &str, fs_name: &str, app_id: Option<i64>, group: Option<&str>) {
+        let (slug, fs_name, group) = (slug.to_string(), fs_name.to_string(), group.map(str::to_string));
+        self.db
+            .call(move |c| {
+                c.execute(
+                    "INSERT OR REPLACE INTO roms (rom_id, platform_slug, name, fs_name, shortcut_app_id, \
+                     last_synced_at, sibling_group_key) VALUES (?1, ?2, ?3, ?4, ?5, 't', ?6)",
+                    rusqlite::params![rom_id, slug, format!("Game {rom_id}"), fs_name, app_id, group],
+                )
+                .map(|_| ())
+            })
+            .await
+            .unwrap();
+    }
+
+    pub async fn sql(&self, sql: &'static str) {
+        self.db.call(move |c| c.execute_batch(sql)).await.unwrap();
+    }
+
+    pub fn entry(&self, rom_id: i64) -> Option<Value> {
+        self.svc.get_download_queue()["downloads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["rom_id"] == rom_id)
+            .cloned()
+    }
+
+    /// Wait until the queue entry of `rom_id` has `status` and no attempt runs.
+    pub async fn wait_status(&self, rom_id: i64, status: &str) -> Value {
+        for _ in 0..500 {
+            if let Some(e) = self.entry(rom_id)
+                && e["status"] == status
+                && !self.svc.active_download_rom_ids().contains(&rom_id)
+            {
+                // Let the attempt's final bookkeeping land.
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                return e;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("rom {rom_id} never reached {status}: {:?}", self.entry(rom_id));
+    }
+
+    pub async fn wait_until(&self, what: &str, f: impl Fn() -> bool) {
+        for _ in 0..500 {
+            if f() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("timed out waiting for {what}");
+    }
+}
+
+/// A RomM single-file Switch ROM payload.
+pub fn switch_rom(id: i64, fs_name: &str, size: usize) -> Value {
+    json!({
+        "id": id, "name": format!("Game {id}"), "fs_name": fs_name, "fs_size_bytes": size,
+        "platform_slug": "switch", "platform_fs_slug": "switch", "platform_name": "Nintendo Switch",
+        "files": [{"file_name": fs_name, "file_size_bytes": size}],
+    })
+}
+
+pub fn payload(len: usize) -> Vec<u8> {
+    (0..len).map(|i| (i % 251) as u8).collect()
+}
+
+/// Build a ZIP with `members` (names ending in `/` are directories).
+pub fn zip_bytes(members: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::Write;
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buf);
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for (name, data) in members {
+            if name.ends_with('/') {
+                zip.add_directory(*name, opts).unwrap();
+            } else {
+                zip.start_file(*name, opts).unwrap();
+                zip.write_all(data).unwrap();
+            }
+        }
+        zip.finish().unwrap();
+    }
+    buf.into_inner()
+}

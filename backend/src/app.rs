@@ -9,17 +9,23 @@ use anyhow::Context;
 use serde_json::{Value, json};
 
 use crate::adapters::db::{DB_FILENAME, Db};
+use crate::adapters::download_files::LocalFiles;
+use crate::adapters::emudeck::{EmuDeckSettingsPaths, HomeEmulatorLocator, PlatformMap, SystemClock};
 use crate::adapters::persistence::{EpochClock, FileSettingsPersister, SettingsFile};
 use crate::adapters::plugin_metadata::read_plugin_version;
-use crate::adapters::repositories::{SqliteKvConfig, SqliteRomRegions};
+use crate::adapters::repositories::{SqliteDownloadJobs, SqliteKvConfig, SqliteLibrary, SqliteRomRegions};
 use crate::adapters::retroarch::RetroArchConfigFiles;
 use crate::adapters::romm::api::RommApi;
 use crate::adapters::romm::http::{RetryListener, RetryPolicy, RommHttp};
 use crate::domain::settings::{RESET_NOTICE_KEY, fold_legacy_save_sync_settings, migrate_settings, stored_version};
 use crate::domain::version::MIN_REQUIRED_VERSION;
 use crate::rpc::server::{EventHub, Handler, Registry};
+use crate::services::adoption::{InstallAdoptionService, InstallAdoptionServiceConfig};
 use crate::services::connection::{ConnectionService, ConnectionServiceConfig};
-use crate::services::ports::{SettingsPersister, SettingsStore};
+use crate::services::downloads::{DownloadService, DownloadServiceConfig};
+use crate::services::launch::{LaunchService, LaunchServiceConfig};
+use crate::services::ports::{EventSink, SettingsPersister, SettingsStore};
+use crate::services::rom_removal::{RomRemovalService, RomRemovalServiceConfig};
 use crate::services::settings::{SettingsService, SettingsServiceConfig};
 
 /// Every callable name the frontend may call — the same surface as the Python
@@ -29,6 +35,7 @@ const CALLABLE_NAMES_JSON: &str = include_str!("../callables.json");
 /// Callables this backend implements; every other listed name answers
 /// "not implemented in the Rust backend yet".
 pub const PORTED_CALLABLES: &[&str] = &[
+    "cancel_download",
     "connect_with_credentials",
     "connect_with_pairing_code",
     "connect_with_token",
@@ -36,17 +43,22 @@ pub const PORTED_CALLABLES: &[&str] = &[
     "dismiss_settings_reset_notice",
     "fix_retroarch_input_driver",
     "frontend_log",
+    "get_download_queue",
+    "get_installed_rom",
     "get_known_regions",
     "get_settings",
     "get_settings_reset_notice",
     "get_whitelist_settings",
+    "pause_download",
     "probe_reachability",
+    "resume_download",
     "save_collection_platform_groups",
     "save_log_level",
     "save_preferred_region",
     "save_server_url",
     "save_steam_input_setting",
     "sign_out",
+    "start_download",
     "test_connection",
     "update_whitelist_settings",
 ];
@@ -69,11 +81,25 @@ pub struct BackendEnv {
     pub clock: EpochClock,
 }
 
+/// Backend events reach the shim through the protocol's event hub.
+struct HubEvents(Arc<EventHub>);
+
+impl EventSink for HubEvents {
+    fn emit(&self, event: &str, payload: Value) {
+        self.0.emit(event, vec![payload]);
+    }
+}
+
 /// The wired services.
 pub struct Backend {
     pub settings: SettingsStore,
     pub settings_service: Arc<SettingsService>,
     pub connection_service: Arc<ConnectionService>,
+    pub launch: Arc<LaunchService>,
+    pub downloads: Arc<DownloadService>,
+    /// Adoption of ROM files already on disk. Library sync and the game page
+    /// (rewrite step 3) call it; no callable reaches it yet.
+    pub adoption: Arc<InstallAdoptionService>,
 }
 
 impl Backend {
@@ -105,6 +131,7 @@ impl Backend {
         });
         let http = Arc::new(RommHttp::new(settings.clone(), user_agent, env.retry, Some(on_retry))?);
         let romm_api = Arc::new(RommApi::new(http));
+        let events: Arc<dyn EventSink> = Arc::new(HubEvents(hub.clone()));
 
         let settings_service = Arc::new(SettingsService::new(SettingsServiceConfig {
             settings: settings.clone(),
@@ -114,17 +141,67 @@ impl Backend {
         }));
         let connection_service = Arc::new(ConnectionService::new(ConnectionServiceConfig {
             settings: settings.clone(),
-            romm_api,
+            romm_api: romm_api.clone(),
             persister,
-            kv_config: Arc::new(SqliteKvConfig::new(db)),
+            kv_config: Arc::new(SqliteKvConfig::new(db.clone())),
             min_required_version: MIN_REQUIRED_VERSION,
         }));
 
+        let clock = Arc::new(SystemClock::default());
+        let files = Arc::new(LocalFiles);
+        let paths = Arc::new(EmuDeckSettingsPaths::new(&env.user_home));
+        let systems = Arc::new(PlatformMap::load(&env.plugin_dir));
+        let library = Arc::new(SqliteLibrary::new(db.clone()));
+        let jobs = Arc::new(SqliteDownloadJobs::new(db));
+        let launch = Arc::new(LaunchService::new(LaunchServiceConfig {
+            library: library.clone(),
+            locator: Arc::new(HomeEmulatorLocator::new(&env.user_home)),
+            systems: systems.clone(),
+            files: files.clone(),
+            settings: settings.clone(),
+        }));
+        let removal = Arc::new(RomRemovalService::new(RomRemovalServiceConfig {
+            library: library.clone(),
+            files: files.clone(),
+            paths: paths.clone(),
+        }));
+        let downloads = DownloadService::new(DownloadServiceConfig {
+            romm: romm_api.clone(),
+            files: files.clone(),
+            jobs: jobs.clone(),
+            library: library.clone(),
+            paths: paths.clone(),
+            systems: systems.clone(),
+            launch: launch.clone(),
+            removal,
+            events: events.clone(),
+            clock: clock.clone(),
+        });
+        let active = downloads.clone();
+        let adoption = InstallAdoptionService::new(InstallAdoptionServiceConfig {
+            romm: romm_api,
+            files,
+            systems,
+            paths,
+            launch: launch.clone(),
+            library,
+            jobs,
+            active_downloads: Arc::new(move || active.active_download_rom_ids()),
+            events,
+            clock,
+        });
+
         connection_service.migrate_legacy_credentials().await;
+        // Restore the durable download queue: keep job partials, drop orphan
+        // tmp files, and auto-resume interrupted jobs in the background.
+        downloads.reconcile_persisted_downloads().await;
         Ok(Self {
             settings,
             settings_service,
             connection_service,
+            launch,
+            downloads,
+            adoption,
         })
     }
 
@@ -142,7 +219,23 @@ impl Backend {
     fn ported_handler(&self, name: &str) -> Option<Handler> {
         let s = self.settings_service.clone();
         let c = self.connection_service.clone();
+        let d = self.downloads.clone();
         let h: Handler = match name {
+            "start_download" => bind(name, 1, 1, d, |d, a| async move {
+                let id = rom_id_arg(&a[0])?;
+                Ok(d.start_download(id).await)
+            }),
+            "resume_download" => bind(name, 1, 1, d, |d, a| async move {
+                let id = rom_id_arg(&a[0])?;
+                Ok(d.resume_download(id).await)
+            }),
+            "cancel_download" => bind(name, 1, 1, d, |d, a| async move { Ok(d.cancel_download(rom_id_arg(&a[0])?)) }),
+            "pause_download" => bind(name, 1, 1, d, |d, a| async move { Ok(d.pause_download(rom_id_arg(&a[0])?)) }),
+            "get_download_queue" => bind(name, 0, 0, d, |d, _| async move { Ok(d.get_download_queue()) }),
+            "get_installed_rom" => bind(name, 1, 1, d, |d, a| async move {
+                let id = rom_id_arg(&a[0])?;
+                d.get_installed_rom(id).await.map_err(err)
+            }),
             "test_connection" => bind(name, 0, 0, c, |c, _| async move { Ok(c.test_connection().await) }),
             "probe_reachability" => bind(name, 0, 0, c, |c, _| async move { Ok(c.probe_reachability().await) }),
             "connect_with_credentials" => bind(name, 3, 4, c, |c, a| async move {
@@ -274,6 +367,16 @@ where
     })
 }
 
+/// A ROM id argument: an integer, or a string holding one (Python `int()`).
+fn rom_id_arg(v: &Value) -> Result<i64, String> {
+    let parsed = match v {
+        Value::Number(n) => n.as_i64().or_else(|| n.as_f64().filter(|f| f.fract() == 0.0).map(|f| f as i64)),
+        Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    };
+    parsed.ok_or_else(|| format!("argument 'rom_id' must be an integer, got {v}"))
+}
+
 /// A required string argument.
 fn req_str(args: &[Value], i: usize, name: &str) -> Result<String, String> {
     args.get(i)
@@ -323,5 +426,11 @@ mod tests {
         assert!(opt_str(&args, 2, "a").is_err());
         assert_eq!(loose_str(&json!("hi")), "hi");
         assert_eq!(loose_str(&json!({"a": 1})), r#"{"a":1}"#);
+        assert_eq!(rom_id_arg(&json!(7)), Ok(7));
+        assert_eq!(rom_id_arg(&json!(7.0)), Ok(7));
+        assert_eq!(rom_id_arg(&json!(" 12 ")), Ok(12));
+        assert!(rom_id_arg(&json!(7.5)).is_err());
+        assert!(rom_id_arg(&json!("x")).is_err());
+        assert!(rom_id_arg(&Value::Null).is_err());
     }
 }

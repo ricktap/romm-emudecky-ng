@@ -6,3 +6,5 @@ pub mod plugin_metadata;
 pub mod repositories;
 pub mod retroarch;
 pub mod romm;
+pub mod download_files;
+pub mod emudeck;

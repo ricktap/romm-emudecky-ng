@@ -9,7 +9,8 @@ use serde_json::{Value, json};
 
 use crate::adapters::romm::http::RommHttp;
 use crate::domain::errors::RommError;
-use crate::services::ports::RommConnectionApi;
+use crate::services::ports::{RommConnectionApi, RommRomApi, TransferHooks};
+use crate::util::path_safety::quote;
 
 /// Timeout of the single-shot reachability probe.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
@@ -112,5 +113,24 @@ impl RommConnectionApi for RommApi {
             Err(RommError::Server { status: 429, .. }) => Err(RommError::PairingRateLimited),
             Err(e) => Err(e),
         }
+    }
+}
+
+#[async_trait]
+impl RommRomApi for RommApi {
+    async fn get_rom(&self, rom_id: i64) -> Result<Value, RommError> {
+        self.http.get_json(&format!("/api/roms/{rom_id}")).await
+    }
+
+    async fn download_rom_content(
+        &self,
+        rom_id: i64,
+        file_name: &str,
+        dest: &str,
+        resume: bool,
+        hooks: TransferHooks,
+    ) -> anyhow::Result<()> {
+        let path = format!("/api/roms/{rom_id}/content/{}", quote(file_name, ""));
+        self.http.download(&path, dest, resume, hooks).await
     }
 }
