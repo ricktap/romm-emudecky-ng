@@ -30,13 +30,13 @@ Rewrite steps (GitHub milestone **0.40.0**, issues #8–#14; the Python code + i
 | 1b #9 Rust foundation (protocol server, DB actor, settings + connection) | merged into `rust` |
 | 2 #10 download queue, adoption, Switch launch | merged into `rust` |
 | 3a #11 part 1: removals (`REMOVED_TILL_0_90_0.md`) | merged into `rust` (PR #21); CI and the release dry-run are green |
-| 3a part 2: port library sync, shortcuts, collections | implemented on `rust-3a-sync-port`; final local checks passed, PR/CI + dry-run pending |
+| 3a part 2: port library sync, shortcuts, collections | implemented in [PR #22](https://github.com/ricktap/romm-emudecky-ng/pull/22), targeting `rust`; see the PR checks for integration status |
 | 3b: remaining callables (game page, SGDB, playtime, …) | not started |
 | 4 #12 firmware, 5 #13 save sync, 6 #14 delete Python | not started |
 
 `rust` branch numbers: Rust 286 tests / 97% lines, Python 5275, frontend 1528 (fewer because removed features' tests went).
 
-Step-3a part-2 implementation on `rust-3a-sync-port` (awaiting PR/CI and release dry-run):
+Step-3a part-2 implementation in [PR #22](https://github.com/ricktap/romm-emudecky-ng/pull/22):
 
 - Ported library preferences/reads and the complete sequential sync callable/event flow: work planning,
   paginated/incremental fetch, sibling component keys/ranking/collapse, preview/apply with TTL, heartbeat,
@@ -57,8 +57,9 @@ Step-3a part-2 implementation on `rust-3a-sync-port` (awaiting PR/CI and release
 - `get_artwork_base64` belongs to this step because syncManager calls it BEFORE acknowledging a unit.
 - Reporter commits identity/metadata, publishes art/applies Steam Input and runs post-commit adoption before
   signalling the orchestrator. Its late-ack path executes the same post-commit adoption exactly once.
-- Next: open the one phase PR into `rust`, verify CI + release dry-run, merge into `rust`. Step 3b remains
-  unstarted; issue #11 covers more than this part and must not be closed prematurely. No `main` merge or tag.
+- Integration is tracked by PR #22 into `rust`, with CI and the release workflow dry-run required before merge.
+  After it merges, continue with step 3b. Issue #11 covers more than this part and must not be closed prematurely.
+  The shipping Python backend on `main` is unchanged; no release tag is part of step 3a.
 
 ## How the rewrite works
 
