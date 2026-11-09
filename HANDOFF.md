@@ -33,7 +33,7 @@ Rewrite steps (GitHub milestone **0.40.0**, issues #8–#14; the Python code + i
 | 3a part 2: port library sync, shortcuts, collections | merged into `rust` (PR #22); CI green |
 | 3b part 1: emulator/launch-file choices and relaunch reconciliation | merged into `rust` (PR #23); CI and release dry run green |
 | 3b part 2: game page, metadata, cover refresh and SteamGridDB | merged into `rust` (PR #24); CI and release dry run green |
-| 3b remainder: version choice, launch checks, removal, playtime, updates and Steam Input | implemented on `rust-3b-complete`; integration tracked by its PR into `rust` |
+| 3b remainder: version choice, launch checks, removal, playtime, updates and Steam Input | implemented in [PR #25](https://github.com/ricktap/romm-emudecky-ng/pull/25) into `rust`; see PR checks for integration status |
 | 4 #12 firmware, 5 #13 save sync, 6 #14 delete Python | not started |
 
 After PR #22: Rust 365 tests / 96.90% lines, Python 5275, frontend 1530 (fewer because removed features' tests went).
@@ -103,7 +103,7 @@ Step-3b part-2 implementation in [PR #24](https://github.com/ricktap/romm-emudec
   PR #24 merged into `rust` with green CI and [release dry run](https://github.com/ricktap/romm-emudecky-ng/actions/runs/42689842733).
 - No shipping version bump or tag; issue #11 still includes the remaining step-3b scope.
 
-Step-3b remainder (`rust-3b-complete`, final part of #11):
+Step-3b remainder in [PR #25](https://github.com/ricktap/romm-emudecky-ng/pull/25) (final part of #11):
 
 - Ported all 14 remaining callables: version list/switch, launch gate, local drift/core-change checks, individual/bulk
   uninstall, Steam Input application, self-update checks, and all five playtime/session callables.
