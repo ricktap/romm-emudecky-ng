@@ -60,7 +60,7 @@ logs it and the plugin stays inert. The backend also exits cleanly on `SIGTERM`,
 `<DECKY_PLUGIN_LOG_DIR>/backend.log` (stderr when that variable is unset).
 
 Callables the Rust backend has not ported yet are still listed (the frontend's callable surface never changes) but
-answer with the error `not implemented in the Rust backend yet: <name>`. `PORTED_CALLABLES` in `backend/src/app.rs`
+answer with the failure result `{"success": false, "reason": "not_implemented", "message": "not implemented in the Rust backend yet: <name>"}` (a result, not an error frame: Decky turns an error frame into an opaque "Python Exception"). `PORTED_CALLABLES` in `backend/src/app.rs`
 lists the ported ones (settings + connection from step 1b; the download queue from step 2: `start_download`,
 `cancel_download`, `pause_download`, `resume_download`, `get_download_queue`, `get_installed_rom`; and the first
 slice of step 3a: platform/collection reads and preferences, registry platforms, sync statistics, appId mappings,

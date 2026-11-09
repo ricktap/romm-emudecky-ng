@@ -21,7 +21,14 @@ pub fn parse(v:&Value)->Option<Value>{
     let page=v["html_url"].as_str().filter(|s|s.starts_with("https://github.com/ricktap/romm-emudecky-ng/")).unwrap_or(RELEASES);
     Some(json!({"latest_version":tag,"notes":v["body"].as_str().unwrap_or(""),"asset_url":url,"sha256":sha.to_lowercase(),"html_url":page}))
 }
-pub fn is_newer(latest:&str,current:&str)->bool{version(latest).is_some_and(|l|l>version(current).unwrap_or([0,0,0]))}
+/// `current` may carry a pre-release suffix (`0.40.0-rc.1`): it counts as older than the same stable version
+/// and newer than any lower one. `latest` is always a plain release (see [`parse`]).
+pub fn is_newer(latest:&str,current:&str)->bool{
+    let cur=current.trim();let cur=cur.strip_prefix('v').unwrap_or(cur);
+    let (core,pre)=match cur.split_once('-'){Some((c,_))=>(c,true),None=>(cur,false)};
+    let current_key=version(core).map(|v|(v,!pre)).unwrap_or(([0,0,0],true));
+    version(latest).is_some_and(|l|(l,true)>current_key)
+}
 
 #[cfg(test)]mod tests{
     use super::*;
@@ -34,6 +41,9 @@ pub fn is_newer(latest:&str,current:&str)->bool{version(latest).is_some_and(|l|l
         for digest in ["sha256:abc","md5:bad",""]{let mut v=r.clone();v["assets"][0]["digest"]=json!(digest);assert!(parse(&v).is_none());}
         let mut v=r;v["html_url"]=json!("https://evil.invalid/");assert_eq!(parse(&v).unwrap()["html_url"],RELEASES);
         assert!(is_newer("v1.0.0","0.99.99"));assert!(!is_newer("0.40.0","0.40.0"));assert!(is_newer("0.40.0","broken"));assert!(!is_newer("1.0.0-rc1","0.0.0"));
+        // a release candidate is not offered an older stable, but is offered its own final release
+        assert!(!is_newer("0.33.2","0.40.0-rc.1"));assert!(!is_newer("0.40.0","0.40.1-rc.1"));
+        assert!(is_newer("0.40.0","0.40.0-rc.1"));assert!(is_newer("0.40.1","v0.40.0-rc.1"));assert!(is_newer("0.40.0","garbage-rc"));
         assert!(parse(&Value::Null).is_none());
     }
 }

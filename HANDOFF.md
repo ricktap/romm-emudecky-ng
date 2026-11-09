@@ -161,7 +161,7 @@ switched back to plain `callable()` in `src/api/backend.ts` and removed from the
   (`--list-methods`) because Decky serves frontend calls in parallel with `_main`; calls wait for readiness. The frontend
   never changes: callable names/arity/response shapes and event payloads are the contract.
 - **Callable surface:** on `rust`, `backend/callables.json` is the source of truth (106 names). Unported callables answer
-  `not implemented in the Rust backend yet: <name>`. `scripts/check_callable_manifest.py` / `check_event_parity.py` check
+  `{success: false, reason: "not_implemented", ...}`. `scripts/check_callable_manifest.py` / `check_event_parity.py` check
   the frontend against it.
 - **Crate layout** (`backend/`): `domain/` pure · `services/` (trait ports in `ports.rs`) · `adapters/` (all I/O) · `rpc/` ·
   `app.rs` (composition root + callable table). tokio, reqwest+rustls (no OpenSSL), rusqlite behind ONE DB-actor thread,

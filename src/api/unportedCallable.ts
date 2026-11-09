@@ -2,13 +2,12 @@ import { callable, toaster } from "@decky/api";
 
 /**
  * Callables whose Rust port is still pending (firmware: 0.45.0, save sync: 0.55.0).
- * The UI for them stays visible; the backend answers "not implemented in the Rust
- * backend yet" and this wrapper turns that into a toast + a normal failure result.
+ * The UI for them stays visible; the backend answers `reason: "not_implemented"` and this wrapper
+ * turns that into a toast + a normal failure.
  *
  * The Python implementation (removed in rewrite step 6) lives at the commit noted
  * in HANDOFF.md, "Python reference implementation".
  */
-export const NOT_IMPLEMENTED_MARKER = "not implemented in the Rust backend yet";
 export const NOT_IMPLEMENTED_REASON = "not_implemented";
 
 type Feature = "firmware" | "saves";
@@ -22,39 +21,48 @@ const FEATURE_MESSAGES: Record<Feature, string> = {
 export const TOAST_THROTTLE_MS = 5000;
 
 /**
- * `silent` callables are passive reads the UI fires on its own (page render, game
- * launch). They get the failure result without a toast; only calls the user
- * triggers by acting on the feature toast.
+ * How a not-implemented answer reaches the caller:
+ * - `silent`: passive reads the UI fires on its own (page render, game launch). No toast.
+ * - `throws`: the declared result is status-shaped (no `success` field), so a failure object would be
+ *   misread; reject instead, which those callers already handle in their catch paths.
+ * Everything else toasts and resolves to `{ success: false, reason: "not_implemented", message }`.
  */
-const UNPORTED: Record<string, { feature: Feature; silent: boolean }> = {
+interface Entry {
+  feature: Feature;
+  silent?: boolean;
+  throws?: boolean;
+}
+
+const UNPORTED: Record<string, Entry> = {
   // firmware
+  // passive read, but its page (System) shows a failure message, so it resolves to a failure result
   get_firmware_status: { feature: "firmware", silent: true },
-  download_all_firmware: { feature: "firmware", silent: false },
-  download_required_firmware: { feature: "firmware", silent: false },
-  // save sync — passive reads
-  ensure_device_registered: { feature: "saves", silent: true },
-  list_devices: { feature: "saves", silent: true },
-  get_save_status: { feature: "saves", silent: true },
-  refresh_save_status: { feature: "saves", silent: true },
-  pre_launch_sync: { feature: "saves", silent: true },
-  get_save_sync_settings: { feature: "saves", silent: true },
-  is_save_tracking_configured: { feature: "saves", silent: true },
-  get_save_setup_info: { feature: "saves", silent: true },
+  download_all_firmware: { feature: "firmware" },
+  download_required_firmware: { feature: "firmware" },
+  // save sync — passive reads (rejecting, like any unreachable backend call; callers catch it)
+  ensure_device_registered: { feature: "saves", silent: true, throws: true },
+  list_devices: { feature: "saves", silent: true, throws: true },
+  get_save_status: { feature: "saves", silent: true, throws: true },
+  refresh_save_status: { feature: "saves", silent: true, throws: true },
+  pre_launch_sync: { feature: "saves", silent: true, throws: true },
+  get_save_sync_settings: { feature: "saves", silent: true, throws: true },
+  is_save_tracking_configured: { feature: "saves", silent: true, throws: true },
+  get_save_setup_info: { feature: "saves", silent: true, throws: true },
   // save sync — user actions
-  update_save_sync_settings: { feature: "saves", silent: false },
-  sync_rom_saves: { feature: "saves", silent: false },
-  sync_all_saves: { feature: "saves", silent: false },
-  resolve_sync_conflict: { feature: "saves", silent: false },
-  get_save_slots: { feature: "saves", silent: false },
-  get_slot_saves: { feature: "saves", silent: false },
-  switch_slot: { feature: "saves", silent: false },
-  get_slot_delete_info: { feature: "saves", silent: false },
-  delete_slot: { feature: "saves", silent: false },
-  confirm_slot_choice: { feature: "saves", silent: false },
-  delete_local_saves: { feature: "saves", silent: false },
-  delete_platform_saves: { feature: "saves", silent: false },
-  saves_list_file_versions: { feature: "saves", silent: false },
-  saves_rollback_to_version: { feature: "saves", silent: false },
+  update_save_sync_settings: { feature: "saves" },
+  sync_rom_saves: { feature: "saves" },
+  sync_all_saves: { feature: "saves" },
+  resolve_sync_conflict: { feature: "saves" },
+  get_save_slots: { feature: "saves" },
+  get_slot_saves: { feature: "saves" },
+  switch_slot: { feature: "saves" },
+  get_slot_delete_info: { feature: "saves" },
+  delete_slot: { feature: "saves" },
+  confirm_slot_choice: { feature: "saves" },
+  delete_local_saves: { feature: "saves" },
+  delete_platform_saves: { feature: "saves" },
+  saves_list_file_versions: { feature: "saves", throws: true },
+  saves_rollback_to_version: { feature: "saves", throws: true },
 };
 
 /** Names routed through {@link unportedCallable}; the test pins this against the backend manifest. */
@@ -67,9 +75,8 @@ export function resetNotImplementedToasts(): void {
   lastToastAt.clear();
 }
 
-function isNotImplemented(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes(NOT_IMPLEMENTED_MARKER);
+function isNotImplemented(result: unknown): boolean {
+  return typeof result === "object" && result !== null && (result as { reason?: unknown }).reason === NOT_IMPLEMENTED_REASON;
 }
 
 function toastOnce(feature: Feature): void {
@@ -81,26 +88,21 @@ function toastOnce(feature: Feature): void {
 }
 
 /**
- * Like `callable()`, for a backend method that is not ported yet. A "not implemented"
- * rejection becomes `{ success: false, reason: "not_implemented", message }` (cast to
- * the callable's declared result, since callers already handle failure results) and
- * a throttled toast; any other rejection propagates unchanged.
+ * Like `callable()`, for a backend method that is not ported yet. The backend answers those with
+ * `{ success: false, reason: "not_implemented" }` (a result, because Decky reduces a thrown backend
+ * error to an opaque "Python Exception"). This swaps in the user-facing message and, unless the call
+ * is a passive read, shows a throttled toast. See {@link Entry} for how the answer reaches the caller.
  */
 export function unportedCallable<Args extends unknown[], Result>(name: string): (...args: Args) => Promise<Result> {
   const entry = UNPORTED[name];
   if (!entry) throw new Error(`${name} is not registered in UNPORTED (src/api/unportedCallable.ts)`);
   const call = callable<Args, Result>(name);
   return async (...args: Args): Promise<Result> => {
-    try {
-      return await call(...args);
-    } catch (error) {
-      if (!isNotImplemented(error)) throw error;
-      if (!entry.silent) toastOnce(entry.feature);
-      return {
-        success: false,
-        reason: NOT_IMPLEMENTED_REASON,
-        message: FEATURE_MESSAGES[entry.feature],
-      } as unknown as Result;
-    }
+    const result = await call(...args);
+    if (!isNotImplemented(result)) return result;
+    if (!entry.silent) toastOnce(entry.feature);
+    const message = FEATURE_MESSAGES[entry.feature];
+    if (entry.throws) throw new Error(message);
+    return { success: false, reason: NOT_IMPLEMENTED_REASON, message } as unknown as Result;
   };
 }
