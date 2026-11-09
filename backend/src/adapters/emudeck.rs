@@ -238,13 +238,11 @@ impl EmulatorLocator for HomeEmulatorLocator {
 }
 
 /// The real clock.
-pub struct SystemClock {
-    start: Instant,
-}
+pub struct SystemClock;
 
 impl Default for SystemClock {
     fn default() -> Self {
-        Self { start: Instant::now() }
+        Self
     }
 }
 
@@ -257,7 +255,11 @@ impl Clock for SystemClock {
         iso_from_epoch(secs)
     }
     fn monotonic(&self) -> f64 {
-        self.start.elapsed().as_secs_f64()
+        // Boot-relative CLOCK_MONOTONIC pauses during suspend and survives a
+        // backend restart, matching Python time.monotonic's persisted marker.
+        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        let result = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+        if result == 0 { ts.tv_sec as f64 + ts.tv_nsec as f64 / 1e9 } else { f64::NAN }
     }
 }
 
@@ -349,6 +351,8 @@ mod tests {
         let c = SystemClock::default();
         assert!(c.now_iso().ends_with("+00:00"));
         assert!(c.monotonic() >= 0.0);
+        let a=c.monotonic();let b=SystemClock::default().monotonic();
+        assert!(b>=a && b-a<1.0,"new clock instances share the boot-relative counter");
     }
 }
 

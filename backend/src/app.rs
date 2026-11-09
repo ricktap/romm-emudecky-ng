@@ -36,6 +36,10 @@ const CALLABLE_NAMES_JSON: &str = include_str!("../callables.json");
 /// Callables this backend implements; every other listed name answers
 /// "not implemented in the Rust backend yet".
 pub const PORTED_CALLABLES: &[&str] = &[
+    "get_version_list", "switch_version", "evaluate_launch", "check_local_drift", "check_core_change",
+    "remove_rom", "uninstall_all_roms", "apply_steam_input_setting", "check_for_update",
+    "record_session_start", "finalize_game_session", "get_all_playtime", "get_playtime_scope_notice", "reconcile_playtime",
+
     "get_cached_game_detail", "get_rom_metadata", "get_all_metadata_cache", "fetch_cover_base64", "refresh_cover_artwork",
     "get_sgdb_artwork_base64", "verify_sgdb_api_key", "save_sgdb_api_key", "get_sgdb_resolution", "search_sgdb_games", "apply_sgdb_game_id",
     "get_platform_core_info", "set_game_core", "clear_game_core", "get_disc_selection", "select_disc",
@@ -117,6 +121,11 @@ pub struct Backend {
     pub game_detail: Arc<crate::services::game_detail::GameDetailService>,
     pub game_covers: Arc<crate::services::game_covers::GameCoverService>,
     pub steamgrid: Arc<crate::services::steamgrid::SteamGridService>,
+    pub versions: Arc<crate::services::versions::VersionService>,
+    pub launch_gate: Arc<crate::services::launch_gate::LaunchGate>,
+    pub game_actions: Arc<crate::services::game_actions::GameActions>,
+    pub playtime: Arc<crate::services::playtime::PlaytimeService>,
+    pub update: Arc<crate::services::update::UpdateService>,
     pub downloads: Arc<DownloadService>,
     pub library: Arc<LibraryService>,
     pub sync: Arc<crate::services::sync_orchestrator::SyncOrchestrator>,
@@ -214,7 +223,7 @@ impl Backend {
             paths: paths.clone(),
             systems: systems.clone(),
             launch: launch.clone(),
-            removal,
+            removal: removal.clone(),
             events: events.clone(),
             clock: clock.clone(),
         });
@@ -237,8 +246,8 @@ impl Backend {
         let assets = Arc::new(crate::adapters::steam_assets::LocalSteamAssets::new(env.user_home.clone(),env.runtime_dir.join("covers")));
         let artwork = Arc::new(crate::services::artwork::ArtworkService {api:romm_api.clone(),assets:assets.clone(),registry:sync_repo.clone(),lock:Default::default()});
         if let Err(error)=artwork.prune().await {tracing::warn!("Artwork startup cleanup failed: {error}");}
-        let shortcuts = Arc::new(crate::services::shortcut_removal::ShortcutRemovalService {registry:sync_repo.clone(),bindings:sync_repo.clone(),assets:assets.clone(),kv:kv_config});
-        let reporter = Arc::new(crate::services::sync_reporter::SyncReporter::with_assets(sync_repo.clone(),assets,settings.clone()));
+        let shortcuts = Arc::new(crate::services::shortcut_removal::ShortcutRemovalService {registry:sync_repo.clone(),bindings:sync_repo.clone(),assets:assets.clone(),kv:kv_config.clone()});
+        let reporter = Arc::new(crate::services::sync_reporter::SyncReporter::with_assets(sync_repo.clone(),assets.clone(),settings.clone()));
         let game_reads=Arc::new(crate::adapters::game_reads::SqliteGameReads::new(db.clone()));
         let adopter=adoption.clone();
         let game_detail=Arc::new(crate::services::game_detail::GameDetailService::new(crate::services::game_detail::GameDetailServiceConfig {
@@ -253,6 +262,28 @@ impl Backend {
             registry:sync_repo.clone(),records:game_reads,pending:reporter.clone(),settings:settings.clone(),persister:persister.clone(),
         }));
         if let Err(error)=steamgrid.prune().await{tracing::warn!("SteamGridDB cache cleanup failed: {error}");}
+
+        let save_safety=Arc::new(crate::adapters::switch_save_safety::SwitchSaveSafety::new(db.clone(),settings.clone()));
+        let version_repo=Arc::new(crate::adapters::versions::SqliteVersions::new(db.clone()));
+        let active=downloads.clone();
+        let versions=Arc::new(crate::services::versions::VersionService::new(crate::services::versions::VersionServiceConfig {
+            repo:version_repo.clone(),romm:romm_api.clone(),settings:settings.clone(),launch:launch.clone(),saves:save_safety.clone(),
+            clock:clock.clone(),reachable:romm_api.clone(),active:Arc::new(move||active.active_download_rom_ids()),mutation_lock:downloads.mutation_lock.clone(),
+        }));
+        let launch_gate=Arc::new(crate::services::launch_gate::LaunchGate::new(crate::services::launch_gate::LaunchGateConfig {
+            repo:version_repo,saves:save_safety.clone(),settings:settings.clone(),
+        }));
+        let game_actions=Arc::new(crate::services::game_actions::GameActions::new(crate::services::game_actions::GameActionsConfig {
+            library:library.clone(),registry:sync_repo.clone(),assets:assets.clone(),removal,downloads:downloads.clone(),settings:settings.clone(),
+        }));
+        let playtime=crate::services::playtime::PlaytimeService::new(crate::services::playtime::PlaytimeServiceConfig {
+            repo:Arc::new(crate::adapters::playtime::SqlitePlaytime::new(db.clone())),api:romm_api.clone(),kv:kv_config,
+            clock:clock.clone(),saves:save_safety,
+        });
+        let update=crate::services::update::UpdateService::new(crate::services::update::UpdateConfig {
+            feed:Arc::new(crate::adapters::releases::GitHubReleases::new(&user_agent,crate::domain::self_update::LATEST)?),
+            metadata:Arc::new(crate::adapters::releases::FilePluginMetadata::new(env.plugin_dir.clone())),clock:clock.clone(),
+        });
         let sync = crate::services::sync_orchestrator::SyncOrchestrator::new(crate::services::sync_orchestrator::SyncOrchestratorConfig {
             fetcher: Arc::new(crate::services::library_fetcher::LibraryFetcher {metadata:romm_api.clone(),pages:romm_api.clone(),settings:settings.clone(),state:sync_state.clone()}),
             state:sync_state,reporter,library:library.clone(),registry:sync_repo.clone(),baseline:library,
@@ -272,6 +303,11 @@ impl Backend {
             connection_service,
             launch,
             launch_choices,
+            versions,
+            launch_gate,
+            game_actions,
+            playtime,
+            update,
             game_detail,
             game_covers,
             steamgrid,
@@ -305,7 +341,27 @@ impl Backend {
         let game = self.game_detail.clone();
         let covers = self.game_covers.clone();
         let sgdb = self.steamgrid.clone();
+        let versions=self.versions.clone();
+        let gate=self.launch_gate.clone();
+        let actions=self.game_actions.clone();
+        let playtime=self.playtime.clone();
+        let update=self.update.clone();
         let h: Handler = match name {
+            "get_version_list" => bind(name,1,1,versions,|s,a|async move{s.list(rom_id_arg(&a[0])?).await.map_err(err)}),
+            "switch_version" => bind(name,3,3,versions,|s,a|async move{Ok(s.switch(rom_id_arg(&a[0])?,rom_id_arg(&a[1])?,crate::domain::settings::truthy(&a[2])).await.unwrap_or_else(|e|unknown_failure(&e)))}),
+            "evaluate_launch" => bind(name,1,1,gate,|s,a|async move{s.evaluate(rom_id_arg(&a[0])?).await.map_err(err)}),
+            "check_local_drift" => bind(name,1,1,gate,|s,a|async move{Ok(s.drift(rom_id_arg(&a[0])?).await)}),
+            "check_core_change" => bind(name,1,1,gate,|s,a|async move{Ok(s.core_change(rom_id_arg(&a[0])?).await)}),
+            "remove_rom" => bind(name,1,1,actions,|s,a|async move{Ok(s.remove(rom_id_arg(&a[0])?).await)}),
+            "uninstall_all_roms" => bind(name,0,0,actions,|s,_|async move{Ok(s.uninstall_all().await.unwrap_or_else(|e|unknown_failure(&e)))}),
+            "apply_steam_input_setting" => bind(name,0,0,actions,|s,_|async move{Ok(s.apply_input().await.unwrap_or_else(|e|unknown_failure(&e)))}),
+            "check_for_update" => bind(name,1,1,update,|s,a|async move{Ok(s.check(crate::domain::settings::truthy(&a[0])).await)}),
+            "record_session_start" => bind(name,1,1,playtime,|s,a|async move{let result=s.start(rom_id_arg(&a[0])?).await.map_err(err)?;s.schedule_flush().await;Ok(result)}),
+            "finalize_game_session" => bind(name,1,1,playtime,|s,a|async move{Ok(s.finalize(rom_id_arg(&a[0])?).await)}),
+            "get_all_playtime" => bind(name,0,0,playtime,|s,_|async move{s.all().await.map_err(err)}),
+            "get_playtime_scope_notice" => bind(name,0,0,playtime,|s,_|async move{s.scope_notice().await.map_err(err)}),
+            "reconcile_playtime" => bind(name,1,1,playtime,|s,a|async move{s.reconcile(rom_id_arg(&a[0])?).await.map_err(err)}),
+
             "get_cached_game_detail" => bind(name,1,1,game,|s,a|async move{s.detail(rom_id_arg(&a[0])?).await.map_err(err)}),
             "get_rom_metadata" => bind(name,1,1,game,|s,a|async move{s.metadata(rom_id_arg(&a[0])?).await.map_err(err)}),
             "get_all_metadata_cache" => bind(name,0,0,game,|s,_|async move{s.all_metadata().await.map_err(err)}),

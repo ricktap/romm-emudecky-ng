@@ -137,6 +137,21 @@ impl RommHttp {
         json_body(resp, &url, "GET", false).await
     }
 
+    /// Native play-session ingest is never retried here; the durable outbox
+    /// owns retries and needs the structured FastAPI 422 detail intact.
+    pub async fn post_json_once(&self,path:&str,body:&Value)->Result<Value,crate::services::ports::PlaytimeApiError>{
+        use crate::services::ports::PlaytimeApiError;
+        let url=self.url(path);
+        let response=self.authed(Method::POST,&url,REQUEST_TIMEOUT)?.json(body).send().await.map_err(|e|translate_transport(&e,&url))?;
+        let status=response.status();
+        if status.as_u16()==422{
+            let value=response.json::<Value>().await.unwrap_or(Value::Null);
+            return Err(PlaytimeApiError::Rejected(value["detail"].clone()));
+        }
+        if !status.is_success(){return Err(translate_status(status,&url,"POST",None).into());}
+        Ok(json_body(response,&url,"POST",false).await?)
+    }
+
     /// `POST` JSON to a public endpoint: no `Authorization`, no retry (the body
     /// is a single-use credential). Error responses carry their `detail`.
     pub async fn unauthenticated_post_json(&self, path: &str, body: &Value) -> Result<Value, RommError> {

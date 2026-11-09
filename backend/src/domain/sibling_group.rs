@@ -56,6 +56,12 @@ pub fn compute_component_group_keys(roms:&[Value],resident_keys:&BTreeMap<i64,St
 #[cfg(test)]
 mod tests {
     use super::*;use serde_json::json;
+    #[test]fn target_membership_accepts_uneven_coverage_but_refuses_canonical_conflicts(){
+        let key=Some("igdb:7:5");
+        assert!(target_in_group(key,Some(key),None,false));assert!(!target_in_group(key,Some(None),None,true));assert!(!target_in_group(key,Some(Some("igdb:8:5")),None,true));
+        assert!(target_in_group(key,None,Some(&json!({"ss_id":9})),true));assert!(target_in_group(key,None,Some(&json!({"igdb_id":7})),true));assert!(!target_in_group(key,None,Some(&json!({"igdb_id":8})),true));assert!(!target_in_group(key,None,None,true));assert!(!target_in_group(key,None,Some(&json!({})),false));
+        assert!(!target_in_group(Some("romm:1:5"),None,Some(&json!({})),true));assert!(target_in_group(None,None,None,true));assert!(!target_in_group(None,None,None,false));
+    }
     #[test]
     fn uneven_coverage_components_are_stable_and_bridges_refuse_merge() {
         let mut roms=vec![json!({"id":1,"platform_id":5,"igdb_id":7,"ss_id":9,"sibling_roms":[{"id":2}]}),json!({"id":2,"platform_id":5,"ss_id":9,"sibling_roms":[{"id":3}]}),json!({"id":3,"platform_id":5,"sibling_roms":[{"id":1}]}),json!({"id":4,"platform_id":5})];
@@ -73,4 +79,15 @@ mod tests {
         assert_eq!(compute_component_group_keys(&roms[..1],&BTreeMap::from([(2,"igdb:7:5".into())]))[&1],"igdb:7:5");
         assert_eq!(compute_component_group_keys(&roms[..1],&BTreeMap::from([(2,"romm:2:5".into())]))[&1],"romm:1:5");
     }
+}
+
+/// Shared authority for picker enablement and the switch write guard.
+pub fn target_in_group(bound:Option<&str>, local:Option<Option<&str>>, detail:Option<&Value>, server_sibling:bool)->bool {
+    if local.is_none() && !server_sibling{return false;}
+    let Some(bound)=bound else{return true;};
+    if let Some(key)=local{return key==Some(bound);}
+    let Some((source,value))=parse(bound)else{return false;};
+    let Some(detail)=detail else{return false;};
+    let field=SOURCES.iter().find(|(_,s)|*s==source).unwrap().0;
+    detail[field].is_null() || scalar(&detail[field])==value
 }

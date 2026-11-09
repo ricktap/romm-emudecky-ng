@@ -13,6 +13,31 @@ use crate::services::ports::RommConnectionApi;
 
 const UA: &str = "romm-emudecky-ng/9.9.9";
 
+#[tokio::test]
+async fn native_ingest_preserves_422_detail_never_retries_and_checks_auth_origin(){
+    use crate::services::ports::{RommPlaytimeApi,PlaytimeApiError};
+    let server=MockServer::start().await;
+    let settings=store(&server.uri(),Some("test-token"),Some(&server.uri()));let api=RommApi::new(Arc::new(http(settings.clone())));
+    let rows=vec![json!({"rom_id":1,"duration_ms":1000,"start_time":"s","end_time":"e"})];
+    for (status,body) in [(200,json!({"results":[{"index":0,"status":"created"}]})),(422,json!({"detail":[{"loc":["body","sessions",0]}]})),(500,json!({})),(403,json!({}))]{
+        server.reset().await;Mock::given(method("POST")).and(path("/api/play-sessions")).and(header("authorization","Bearer test-token")).and(header("user-agent",UA)).respond_with(ResponseTemplate::new(status).set_body_json(&body)).expect(1).mount(&server).await;
+        let r=api.ingest("device",rows.clone()).await;
+        match status{200=>assert_eq!(r.unwrap(),body),422=>assert!(matches!(r,Err(PlaytimeApiError::Rejected(d)) if d==body["detail"])),_=>assert!(matches!(r,Err(PlaytimeApiError::Romm(_))))}
+        let requests=server.received_requests().await.unwrap();assert_eq!(requests.len(),1);assert_eq!(requests[0].body_json::<Value>().unwrap(),json!({"device_id":"device","sessions":rows}));server.verify().await;
+    }
+    server.reset().await;settings.set("romm_api_token_origin",json!("https://different.invalid"));assert!(matches!(api.ingest("device",rows).await,Err(PlaytimeApiError::Romm(RommError::TokenHostMismatch))));assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn native_session_get_pages_with_auth_and_accepts_bare_or_items_arrays(){
+    use crate::services::ports::RommPlaytimeApi;
+    use wiremock::matchers::query_param;
+    let server=MockServer::start().await;let api=RommApi::new(Arc::new(http(store(&server.uri(),Some("test-token"),Some(&server.uri())))));
+    Mock::given(method("GET")).and(path("/api/play-sessions")).and(query_param("rom_id","7")).and(query_param("limit","100")).and(query_param("offset","0")).and(header("authorization","Bearer test-token")).respond_with(ResponseTemplate::new(200).set_body_json(json!({"items":vec![json!({"duration_ms":1000});100]}))).expect(1).mount(&server).await;
+    Mock::given(method("GET")).and(path("/api/play-sessions")).and(query_param("offset","100")).respond_with(ResponseTemplate::new(200).set_body_json(json!([{"duration_ms":2000}]))).expect(1).mount(&server).await;
+    let rows=api.sessions(7).await.unwrap();assert_eq!(rows.len(),101);assert_eq!(rows[100]["duration_ms"],2000);
+}
+
 fn fast_retry() -> RetryPolicy {
     RetryPolicy {
         max_attempts: 3,

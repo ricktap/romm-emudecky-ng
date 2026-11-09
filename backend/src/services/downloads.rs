@@ -181,6 +181,9 @@ pub struct DownloadServiceConfig {
 }
 
 pub struct DownloadService {
+    /// Serializes download admission with version switching and uninstall.
+    pub mutation_lock: Arc<tokio::sync::Mutex<()>>,
+
     romm: Arc<dyn RommRomApi>,
     files: Arc<dyn DownloadFiles>,
     jobs: Arc<dyn DownloadJobRepo>,
@@ -220,6 +223,7 @@ struct Plan {
 impl DownloadService {
     pub fn new(config: DownloadServiceConfig) -> Arc<Self> {
         Arc::new(Self {
+            mutation_lock: Arc::new(tokio::sync::Mutex::new(())),
             romm: config.romm,
             files: config.files,
             jobs: config.jobs,
@@ -586,6 +590,7 @@ impl DownloadService {
     /// shortcut binding: an installed sibling bound to this shortcut (or
     /// unbound) is removed first; a removal failure aborts the download.
     pub async fn start_download(self: &Arc<Self>, rom_id: i64) -> Value {
+        let _mutation = self.mutation_lock.lock().await;
         if !self.st().in_progress.insert(rom_id) {
             return failure("already_downloading", "Already downloading");
         }
@@ -600,6 +605,7 @@ impl DownloadService {
     /// (`superseded`, entry dropped) when a version switch moved the group's
     /// shortcut binding to a sibling while this one was stopped.
     pub async fn resume_download(self: &Arc<Self>, rom_id: i64) -> Value {
+        let _mutation = self.mutation_lock.lock().await;
         let resumable = self
             .st()
             .queue

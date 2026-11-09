@@ -96,11 +96,18 @@ async fn serve(socket_path: PathBuf) -> anyhow::Result<()> {
     let backend = Backend::start(env, hub.clone()).await?;
     let downloads = backend.downloads.clone();
     let sync = backend.sync.clone();
+    let playtime = backend.playtime.clone();
+    let update = backend.update.clone();
+    if std::env::var_os("ROMM_BACKEND_DISABLE_UPDATE_CHECK").is_none(){update.schedule().await;}
     let hook: ShutdownHook = Arc::new(move || {
         let downloads = downloads.clone();
         let sync = sync.clone();
+        let playtime = playtime.clone();
+        let update = update.clone();
         Box::pin(async move {
             // Keep job rows and partials: the next start resumes them.
+            update.shutdown().await;
+            playtime.shutdown().await;
             sync.shutdown().await;
             downloads.shutdown().await;
             tracing::info!("EmuDecky RomM Manager backend stopped");
@@ -125,6 +132,8 @@ async fn serve(socket_path: PathBuf) -> anyhow::Result<()> {
         stopper.stop();
     });
     server.serve(listener, socket_path).await;
+    backend.update.shutdown().await;
+    backend.playtime.shutdown().await;
     backend.sync.shutdown().await;
     backend.downloads.shutdown().await;
     Ok(())
