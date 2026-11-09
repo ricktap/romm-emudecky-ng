@@ -31,8 +31,9 @@ Rewrite steps (GitHub milestone **0.40.0**, issues #8–#14; the Python code + i
 | 2 #10 download queue, adoption, Switch launch | merged into `rust` |
 | 3a #11 part 1: removals (`REMOVED_TILL_0_90_0.md`) | merged into `rust` (PR #21); CI and the release dry-run are green |
 | 3a part 2: port library sync, shortcuts, collections | merged into `rust` (PR #22); CI green |
-| 3b part 1: emulator/launch-file choices and relaunch reconciliation | implemented in [PR #23](https://github.com/ricktap/romm-emudecky-ng/pull/23), targeting `rust`; see PR state/checks for integration status |
-| 3b remainder: game page, SGDB, playtime, … | not started |
+| 3b part 1: emulator/launch-file choices and relaunch reconciliation | merged into `rust` (PR #23); CI and release dry run green |
+| 3b part 2: game page, metadata, cover refresh and SteamGridDB | implemented on `rust-3b-game-artwork`; PR/validation status below |
+| 3b remainder: version choice, launch checks, removal, playtime, … | not started |
 | 4 #12 firmware, 5 #13 save sync, 6 #14 delete Python | not started |
 
 After PR #22: Rust 365 tests / 96.90% lines, Python 5275, frontend 1530 (fewer because removed features' tests went).
@@ -74,10 +75,33 @@ Step-3b part-1 implementation in [PR #23](https://github.com/ricktap/romm-emudec
   download/adoption), as required by the launcher contract; launch-file pins retain the exact enumerated basename,
   including significant whitespace.
 - Tests port the Python core/disc/relaunch and Switch-launch contracts, including real binary/socket calls, restart
-  persistence, shell quoting, database-write failures, and stale-snapshot rejection. CI and a release dry run are required
-  before merge. No shipping version bump or release tag belongs to this part.
+  persistence, shell quoting, database-write failures, and stale-snapshot rejection. PR #23 merged into `rust` with green
+  CI and [release dry run](https://github.com/ricktap/romm-emudecky-ng/actions/runs/42683954989).
+  No shipping version bump or release tag belongs to this part.
 - Local validation: Rust **377 tests / 96.97% line coverage** (`--fail-under-lines 80`), Python **5275 passed**
   (the two pre-existing unawaited-download-coroutine warnings), frontend **1530 passed**, pinned pnpm build passed.
+
+Step-3b part-2 implementation on `rust-3b-game-artwork`:
+
+- Ported `get_cached_game_detail`, `get_rom_metadata`, `get_all_metadata_cache`, `fetch_cover_base64`,
+  `refresh_cover_artwork`, and all six SteamGridDB callables. `get_artwork_base64` now also honors pending-sync
+  and persisted legacy cover paths before the existing cache/staging/grid fallback.
+- Game-page reads snapshot SQLite state without waiting for HTTP; uninstalled games schedule the existing background
+  adoption check. Preserve metadata TTL, save-status and version payloads. Removed BIOS/achievement badges remain null
+  and never request background refreshes.
+- Passive SGDB reads use cache, then stored/pending IDs only. Explicit resolution prefers RomM, then local state,
+  IGDB cross-reference, and a six-result name picker with optional thumbnails. Manual picks replace four image caches
+  without persisting the selected ID. Key saves preserve masked values and roll back on persistence failure.
+- SGDB API authentication is isolated from RomM and from CDN downloads, including redirects. Artwork downloads use
+  atomic sidecars with cleanup on failure; cover sync/fetch/refresh share a writer lock. Cover refresh rechecks the
+  shortcut binding after HTTP before publishing. No `shortcuts.vdf` writes.
+- Tests use real SQLite/files, fake HTTP, and real binary/socket calls. They cover offline reads, restart persistence,
+  background adoption, UTC release years, key/auth failures, CDN credential separation, partial transfers,
+  simultaneous cover writers, binding changes and safe startup pruning.
+- Local validation: Rust **399 tests / 97.05% line coverage** (`--fail-under-lines 80`), Python **5275 passed**
+  (the two pre-existing unawaited-download-coroutine warnings), frontend **1530 passed**, pinned pnpm build passed.
+  GitHub CI and release dry run pending.
+- No shipping version bump or tag; issue #11 still includes the remaining step-3b scope.
 
 ## How the rewrite works
 
@@ -102,8 +126,7 @@ Step-3b part-1 implementation in [PR #23](https://github.com/ricktap/romm-emudec
 
 ### Remaining scope
 
-- **3b remainder** — game page (`get_cached_game_detail`, metadata, covers), SteamGridDB (6 callables), version
-  choice (`get_version_list`, `switch_version`), core/save compatibility (`check_core_change`), launch checks (`evaluate_launch`,
+- **3b remainder** — version choice (`get_version_list`, `switch_version`), core/save compatibility (`check_core_change`), launch checks (`evaluate_launch`,
   `check_local_drift`), `remove_rom`, `uninstall_all_roms`, `check_for_update`, playtime (`record_session_start`,
   `finalize_game_session`, `get_all_playtime`, `get_playtime_scope_notice`, `reconcile_playtime`), `apply_steam_input_setting`.
   Run the same feature review as 3a before porting; anything dropped goes into `REMOVED_TILL_0_90_0.md`.

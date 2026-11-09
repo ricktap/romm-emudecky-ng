@@ -10,3 +10,5 @@ pub mod emudeck;
 pub mod sync_runs;
 pub mod sync_library;
 pub mod steam_assets;
+pub mod game_reads;
+pub mod steamgrid;
