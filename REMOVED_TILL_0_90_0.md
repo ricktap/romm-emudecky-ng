@@ -4,8 +4,8 @@ The plugin is **Switch-only until v0.70** (see `EMUDECK_PORT_PLAN.md` §0). Duri
 these features were deliberately **not ported**. They come back, where still wanted, in v0.80.0 (retro systems) or v0.90.0 (modern
 consoles), when the other systems return.
 
-**Where to find the old code:** the last Python release before the rewrite is tag **`v0.33.2`** (branch `main` until
-0.40.0). Paths below refer to that tag.
+**Where to find the old code:** the last Python release before the rewrite is tag **`v0.33.2`**; the full Python backend on the rewrite line is at commit **`580680864e89af50c376dc946d12cf35cee7f808`** (branch `main` until
+0.40.0). Paths below refer to the tag.
 
 | Feature | Why it was removed | Python source at `v0.33.2` | Removed in |
 | ------- | ------------------ | -------------------------- | ---------- |

@@ -7,8 +7,7 @@ in ``backend/callables.json`` — the sorted list of wire names the native Rust
 backend serves (and prints for ``--list-methods``); the Decky shim in
 ``main.py`` generates one forwarder per listed name. On the Rust-rewrite branch
 that JSON file is the source of truth for the backend surface; the Python
-``Backend`` in ``py_modules/backend.py`` is legacy spec only and is no longer
-consulted here. Nothing ties the two declarations together at build time — a
+backend was removed in rewrite step 6 (see ``HANDOFF.md``). Nothing ties the two declarations together at build time — a
 renamed/added/removed callable on either side only surfaces as a runtime
 "method not found" once the plugin is loaded.
 
@@ -39,6 +38,7 @@ Exit 0 when the two surfaces match, 1 (one line per discrepancy) otherwise.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -272,16 +272,20 @@ def parse_frontend_callables(src_dir: Path) -> dict[str, int]:
     return result
 
 
+_CALLABLE_NEEDLE = re.compile(r"(?<![A-Za-z0-9_$])(?:callable|unportedCallable)")
+
+
 def _parse_text_into(text: str, result: dict[str, int]) -> None:
     """Find every ``callable<...>("name")`` in *text* and record name -> arity."""
-    needle = "callable"
     i = 0
     n = len(text)
     while True:
-        idx = text.find(needle, i)
-        if idx == -1:
+        # ``callable<...>`` and its wrapper ``unportedCallable<...>`` (src/api/unportedCallable.ts),
+        # but not other identifiers that merely end in ``callable``.
+        match = _CALLABLE_NEEDLE.search(text, i)
+        if match is None:
             return
-        i = idx + len(needle)
+        i = match.end()
         # The ``<`` of the generic must follow ``callable`` (allowing whitespace).
         j = i
         while j < n and text[j].isspace():

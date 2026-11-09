@@ -34,7 +34,8 @@ Rewrite steps (GitHub milestone **0.40.0**, issues #8–#14; the Python code + i
 | 3b part 1: emulator/launch-file choices and relaunch reconciliation | merged into `rust` (PR #23); CI and release dry run green |
 | 3b part 2: game page, metadata, cover refresh and SteamGridDB | merged into `rust` (PR #24); CI and release dry run green |
 | 3b remainder: version choice, launch checks, removal, playtime, updates and Steam Input | implemented in [PR #25](https://github.com/ricktap/romm-emudecky-ng/pull/25) into `rust`; see PR checks for integration status |
-| 4 #12 firmware, 5 #13 save sync, 6 #14 delete Python | not started |
+| 6 #14 delete the Python backend | done on branch `rust-6-remove-python` (stacked on PR #25; see "Python reference implementation") |
+| 4 #12 firmware (**0.45.0**), 5 #13 save sync (**0.55.0**) | not started; moved out of 0.40.0 |
 
 After PR #22: Rust 365 tests / 96.90% lines, Python 5275, frontend 1530 (fewer because removed features' tests went).
 
@@ -129,6 +130,29 @@ Step-3b remainder in [PR #25](https://github.com/ricktap/romm-emudecky-ng/pull/2
 - Local validation: Rust **431 tests / 97.12% line coverage** (`--fail-under-lines 80`), Python **5275 passed**
   (the two known unawaited-download-coroutine warnings), frontend **1530 passed**, pinned pnpm production build passed.
 - No shipping version bump or release tag. The `rust` → `main` swap and milestone release still need Patrick's approval.
+
+## Python reference implementation (read this before porting firmware or save sync)
+
+Step 6 deleted `py_modules/` (except the shim's `rpc/` client and the protocol fake `rpc/server.py`) and the Python
+tests. The last commit that still has the full Python backend and its tests on the rewrite line is:
+
+> **`580680864e89af50c376dc946d12cf35cee7f808`** (`git show 580680864e89af50c376dc946d12cf35cee7f808:py_modules/...`)
+
+Where to look there when porting to Rust:
+
+- **Firmware (0.45.0, #12):** `py_modules/services/firmware.py`, `py_modules/domain/firmware_cache.py`, `firmware_paths.py`,
+  `bios*.py`, tests `tests/services/test_firmware.py`, `tests/domain/test_firmware_*.py`. Registry data stays in
+  `defaults/bios_registry.json` (+ `scripts/generate_bios_registry.py`).
+- **Save sync (0.55.0, #13):** `py_modules/services/saves/`, `py_modules/domain/sync_*.py`, `save_*.py`, `rom_save_state.py`,
+  `py_modules/adapters/` save/romm parts, tests under `tests/services/saves/`, `tests/domain/test_sync_*` / `test_save_*`
+  (incl. the hypothesis property tests) and `tests/contract/test_saves_*.py`. ADRs 0016/0017 in `docs/adr/`. Needs a Switch ADR first.
+- Everything else Python-side at that commit is the spec the Rust code was ported from. The last released Python
+  version is tag `v0.33.2`.
+
+Until those steps land, the 25 firmware/save callables are **not implemented** in the Rust backend. The frontend keeps
+the UI visible and shows a "not implemented" toast on use: `src/api/unportedCallable.ts` (the registry there is pinned
+by a test against `backend/callables.json` and `PORTED_CALLABLES`, so porting a callable fails the test until it is
+switched back to plain `callable()` in `src/api/backend.ts` and removed from the registry).
 
 ## How the rewrite works
 

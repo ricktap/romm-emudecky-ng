@@ -6,6 +6,8 @@ opens and continues a database the Python plugin wrote. Run from the repo root:
     .venv/bin/python backend/tests/fixtures/make_python_v12.py
 """
 
+# NOTE: py_modules/ was removed in rewrite step 6. To regenerate this fixture, check out the Python reference
+# commit from HANDOFF.md ("Python reference implementation") into a scratch worktree and run it there.
 import os
 import sqlite3
 import sys

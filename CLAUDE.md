@@ -5,6 +5,10 @@ install/uninstall games, launch via EmuDeck emulators, save sync, BIOS/firmware.
 a thin Decky shim (`main.py`), React/TypeScript frontend (`src/`). The backend is being rewritten in Rust for 0.40.0
 (GitHub milestone "0.40.0"); the shim's socket protocol is the contract both must satisfy.
 
+- **Step 6 done on `rust-6-remove-python`:** the Python backend is gone; `backend/` (Rust) is the backend and `py_modules/`
+  keeps only the shim's `rpc/` client. The Python-specific sections below (layers, constraints, save sync, tests) describe
+  the **reference implementation at commit `580680864e89af50c376dc946d12cf35cee7f808`** — they are the spec for the Rust ports, and for firmware (0.45.0) and
+  save sync (0.55.0), which are not ported yet (see HANDOFF.md, "Python reference implementation").
 - **Start with [`HANDOFF.md`](HANDOFF.md)** — current state, the Rust-rewrite workflow and remaining steps, working
   agreements with Patrick, and gotchas.
 - **Roadmap and decisions:** [`EMUDECK_PORT_PLAN.md`](EMUDECK_PORT_PLAN.md) — read it before starting work.
@@ -16,7 +20,8 @@ a thin Decky shim (`main.py`), React/TypeScript frontend (`src/`). The backend i
 ## Commands
 
 - Setup: `mise run setup` (or `uv venv --python 3.11 .venv && uv pip install -r requirements-dev.lock && pnpm install`)
-- Python tests: `python -m pytest tests/ -q` · Frontend tests: `pnpm test` · Build: `pnpm build`
+- Rust tests: `cd backend && cargo llvm-cov --locked --summary-only --fail-under-lines 80` · Shim/script tests: `python -m pytest tests/ -q` ·
+  Frontend tests: `pnpm test` · Build: `pnpm build`
 - Deploy to a device: `mise run dev` (build + copy to `~/homebrew/plugins/romm-emudecky-ng` + restart `plugin_loader`)
 - Python deps: edit `requirements-dev.txt`, then `mise run lock-update`.
 

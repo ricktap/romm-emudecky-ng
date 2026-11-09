@@ -172,7 +172,7 @@ exec pnpm exec rollup -c rollup.dev.config.js -w --watch.onEnd="cp -f dist/index
 '''
 
 [tasks."dev:push-backend"]
-description = "Push backend changes (native backend + py_modules/ + main.py) into the deployed plugin during a dev:watch session"
+description = "Push backend changes (native backend + shim client in py_modules/ + main.py) into the deployed plugin during a dev:watch session"
 raw = true
 run = '''
 DEST="$HOME/homebrew/plugins/romm-emudecky-ng"
