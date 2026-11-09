@@ -18,3 +18,9 @@ pub mod sync_reporter;
 pub mod sync_orchestrator;
 pub mod artwork;
 pub mod shortcut_removal;
+pub mod game_detail;
+pub mod game_covers;
+pub mod steamgrid;
+
+#[cfg(test)]
+mod game_artwork_tests;

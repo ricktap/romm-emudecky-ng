@@ -3,8 +3,15 @@ use std::{collections::BTreeMap,sync::Arc};
 use serde_json::{Value,json};
 use base64::{Engine,engine::general_purpose::STANDARD};
 use crate::services::{library_state::LibraryRunState,ports::{RommCoverApi,SteamAssets,SyncLibraryRepo}};
-pub struct ArtworkService {pub api:Arc<dyn RommCoverApi>,pub assets:Arc<dyn SteamAssets>,pub registry:Arc<dyn SyncLibraryRepo>}
+pub struct ArtworkService {pub api:Arc<dyn RommCoverApi>,pub assets:Arc<dyn SteamAssets>,pub registry:Arc<dyn SyncLibraryRepo>,pub lock:tokio::sync::Mutex<()>}
 impl ArtworkService {
+    /// Call while holding `lock`: cache writers share one atomic sidecar.
+    pub async fn download_atomic(&self,url:&str,cache:&str)->anyhow::Result<()> {
+        let tmp=format!("{cache}.tmp");
+        let result=match self.api.download_cover(url,&tmp).await{Ok(())=>self.assets.rename(&tmp,cache).await,Err(e)=>Err(e)};
+        if result.is_err(){let _=self.assets.remove(&tmp).await;}
+        result
+    }
     /// Read-only cover callable used by the frontend before it acknowledges a unit.
     pub async fn get_base64(&self,id:i64)->Value {
         let cache=self.assets.cache_path(id);
@@ -47,15 +54,14 @@ impl ArtworkService {
             on_progress(index+1,roms.len());
             let Some(id)=rom["id"].as_i64()else{continue};let Some(url)=rom["path_cover_large"].as_str().filter(|s|!s.is_empty()).or_else(||rom["path_cover_small"].as_str().filter(|s|!s.is_empty()))else{continue};
             let cache=self.assets.cache_path(id);
+            let _guard=self.lock.lock().await;
             if self.assets.exists(&cache).await{result.insert(id,cache);continue;}
             if let Some(entry)=registry.get(&id){
                 let group=entry["sibling_group_key"].as_str();
                 let count=group.map_or(1,|key|registry.values().filter(|r|r["sibling_group_key"].as_str()==Some(key)).count());
                 if count<=1{if let Some(app)=entry["app_id"].as_i64(){let final_path=format!("{grid}/{app}p.png");if self.assets.exists(&final_path).await && self.assets.copy_atomic(&final_path,&cache).await.is_ok(){result.insert(id,cache);continue;}}}
             }
-            let tmp=format!("{cache}.tmp");
-            let downloaded=match self.api.download_cover(url,&tmp).await{Ok(())=>self.assets.rename(&tmp,&cache).await,Err(e)=>Err(e)};
-            match downloaded{Ok(())=>{result.insert(id,cache);},Err(_)=>{let _=self.assets.remove(&tmp).await;tracing::warn!(rom_id=id,"Cover download failed");}}
+            match self.download_atomic(url,&cache).await{Ok(())=>{result.insert(id,cache);},Err(_)=>{tracing::warn!(rom_id=id,"Cover download failed");}}
         }result
     }
 }

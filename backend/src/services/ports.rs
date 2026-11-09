@@ -385,3 +385,44 @@ pub trait ShortcutBindings: Send + Sync {
     async fn unbind(&self,ids:Vec<i64>)->anyhow::Result<()>;
     async fn reconcile(&self,live:std::collections::BTreeSet<i64>)->anyhow::Result<usize>;
 }
+
+/// A game page is read in one transaction, without HTTP or filesystem probes.
+pub struct GameDetailSnapshot {
+    pub rom: Value,
+    pub install_file: Option<String>,
+    pub metadata: Option<Value>,
+    pub save_status: Option<Value>,
+    pub platform_names: Value,
+}
+
+#[async_trait]
+pub trait GameReadRepo: Send + Sync {
+    async fn game_detail(&self, app_id: i64) -> anyhow::Result<Option<GameDetailSnapshot>>;
+    async fn metadata(&self, rom_id: i64) -> anyhow::Result<Option<Value>>;
+    async fn all_metadata(&self) -> anyhow::Result<Value>;
+    async fn remember_sgdb_id(&self, rom_id: i64, sgdb_id: i64) -> anyhow::Result<()>;
+    /// Only persist if this ROM still owns the shortcut captured before HTTP.
+    async fn remember_cover(&self, rom_id: i64, app_id: i64, path: &str) -> anyhow::Result<bool>;
+}
+
+#[async_trait]
+pub trait PendingRomReader: Send + Sync {
+    async fn pending_rom(&self, rom_id: i64) -> Option<Value>;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SgdbError {
+    #[error("HTTP {0}")]
+    Http(u16),
+    #[error("SteamGridDB connection failed")]
+    Connection,
+    #[error("SteamGridDB returned an unreadable response")]
+    BadResponse,
+}
+
+#[async_trait]
+pub trait SteamGridApi: Send + Sync {
+    async fn request(&self, path: &str, key: &str) -> Result<Value, SgdbError>;
+    /// Image requests are unauthenticated, even on a different CDN origin.
+    async fn download_image(&self, url: &str, dest: &str) -> anyhow::Result<()>;
+}

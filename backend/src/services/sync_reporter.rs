@@ -65,6 +65,12 @@ impl SyncReporter {
         Ok(json!({"success":true,"count":count}))
     }
 }
+#[async_trait::async_trait]
+impl crate::services::ports::PendingRomReader for SyncReporter {
+    async fn pending_rom(&self,id:i64)->Option<Value> {
+        self.pending.lock().await.as_ref()?.emitted.get(&id).cloned()
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;use async_trait::async_trait;
@@ -79,8 +85,11 @@ mod tests {
     fn commit()->SyncUnitCommit{SyncUnitCommit{built:vec![json!({"rom_id":2})],raw:vec![],bindings:BTreeMap::new(),covers:BTreeMap::new(),synced_at:"now".into(),cached_at:1.0}}
     #[tokio::test]
     async fn matching_ack_translates_rebind_and_duplicate_or_foreign_ack_cannot_commit() {
+        use crate::services::ports::PendingRomReader;
         let repo=Arc::new(Repo::default());let reporter=SyncReporter::new(repo.clone());
         let rx=reporter.stage("run".into(),"unit".into(),vec![json!({"rom_id":1,"bind_rom_id":2})],commit()).await;
+        assert_eq!(reporter.pending_rom(1).await,Some(json!({"rom_id":1,"bind_rom_id":2})));
+        assert_eq!(reporter.pending_rom(2).await,None);
         assert_eq!(reporter.report(&json!({"1":123}),"old","unit").await.unwrap()["ignored"],true);
         assert_eq!(reporter.report(&json!({"1":123}),"run","other").await.unwrap()["ignored"],true);
         assert_eq!(reporter.report(&json!({"1":123}),"run","unit").await.unwrap()["count"],1);
@@ -88,6 +97,7 @@ mod tests {
         assert_eq!(repo.commits.lock().unwrap()[0].bindings,BTreeMap::from([(2,123)]));
         assert_eq!(reporter.report(&json!({"1":123}),"run","unit").await.unwrap()["ignored"],true);
         assert_eq!(repo.commits.lock().unwrap().len(),1);
+        assert_eq!(reporter.pending_rom(1).await,None);
     }
     #[tokio::test]
     async fn timeout_late_ack_commits_but_cancel_and_new_run_invalidate_old_work() {

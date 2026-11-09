@@ -36,6 +36,8 @@ const CALLABLE_NAMES_JSON: &str = include_str!("../callables.json");
 /// Callables this backend implements; every other listed name answers
 /// "not implemented in the Rust backend yet".
 pub const PORTED_CALLABLES: &[&str] = &[
+    "get_cached_game_detail", "get_rom_metadata", "get_all_metadata_cache", "fetch_cover_base64", "refresh_cover_artwork",
+    "get_sgdb_artwork_base64", "verify_sgdb_api_key", "save_sgdb_api_key", "get_sgdb_resolution", "search_sgdb_games", "apply_sgdb_game_id",
     "get_platform_core_info", "set_game_core", "clear_game_core", "get_disc_selection", "select_disc",
     "get_rom_relaunch_options", "get_installed_relaunch_options",
     "get_artwork_base64",
@@ -112,6 +114,9 @@ pub struct Backend {
     pub connection_service: Arc<ConnectionService>,
     pub launch: Arc<LaunchService>,
     pub launch_choices: Arc<crate::services::launch_choices::LaunchChoicesService>,
+    pub game_detail: Arc<crate::services::game_detail::GameDetailService>,
+    pub game_covers: Arc<crate::services::game_covers::GameCoverService>,
+    pub steamgrid: Arc<crate::services::steamgrid::SteamGridService>,
     pub downloads: Arc<DownloadService>,
     pub library: Arc<LibraryService>,
     pub sync: Arc<crate::services::sync_orchestrator::SyncOrchestrator>,
@@ -155,7 +160,7 @@ impl Backend {
                 vec![json!({"attempt": attempt, "max_attempts": max_attempts, "delay_s": delay_s})],
             );
         });
-        let http = Arc::new(RommHttp::new(settings.clone(), user_agent, env.retry, Some(on_retry))?);
+        let http = Arc::new(RommHttp::new(settings.clone(), user_agent.clone(), env.retry, Some(on_retry))?);
         let romm_api = Arc::new(RommApi::new(http));
         let events: Arc<dyn EventSink> = Arc::new(HubEvents(hub.clone()));
 
@@ -230,10 +235,24 @@ impl Backend {
         let sync_state = Arc::new(crate::services::library_state::LibraryRunState::default());
         let sync_repo = Arc::new(crate::adapters::sync_library::SqliteSyncLibrary::new(db.clone()));
         let assets = Arc::new(crate::adapters::steam_assets::LocalSteamAssets::new(env.user_home.clone(),env.runtime_dir.join("covers")));
-        let artwork = Arc::new(crate::services::artwork::ArtworkService {api:romm_api.clone(),assets:assets.clone(),registry:sync_repo.clone()});
+        let artwork = Arc::new(crate::services::artwork::ArtworkService {api:romm_api.clone(),assets:assets.clone(),registry:sync_repo.clone(),lock:Default::default()});
         if let Err(error)=artwork.prune().await {tracing::warn!("Artwork startup cleanup failed: {error}");}
         let shortcuts = Arc::new(crate::services::shortcut_removal::ShortcutRemovalService {registry:sync_repo.clone(),bindings:sync_repo.clone(),assets:assets.clone(),kv:kv_config});
         let reporter = Arc::new(crate::services::sync_reporter::SyncReporter::with_assets(sync_repo.clone(),assets,settings.clone()));
+        let game_reads=Arc::new(crate::adapters::game_reads::SqliteGameReads::new(db.clone()));
+        let adopter=adoption.clone();
+        let game_detail=Arc::new(crate::services::game_detail::GameDetailService::new(crate::services::game_detail::GameDetailServiceConfig {
+            repo:game_reads.clone(),settings:settings.clone(),clock:clock.clone(),schedule_adoption:Arc::new(move |id|adopter.schedule_adoption_check(id)),
+        }));
+        let game_covers=Arc::new(crate::services::game_covers::GameCoverService::new(crate::services::game_covers::GameCoverServiceConfig {
+            artwork:artwork.clone(),romm:romm_api.clone(),records:game_reads.clone(),registry:sync_repo.clone(),pending:reporter.clone(),
+        }));
+        let steamgrid=Arc::new(crate::services::steamgrid::SteamGridService::new(crate::services::steamgrid::SteamGridServiceConfig {
+            api:crate::adapters::steamgrid::SteamGridHttp::new(&user_agent,crate::adapters::steamgrid::API_BASE)?,
+            romm:romm_api.clone(),assets:Arc::new(crate::adapters::steam_assets::LocalSteamAssets::new(env.user_home.clone(),env.runtime_dir.join("artwork"))),
+            registry:sync_repo.clone(),records:game_reads,pending:reporter.clone(),settings:settings.clone(),persister:persister.clone(),
+        }));
+        if let Err(error)=steamgrid.prune().await{tracing::warn!("SteamGridDB cache cleanup failed: {error}");}
         let sync = crate::services::sync_orchestrator::SyncOrchestrator::new(crate::services::sync_orchestrator::SyncOrchestratorConfig {
             fetcher: Arc::new(crate::services::library_fetcher::LibraryFetcher {metadata:romm_api.clone(),pages:romm_api.clone(),settings:settings.clone(),state:sync_state.clone()}),
             state:sync_state,reporter,library:library.clone(),registry:sync_repo.clone(),baseline:library,
@@ -253,6 +272,9 @@ impl Backend {
             connection_service,
             launch,
             launch_choices,
+            game_detail,
+            game_covers,
+            steamgrid,
             downloads,
             library: library_service,
             sync,
@@ -280,7 +302,21 @@ impl Backend {
         let sync = self.sync.clone();
         let shortcuts = self.shortcuts.clone();
         let choices = self.launch_choices.clone();
+        let game = self.game_detail.clone();
+        let covers = self.game_covers.clone();
+        let sgdb = self.steamgrid.clone();
         let h: Handler = match name {
+            "get_cached_game_detail" => bind(name,1,1,game,|s,a|async move{s.detail(rom_id_arg(&a[0])?).await.map_err(err)}),
+            "get_rom_metadata" => bind(name,1,1,game,|s,a|async move{s.metadata(rom_id_arg(&a[0])?).await.map_err(err)}),
+            "get_all_metadata_cache" => bind(name,0,0,game,|s,_|async move{s.all_metadata().await.map_err(err)}),
+            "fetch_cover_base64" => bind(name,1,1,covers,|s,a|async move{Ok(s.fetch(rom_id_arg(&a[0])?).await)}),
+            "refresh_cover_artwork" => bind(name,1,1,covers,|s,a|async move{Ok(s.refresh(rom_id_arg(&a[0])?).await.unwrap_or_else(|e|unknown_failure(&e)))}),
+            "get_sgdb_artwork_base64" => bind(name,2,2,sgdb,|s,a|async move{Ok(s.artwork(rom_id_arg(&a[0])?,rom_id_arg(&a[1])?).await)}),
+            "verify_sgdb_api_key" => bind(name,0,1,sgdb,|s,a|async move{let key=opt_str(&a,0,"api_key")?;Ok(s.verify(Some(&key)).await)}),
+            "save_sgdb_api_key" => bind(name,1,1,sgdb,|s,a|async move{Ok(s.save_key(&opt_str(&a,0,"api_key")?).await.unwrap_or_else(|e|unknown_failure(&e)))}),
+            "get_sgdb_resolution" => bind(name,1,1,sgdb,|s,a|async move{Ok(s.resolution(rom_id_arg(&a[0])?).await.unwrap_or_else(|e|unknown_failure(&e)))}),
+            "search_sgdb_games" => bind(name,1,1,sgdb,|s,a|async move{Ok(s.search(&req_str(&a,0,"term")?).await)}),
+            "apply_sgdb_game_id" => bind(name,2,2,sgdb,|s,a|async move{Ok(s.apply(rom_id_arg(&a[0])?,rom_id_arg(&a[1])?).await.unwrap_or_else(|e|unknown_failure(&e)))}),
             "get_platform_core_info" => bind(name,1,1,choices,|s,a|async move {s.get_platform_core_info(rom_id_arg(&a[0])?).await.map_err(err)}),
             "set_game_core" => bind(name,2,2,choices,|s,a|async move {Ok(s.set_game_core(rom_id_arg(&a[0])?, &req_str(&a,1,"label")?).await.unwrap_or_else(|e|unknown_failure(&e)))}),
             "clear_game_core" => bind(name,1,1,choices,|s,a|async move {Ok(s.clear_game_core(rom_id_arg(&a[0])?).await.unwrap_or_else(|e|unknown_failure(&e)))}),
@@ -296,7 +332,7 @@ impl Backend {
             "report_removal_results" => bind(name,1,1,shortcuts,|s,a|async move {Ok(s.report(&a[0]).await.unwrap_or_else(|e|unknown_failure(&e)))}),
             "reconcile_shortcuts" => bind(name,1,1,shortcuts,|s,a|async move {Ok(s.reconcile(&a[0]).await.unwrap_or_else(|e|unknown_failure(&e)))}),
             "save_shortcut_icon" => bind(name,2,2,shortcuts,|s,a|async move {Ok(s.save_icon(rom_id_arg(&a[0])?,a[1].as_str().ok_or_else(||"icon_base64 must be a string".to_string())?).await)}),
-            "get_artwork_base64" => bind(name,1,1,sync,|s,a|async move{Ok(s.artwork_base64(rom_id_arg(&a[0])?).await)}),
+            "get_artwork_base64" => bind(name,1,1,covers,|s,a|async move{Ok(s.get_base64(rom_id_arg(&a[0])?).await)}),
             "sync_preview" => bind(name,0,0,sync,|s,_|async move{Ok(s.preview().await)}),
             "sync_apply_delta" => bind(name,1,1,sync,|s,a|async move{Ok(s.apply_preview(a[0].as_str().unwrap_or("")).await)}),
             "sync_cancel_preview" => bind(name,0,0,sync,|s,_|async move{Ok(s.cancel_preview().await)}),
