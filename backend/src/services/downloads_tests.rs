@@ -71,7 +71,7 @@ async fn single_file_happy_path() {
 }
 
 #[tokio::test]
-async fn unbound_rom_completes_with_null_app_id_and_plain_launch_without_emulator() {
+async fn unbound_rom_completes_with_null_app_id_and_empty_launch_without_emulator() {
     let env = env_with_rom().await;
     env.seed_rom(ROM, "switch", "Zelda.nsp", None, None).await;
     env.locator.installed.lock().unwrap().clear();
@@ -79,7 +79,7 @@ async fn unbound_rom_completes_with_null_app_id_and_plain_launch_without_emulato
     env.wait_status(ROM, "completed").await;
     let complete = &env.events.named("download_complete")[0];
     assert_eq!(complete["app_id"], Value::Null);
-    assert_eq!(complete["launch_options"], format!(" \"{}\"", target(&env, "Zelda.nsp")));
+    assert_eq!(complete["launch_options"], "");
 }
 
 #[tokio::test]
@@ -101,11 +101,11 @@ async fn per_game_override_and_missing_executable_are_baked() {
             target(&env, "Zelda.nsp")
         )
     );
-    // A located emulator that vanished since bakes nothing but the path.
+    // An unresolved emulator must keep the empty placeholder, never a file-only command.
     env.locator.missing.lock().unwrap().insert(EDEN.into());
     let path = target(&env, "Zelda.nsp");
     let emulator = crate::domain::emulator_table::EmulatorInvocation::table("eden", EDEN, "Eden");
-    assert_eq!(env.launch.launch_options(Some(&emulator), &path), format!(" \"{path}\""));
+    assert_eq!(env.launch.launch_options(Some(&emulator), &path), "");
 }
 
 #[tokio::test]

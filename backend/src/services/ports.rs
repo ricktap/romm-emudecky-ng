@@ -260,6 +260,23 @@ pub struct RegistryPlatformRow {
     pub count: i64,
 }
 
+/// A consistent ROM/install pair, read before filesystem or emulator probes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchSnapshot {
+    pub rom: RomRow,
+    pub install: Option<crate::domain::rom_install::RomInstall>,
+}
+
+/// Launch preferences use narrow writes: sync metadata and history survive.
+/// Conditional writes refuse a stale snapshot (e.g. uninstall during a scan).
+#[async_trait]
+pub trait LaunchPreferencesRepo: Send + Sync {
+    async fn launch_snapshot(&self, rom_id: i64) -> anyhow::Result<Option<LaunchSnapshot>>;
+    async fn installed_launch_snapshots(&self) -> anyhow::Result<Vec<LaunchSnapshot>>;
+    async fn change_emulator_override(&self, expected: &LaunchSnapshot, label: Option<&str>) -> anyhow::Result<bool>;
+    async fn change_selected_disc(&self, expected: &LaunchSnapshot, filename: Option<&str>) -> anyhow::Result<bool>;
+}
+
 /// The synced library (`roms`) and its install records (`rom_installs`).
 #[async_trait]
 pub trait LibraryRepo: Send + Sync {

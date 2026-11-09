@@ -30,11 +30,12 @@ Rewrite steps (GitHub milestone **0.40.0**, issues #8–#14; the Python code + i
 | 1b #9 Rust foundation (protocol server, DB actor, settings + connection) | merged into `rust` |
 | 2 #10 download queue, adoption, Switch launch | merged into `rust` |
 | 3a #11 part 1: removals (`REMOVED_TILL_0_90_0.md`) | merged into `rust` (PR #21); CI and the release dry-run are green |
-| 3a part 2: port library sync, shortcuts, collections | implemented in [PR #22](https://github.com/ricktap/romm-emudecky-ng/pull/22), targeting `rust`; see the PR checks for integration status |
-| 3b: remaining callables (game page, SGDB, playtime, …) | not started |
+| 3a part 2: port library sync, shortcuts, collections | merged into `rust` (PR #22); CI green |
+| 3b part 1: emulator/launch-file choices and relaunch reconciliation | implemented on `rust-3b-launch-choices`; integration pending |
+| 3b remainder: game page, SGDB, playtime, … | not started |
 | 4 #12 firmware, 5 #13 save sync, 6 #14 delete Python | not started |
 
-`rust` branch numbers: Rust 286 tests / 97% lines, Python 5275, frontend 1528 (fewer because removed features' tests went).
+After PR #22: Rust 365 tests / 96.90% lines, Python 5275, frontend 1530 (fewer because removed features' tests went).
 
 Step-3a part-2 implementation in [PR #22](https://github.com/ricktap/romm-emudecky-ng/pull/22):
 
@@ -57,9 +58,26 @@ Step-3a part-2 implementation in [PR #22](https://github.com/ricktap/romm-emudec
 - `get_artwork_base64` belongs to this step because syncManager calls it BEFORE acknowledging a unit.
 - Reporter commits identity/metadata, publishes art/applies Steam Input and runs post-commit adoption before
   signalling the orchestrator. Its late-ack path executes the same post-commit adoption exactly once.
-- Integration is tracked by PR #22 into `rust`, with CI and the release workflow dry-run required before merge.
-  After it merges, continue with step 3b. Issue #11 covers more than this part and must not be closed prematurely.
+- PR #22 merged into `rust` on 2026-11-09 with green CI. Issue #11 covers more than this part and must not be closed prematurely.
   The shipping Python backend on `main` is unchanged; no release tag is part of step 3a.
+
+Step-3b part-1 implementation (`rust-3b-launch-choices`, integration pending):
+
+- Ported `get_platform_core_info`, `set_game_core`, `clear_game_core`, `get_disc_selection`, `select_disc`,
+  `get_rom_relaunch_options`, and `get_installed_relaunch_options`. Switch only; non-Switch core/disc extras stay removed.
+- Picker payloads retain the Python shapes and disabled/not-installed reasons. Per-game overrides win over platform
+  preferences, then the first installed emulator. Stale pins fall back without being erased; clearing follows the default.
+- All re-bakes share `LaunchService`, preserve the chosen launch file, and keep the shortcut app ID. Reads snapshot
+  ROM/install pairs in SQLite, then probe outside the transaction. Conditional pin-only writes reject concurrent
+  install/binding/preference changes with `state_changed` rather than acknowledging a stale update.
+- Two intentional corrections to legacy Python behavior: unresolved emulators produce empty launch options (also for
+  download/adoption), as required by the launcher contract; launch-file pins retain the exact enumerated basename,
+  including significant whitespace.
+- Tests port the Python core/disc/relaunch and Switch-launch contracts, including real binary/socket calls, restart
+  persistence, shell quoting, database-write failures, and stale-snapshot rejection. CI and a release dry run are required
+  before merge. No shipping version bump or release tag belongs to this part.
+- Local validation: Rust **377 tests / 96.97% line coverage** (`--fail-under-lines 80`), Python **5275 passed**
+  (the two pre-existing unawaited-download-coroutine warnings), frontend **1530 passed**, pinned pnpm build passed.
 
 ## How the rewrite works
 
@@ -84,18 +102,8 @@ Step-3a part-2 implementation in [PR #22](https://github.com/ricktap/romm-emudec
 
 ### Remaining scope
 
-- **3a part 2** — port library sync (`py_modules/services/library/*`, `domain/` sync/preview/sibling/shortcut-data pieces,
-  `shortcut_removal`, startup healing's sync-run parts). Callables: `get_platforms`, `save_platform_sync`,
-  `set_all_platforms_sync`, `get_collections`, `save_collection_sync`, `set_all_collections_sync`, `start_sync`,
-  `sync_preview`, `sync_apply_delta`, `sync_cancel_preview`, `cancel_sync`, `get_sync_status`, `get_sync_stats`,
-  `sync_heartbeat`, `report_unit_results`, `report_removal_results`, `reconcile_shortcuts`, `get_app_id_rom_id_map`,
-  `clear_sync_cache`, `remove_all_shortcuts`, `remove_platform_shortcuts`, `save_shortcut_icon`, + sync events
-  (`sync_apply_unit`, progress/stage; payloads unchanged — the frontend `syncManager` drives them). Hook adoption in:
-  `plan_adoptions` before shortcuts are built, `commit_adoptions` after the unit commits (mirror the Python orchestrator), so
-  adopted games get Eden launch options in the same sync. Check whether `get_registry_platforms` is BIOS-only (then remove).
-- **3b** — game page (`get_cached_game_detail`, metadata, covers), SteamGridDB (6 callables), emulator/launch-file/version
-  choice (`get_platform_core_info`, `set_game_core`, `clear_game_core`, `check_core_change`, `get_disc_selection`,
-  `select_disc`, `get_version_list`, `switch_version`), launch checks (`evaluate_launch`, `get_*_relaunch_options`,
+- **3b remainder** — game page (`get_cached_game_detail`, metadata, covers), SteamGridDB (6 callables), version
+  choice (`get_version_list`, `switch_version`), core/save compatibility (`check_core_change`), launch checks (`evaluate_launch`,
   `check_local_drift`), `remove_rom`, `uninstall_all_roms`, `check_for_update`, playtime (`record_session_start`,
   `finalize_game_session`, `get_all_playtime`, `get_playtime_scope_notice`, `reconcile_playtime`), `apply_steam_input_setting`.
   Run the same feature review as 3a before porting; anything dropped goes into `REMOVED_TILL_0_90_0.md`.

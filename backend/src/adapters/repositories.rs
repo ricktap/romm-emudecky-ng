@@ -286,6 +286,64 @@ impl SqliteLibrary {
     }
 }
 
+fn launch_snapshot(c: &rusqlite::Connection, id: i64) -> rusqlite::Result<Option<crate::services::ports::LaunchSnapshot>> {
+    let rom = c.query_row(&format!("SELECT {ROM_COLUMNS} FROM roms WHERE rom_id = ?1"), [id], row_to_rom).optional()?;
+    let Some(rom) = rom else { return Ok(None); };
+    let install = c.query_row(&format!("SELECT {INSTALL_COLUMNS} FROM rom_installs WHERE rom_id = ?1"), [id], row_to_install).optional()?;
+    Ok(Some(crate::services::ports::LaunchSnapshot { rom, install }))
+}
+
+impl SqliteLibrary {
+    async fn change_launch_preference(&self, expected: &crate::services::ports::LaunchSnapshot, value: Option<&str>, emulator: bool) -> anyhow::Result<bool> {
+        let expected = expected.clone();
+        let value = value.map(str::to_string);
+        self.db.call(move |c| {
+            let tx = c.transaction()?;
+            if launch_snapshot(&tx, expected.rom.rom_id)?.as_ref() != Some(&expected) {
+                return Ok(false);
+            }
+            let sql = if emulator { "UPDATE roms SET emulator_override = ?1 WHERE rom_id = ?2" }
+                else { "UPDATE roms SET selected_disc = ?1 WHERE rom_id = ?2" };
+            tx.execute(sql, params![value, expected.rom.rom_id])?;
+            tx.commit()?;
+            Ok(true)
+        }).await
+    }
+}
+
+#[async_trait]
+impl crate::services::ports::LaunchPreferencesRepo for SqliteLibrary {
+    async fn launch_snapshot(&self, rom_id: i64) -> anyhow::Result<Option<crate::services::ports::LaunchSnapshot>> {
+        self.db.call(move |c| {
+            let tx = c.unchecked_transaction()?;
+            let snapshot = launch_snapshot(&tx, rom_id)?;
+            tx.commit()?;
+            Ok(snapshot)
+        }).await
+    }
+
+    async fn installed_launch_snapshots(&self) -> anyhow::Result<Vec<crate::services::ports::LaunchSnapshot>> {
+        self.db.call(|c| {
+            let tx = c.unchecked_transaction()?;
+            let ids = {
+                let mut stmt = tx.prepare("SELECT i.rom_id FROM rom_installs i JOIN roms r ON r.rom_id = i.rom_id WHERE r.shortcut_app_id IS NOT NULL ORDER BY i.rom_id")?;
+                stmt.query_map([], |r| r.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            let snapshots = ids.into_iter().map(|id| launch_snapshot(&tx, id).map(Option::unwrap)).collect::<rusqlite::Result<Vec<_>>>()?;
+            tx.commit()?;
+            Ok(snapshots)
+        }).await
+    }
+
+    async fn change_emulator_override(&self, expected: &crate::services::ports::LaunchSnapshot, label: Option<&str>) -> anyhow::Result<bool> {
+        self.change_launch_preference(expected, label, true).await
+    }
+
+    async fn change_selected_disc(&self, expected: &crate::services::ports::LaunchSnapshot, filename: Option<&str>) -> anyhow::Result<bool> {
+        self.change_launch_preference(expected, filename, false).await
+    }
+}
+
 #[async_trait]
 impl LibraryRepo for SqliteLibrary {
     async fn rom(&self, rom_id: i64) -> anyhow::Result<Option<RomRow>> {

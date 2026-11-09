@@ -229,7 +229,7 @@ async fn adopt_rom_writes_install_and_emits_download_complete() {
         event,
         json!({
             "rom_id": 7, "rom_name": "Game 7", "platform_name": "Game Boy Advance", "file_path": path,
-            "app_id": 4242, "launch_options": format!(" \"{path}\""), "resumable": false, "adopted": true,
+            "app_id": 4242, "launch_options": "", "resumable": false, "adopted": true,
         })
     );
     assert_eq!(env.library.install(7).await.unwrap().unwrap().file_path, path);
