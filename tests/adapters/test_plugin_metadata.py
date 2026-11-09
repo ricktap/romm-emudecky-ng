@@ -65,8 +65,8 @@ class TestPluginMetadataAdapter:
 
 class TestReadPluginName:
     def test_reads_plugin_json_name(self, tmp_path):
-        (tmp_path / "plugin.json").write_text(json.dumps({"name": "EmuDecky RomM+"}))
-        assert PluginMetadataAdapter().read_plugin_name(str(tmp_path)) == "EmuDecky RomM+"
+        (tmp_path / "plugin.json").write_text(json.dumps({"name": "EmuDecky RomM NG"}))
+        assert PluginMetadataAdapter().read_plugin_name(str(tmp_path)) == "EmuDecky RomM NG"
 
     def test_missing_file_returns_empty(self, tmp_path):
         assert PluginMetadataAdapter().read_plugin_name(str(tmp_path)) == ""
@@ -85,4 +85,18 @@ class TestReadPluginName:
         import os
 
         repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        assert PluginMetadataAdapter().read_plugin_name(repo_root) == "EmuDecky RomM+"
+        assert PluginMetadataAdapter().read_plugin_name(repo_root) == "EmuDecky RomM NG"
+
+
+def test_real_plugin_name_is_docker_tag_safe():
+    """The Decky CLI builds the native backend in Docker under an image tag made from
+    plugin.json "name" (lowercased, spaces -> "-"). Docker tags allow only [a-z0-9_.-],
+    so e.g. "EmuDecky RomM+" broke the release build."""
+    import json
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    name = json.loads((root / "plugin.json").read_text())["name"]
+    tag = name.lower().replace(" ", "-")
+    assert re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", tag), f"plugin name {name!r} -> invalid Docker tag {tag!r}"
