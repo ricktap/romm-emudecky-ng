@@ -1,20 +1,17 @@
 """Decky shim — the only file Decky Loader talks to.
 
-Holds no callable logic. ``_main`` launches the backend, connects to it over the
-backend protocol socket (``docs/architecture/backend-protocol.md``), asks it for
-its callable names, and generates one ``async def`` forwarder per name on
-:class:`Plugin` (Decky resolves a frontend ``callable("name")`` as a method on
-this class). Backend events are relayed to ``decky.emit``. ``_unload`` asks the
-backend to shut down.
-
-Today the backend is the Python :mod:`backend` module, run in this process
-(Decky is a frozen executable with no separate interpreter). Moving to a
-separate binary only replaces :func:`_launch_backend`.
+Holds no callable logic. ``_main`` spawns the native backend
+(``bin/romm-emudecky-ng-backend``), connects to it over the backend protocol
+socket (``docs/architecture/backend-protocol.md``), and relays its events to
+``decky.emit``. Every frontend callable is an ``async def`` forwarder generated
+on :class:`Plugin` (Decky resolves a frontend ``callable("name")`` as a method
+on this class). ``_unload`` asks the backend to shut down and reaps the process.
 """
 
 import asyncio
-import inspect
+import json
 import os
+import subprocess
 import sys
 from typing import Any
 
@@ -27,46 +24,79 @@ import decky
 from rpc.client import BackendClient
 from rpc.protocol import socket_path_for
 
-
-async def _launch_backend(socket_path: str) -> Any:
-    """Start the backend serving *socket_path*; return a handle with ``wait_closed()``.
-
-    The single swap point for the backend implementation. In-process Python
-    today; a native backend becomes "spawn ``bin/<binary>`` with the Decky env
-    and *socket_path*, return the process handle".
-    """
-    from backend import serve_in_process
-
-    return await serve_in_process(
-        socket_path,
-        settings_dir=decky.DECKY_PLUGIN_SETTINGS_DIR,
-        runtime_dir=decky.DECKY_PLUGIN_RUNTIME_DIR,
-        plugin_dir=decky.DECKY_PLUGIN_DIR,
-        user_home=decky.DECKY_USER_HOME,
-        logger=decky.logger,
-    )
-
+# The native backend. The Decky CLI builds it from ``backend/`` and ships it in ``bin/``.
+BACKEND_BINARY = os.path.join(plugin_dir, "bin", "romm-emudecky-ng-backend")
 
 # How long a frontend call made during plugin startup waits for the backend.
 _READY_TIMEOUT_S = 60.0
+# How long the backend may take to bind its socket (migrations, legacy token mint).
+_CONNECT_TIMEOUT_S = 60.0
+# How long ``_unload`` waits for the process to exit after ``__shutdown__``.
+_EXIT_TIMEOUT_S = 10.0
 
 
-def static_callable_names() -> list[str]:
+class BackendProcess:
+    """The spawned backend process; ``wait_closed`` reaps it (killing it if it hangs)."""
+
+    def __init__(self, process: asyncio.subprocess.Process) -> None:
+        self.process = process
+
+    async def wait_closed(self) -> None:
+        try:
+            await asyncio.wait_for(self.process.wait(), timeout=_EXIT_TIMEOUT_S)
+        except TimeoutError:
+            decky.logger.warning("Backend did not exit after shutdown; killing it")
+            self.process.kill()
+            await self.process.wait()
+
+
+def backend_env() -> dict[str, str]:
+    """The environment the backend runs with: ours plus the Decky directories."""
+    env = dict(os.environ)
+    env.update(
+        {
+            "DECKY_PLUGIN_SETTINGS_DIR": decky.DECKY_PLUGIN_SETTINGS_DIR,
+            "DECKY_PLUGIN_RUNTIME_DIR": decky.DECKY_PLUGIN_RUNTIME_DIR,
+            "DECKY_PLUGIN_LOG_DIR": decky.DECKY_PLUGIN_LOG_DIR,
+            "DECKY_PLUGIN_DIR": decky.DECKY_PLUGIN_DIR,
+            "DECKY_USER_HOME": decky.DECKY_USER_HOME,
+        }
+    )
+    return env
+
+
+async def _launch_backend(socket_path: str) -> BackendProcess:
+    """Spawn the native backend serving *socket_path*; return its process handle."""
+    process = await asyncio.create_subprocess_exec(
+        BACKEND_BINARY,
+        "--socket",
+        socket_path,
+        env=backend_env(),
+        stdin=asyncio.subprocess.DEVNULL,
+    )
+    return BackendProcess(process)
+
+
+def static_callable_names(binary: str = BACKEND_BINARY) -> list[str]:
     """The callable surface, known before the backend runs.
 
     Decky starts ``_main`` as a fire-and-forget task and serves frontend calls in
     parallel, so the forwarders must exist at import time — a call that arrives
     while the backend is still starting then waits for it instead of failing with
-    "no such method". Today the surface is read from the Python ``Backend``
-    class; a native backend ships the same list as data.
+    "no such method". The binary prints its surface with ``--list-methods``; when
+    it is missing or broken the list is empty (logged) and ``_attach`` installs
+    whatever the running backend reports.
     """
-    from backend import Backend
-
-    return sorted(
-        name
-        for name, fn in inspect.getmembers(Backend, inspect.iscoroutinefunction)
-        if not name.startswith("_")
-    )
+    try:
+        out = subprocess.run([binary, "--list-methods"], capture_output=True, timeout=10, check=True)
+        names = json.loads(out.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        decky.logger.error("Could not read the backend callable list from %s: %s", binary, exc)
+        return []
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        decky.logger.error("Backend %s printed a malformed callable list", binary)
+        return []
+    return sorted(names)
 
 
 def _make_forwarder(name: str):
@@ -126,19 +156,41 @@ class Plugin:
             self._backend = await _launch_backend(socket_path)
             await self._attach(socket_path, decky.emit)
         except Exception:
-            # Same posture as the old in-process startup failure: log and stay inert.
+            # Log and stay inert; a half-started process is not left behind.
             decky.logger.exception("Backend failed to start; plugin stays inert")
             self._start_failed = True
+            await self._kill_backend()
             return
         finally:
             self._ready().set()
         decky.logger.info("EmuDecky RomM Manager plugin loaded")
 
     async def _attach(self, socket_path: str, relay: Any) -> None:
-        """Connect to the backend at *socket_path* and generate the callable forwarders."""
-        self._client = await BackendClient.connect(socket_path, relay, decky.logger)
+        """Connect to the backend at *socket_path* and generate the callable forwarders.
+
+        Fails fast when the spawned backend process exits before its socket accepts.
+        """
+        connect = asyncio.ensure_future(
+            BackendClient.connect(socket_path, relay, decky.logger, timeout=_CONNECT_TIMEOUT_S)
+        )
+        process = getattr(self._backend, "process", None)
+        if process is not None:
+            exited = asyncio.ensure_future(process.wait())
+            done, _ = await asyncio.wait({connect, exited}, return_when=asyncio.FIRST_COMPLETED)
+            if connect not in done:
+                connect.cancel()
+                raise RuntimeError(f"Backend exited during startup (code {process.returncode})")
+            exited.cancel()
+        self._client = await connect
         install_forwarders(type(self), await self._client.list_methods())
         self._ready().set()
+
+    async def _kill_backend(self) -> None:
+        backend, self._backend = self._backend, None
+        process = getattr(backend, "process", None)
+        if process is not None and process.returncode is None:
+            process.kill()
+            await process.wait()
 
     async def _unload(self):  # Decky lifecycle — must be async
         client, self._client = self._client, None

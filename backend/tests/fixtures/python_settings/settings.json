@@ -1,0 +1,32 @@
+{
+  "romm_url": "http://romm.example:8080",
+  "romm_api_token": "rmm_python_token",
+  "romm_api_token_id": 7,
+  "romm_api_token_origin": "http://romm.example:8080",
+  "romm_api_token_source": "minted",
+  "enabled_platforms": {
+    "4": true
+  },
+  "enabled_collections": {
+    "user": {},
+    "smart": {},
+    "franchise": {}
+  },
+  "collection_create_platform_groups": false,
+  "preferred_region": "auto",
+  "steam_input_mode": "default",
+  "steamgriddb_api_key": "sgdb-key",
+  "romm_allow_insecure_ssl": false,
+  "log_level": "warn",
+  "save_sync_enabled": false,
+  "sync_before_launch": true,
+  "sync_after_exit": true,
+  "default_slot": "default",
+  "autocleanup_limit": 10,
+  "device_name": "Deck \u00e9t\u00e9",
+  "platform_cores": {},
+  "version": 11,
+  "some_future_key": {
+    "kept": true
+  }
+}

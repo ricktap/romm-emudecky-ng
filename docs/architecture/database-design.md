@@ -232,7 +232,7 @@ can read installs without a join.
 
 The tables that back the aggregates, designed in [#780](https://github.com/danielcopper/decky-romm-sync/issues/780). The
 authoritative DDL — every column type, default, constraint, and the full decision rationale inline — is
-[`py_modules/db/migrations/001_initial.sql`](https://github.com/danielcopper/decky-romm-sync/blob/main/py_modules/db/migrations/001_initial.sql).
+[`backend/migrations/001_initial.sql`](https://github.com/danielcopper/decky-romm-sync/blob/main/backend/migrations/001_initial.sql).
 This section is the map, not a re-derivation.
 
 ### One table per aggregate
@@ -350,7 +350,7 @@ other third-party migration tooling.
 is the whole mechanism (the same lean approach SDH-PlayTime and Junk-Store use). This is why the schema version is
 deliberately **not** a `kv_config` key.
 
-**Discovery — `NNN_descriptive_name.sql`.** Migrations are plain `.sql` files under `py_modules/db/migrations/`, named
+**Discovery — `NNN_descriptive_name.sql`.** Migrations are plain `.sql` files under `backend/migrations/`, named
 with a leading integer (`001_initial.sql`). At startup the runner scans that directory, parses the integer prefix off
 each filename, sorts ascending **numerically** (so `10` follows `2`, not lexically), and applies only the files whose
 number is greater than the database's current `user_version`. Files that don't match `NNN_*.sql` are ignored.
@@ -374,14 +374,17 @@ aborts startup rather than degrading silently) so a corrupt or unmigratable data
 
 ### Adding a migration past v1
 
-Drop a new file `NNN_descriptive_name.sql` into `py_modules/db/migrations/` containing the schema change (e.g.
+Drop a new file `NNN_descriptive_name.sql` into `backend/migrations/` containing the schema change (e.g.
 `ALTER TABLE roms ADD COLUMN …;` or a fresh `CREATE TABLE …;`) as transaction-safe DDL with no `BEGIN`/`COMMIT`. That's
 the whole change — on the next startup the runner sees `NNN > user_version`, applies it inside its own transaction, and
 bumps `user_version` to `NNN`. Existing databases receive only the new migrations; fresh databases receive all of them
-in order. No code change is needed to register the file.
+in order. The Python runner needs no code change to register the file; the Rust backend embeds the migrations at
+compile time, so the file must also be appended to the `MIGRATIONS` list in `backend/src/adapters/db.rs` (a unit test
+fails until the list matches the directory). Both backends apply the same files with the same `user_version` semantics,
+so either one opens and continues a database the other wrote.
 
 The first migration past `001` is
-[`002_add_emulator_override.sql`](https://github.com/danielcopper/decky-romm-sync/blob/main/py_modules/db/migrations/002_add_emulator_override.sql)
+[`002_add_emulator_override.sql`](https://github.com/danielcopper/decky-romm-sync/blob/main/backend/migrations/002_add_emulator_override.sql)
 — a single `ALTER TABLE roms ADD COLUMN emulator_override TEXT;` for the per-game core override
 ([ADR-0011](https://github.com/danielcopper/decky-romm-sync/blob/main/docs/adr/0011-per-game-core-override-in-db-applied-via-e-flag.md)),
 which stamps `user_version = 2`.

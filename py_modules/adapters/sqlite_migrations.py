@@ -2,7 +2,8 @@
 
 Anything that creates the SQLite database or advances its schema at startup
 belongs here. The runner discovers ``NNN_*.sql`` files under
-``py_modules/db/migrations/``, applies the ones newer than the database's
+``backend/migrations/`` (shared with the Rust backend, which embeds the same
+files), applies the ones newer than the database's
 recorded version, and stamps the new version into ``PRAGMA user_version``.
 
 stdlib ``sqlite3`` only — no third-party migration tooling. The
@@ -21,8 +22,11 @@ import sqlite3
 # Leading-integer prefix on a ``.sql`` migration file: 001_initial.sql -> 1.
 _MIGRATION_NAME = re.compile(r"^(\d+)_.+\.sql$")
 
-# Migrations ship alongside this adapter at py_modules/db/migrations/.
-MIGRATIONS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), os.pardir, "db", "migrations"))
+# The migrations live in backend/migrations/ — the one copy both backends read
+# (the Rust backend embeds them at compile time).
+MIGRATIONS_DIR = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, "backend", "migrations")
+)
 
 _module_logger = logging.getLogger(__name__)
 
