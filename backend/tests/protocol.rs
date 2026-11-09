@@ -52,10 +52,10 @@ async fn list_unknown_unported_arity_and_malformed() {
     let r = b.request("no_such_method", json!([])).await;
     assert_eq!(r["error"], json!({"message": "unknown method: no_such_method"}));
 
-    let r = b.request("start_download", json!([42])).await;
+    let r = b.request("sync_preview", json!([])).await;
     assert_eq!(
         r["error"],
-        json!({"message": "not implemented in the Rust backend yet: start_download"})
+        json!({"message": "not implemented in the Rust backend yet: sync_preview"})
     );
 
     let r = b.request("get_settings", json!([1])).await;

@@ -14,6 +14,8 @@ use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::process::{Child, Command};
 
+pub mod fake_romm;
+
 pub const BIN: &str = env!("CARGO_BIN_EXE_romm-emudecky-ng-backend");
 
 /// The Decky directories of one plugin instance.
@@ -153,6 +155,33 @@ impl Backend {
         let resp = self.request(method, args).await;
         assert!(resp.get("error").is_none(), "{method} failed: {resp}");
         resp["result"].clone()
+    }
+
+    /// Wait for the next `event` whose payload satisfies `pred` (queued
+    /// events first) and return its payload.
+    pub async fn wait_event(&mut self, event: &str, pred: impl Fn(&Value) -> bool) -> Value {
+        loop {
+            if let Some(pos) = self
+                .events
+                .iter()
+                .position(|e| e["event"] == event && pred(&e["args"][0]))
+            {
+                return self.events.remove(pos).unwrap()["args"][0].clone();
+            }
+            let v = self.next_frame().await.expect("connection closed while waiting for an event");
+            if v.get("event").is_some() {
+                self.events.push_back(v);
+            }
+        }
+    }
+
+    /// Every queued event payload named `event`.
+    pub fn seen(&self, event: &str) -> Vec<Value> {
+        self.frames
+            .iter()
+            .filter(|f| f["event"] == event)
+            .map(|f| f["args"][0].clone())
+            .collect()
     }
 
     /// `__shutdown__`, then wait for the process to exit.

@@ -44,12 +44,15 @@ this protocol, and the Rust integration tests (`backend/tests/`) drive the binar
 2. Decky calls `Plugin._main()`. The shim spawns `bin/romm-emudecky-ng-backend --socket <path>` with the Decky
    directories in its environment (`DECKY_PLUGIN_SETTINGS_DIR`, `…_RUNTIME_DIR`, `…_LOG_DIR`, `DECKY_PLUGIN_DIR`,
    `DECKY_USER_HOME`). The backend runs its startup work (SQLite migrations, settings load + upgrade, legacy credential
-   migration) and then binds the socket (mode `0600`).
+   migration, download-queue reconciliation, which keeps job partials, deletes orphan `.tmp` files, and auto-resumes
+   interrupted downloads in the background) and then binds the socket (mode `0600`). Events emitted before the shim
+   connects are buffered and delivered on connect.
 3. The shim connects (retrying until the socket accepts; it gives up at once if the process exits first), sends
    `__list_methods__`, and adds forwarders for any name the static list missed.
 4. Each event frame is passed to `decky.emit(name, *args)`.
-5. Decky calls `Plugin._unload()`. The shim sends `__shutdown__`; the backend runs its shutdown work, answers, closes,
-   and exits. The shim closes its connection and reaps the process (killing it after 10 s).
+5. Decky calls `Plugin._unload()`. The shim sends `__shutdown__`; the backend runs its shutdown work (running downloads
+   stop and keep their `download_jobs` row and partial file, so the next start resumes them), answers, closes, and
+   exits. The shim closes its connection and reaps the process (killing it after 10 s).
 
 If the connection drops, pending calls fail and the next call reconnects once. If the backend fails to start, the shim
 logs it and the plugin stays inert. The backend also exits cleanly on `SIGTERM`, and on Linux asks the kernel to send it
@@ -57,7 +60,9 @@ logs it and the plugin stays inert. The backend also exits cleanly on `SIGTERM`,
 `<DECKY_PLUGIN_LOG_DIR>/backend.log` (stderr when that variable is unset).
 
 Callables the Rust backend has not ported yet are still listed (the frontend's callable surface never changes) but
-answer with the error `not implemented in the Rust backend yet: <name>`. The listed surface is `backend/callables.json`;
+answer with the error `not implemented in the Rust backend yet: <name>`. `PORTED_CALLABLES` in `backend/src/app.rs`
+lists the ported ones (settings + connection from step 1b; the download queue from step 2: `start_download`,
+`cancel_download`, `pause_download`, `resume_download`, `get_download_queue`, `get_installed_rom`). The listed surface is `backend/callables.json`;
 `tests/test_rust_backend_callables.py` keeps it identical to the Python `Backend`.
 
 ## Code
@@ -69,6 +74,7 @@ answer with the error `not implemented in the Rust backend yet: <name>`. The lis
 | Rust backend: protocol server          | `backend/src/rpc/`                                       |
 | Rust backend: composition + callables  | `backend/src/app.rs`, `backend/callables.json`           |
 | Rust backend: entry point              | `backend/src/main.rs`                                    |
+| Rust backend: downloads + adoption     | `backend/src/services/{downloads,adoption,launch}.rs`    |
 | Python backend (spec, in-process only) | `py_modules/backend.py`, `py_modules/rpc/server.py`      |
 
 `scripts/check_callable_manifest.py` (and `tests/contract/test_callable_manifest.py`) compares the frontend's

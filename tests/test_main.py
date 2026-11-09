@@ -221,8 +221,9 @@ async def test_shim_against_the_real_rust_backend(tmp_path):
     assert await plugin.get_settings_reset_notice() == {"pending": False, "backed_up_to": None}  # type: ignore[attr-defined]
     from rpc.client import BackendCallError
 
-    with pytest.raises(BackendCallError, match="not implemented in the Rust backend yet: start_download"):
-        await plugin.start_download(1)  # type: ignore[attr-defined]
+    assert await plugin.get_download_queue() == {"downloads": []}  # type: ignore[attr-defined]
+    with pytest.raises(BackendCallError, match="not implemented in the Rust backend yet: sync_preview"):
+        await plugin.sync_preview()  # type: ignore[attr-defined]
     process = plugin._backend.process
     await plugin._unload()
     assert process.returncode == 0
