@@ -31,7 +31,7 @@ Rewrite steps (GitHub milestone **0.40.0**, issues #8–#14; the Python code + i
 | 2 #10 download queue, adoption, Switch launch | merged into `rust` |
 | 3a #11 part 1: removals (`REMOVED_TILL_0_90_0.md`) | merged into `rust` (PR #21); CI and the release dry-run are green |
 | 3a part 2: port library sync, shortcuts, collections | merged into `rust` (PR #22); CI green |
-| 3b part 1: emulator/launch-file choices and relaunch reconciliation | implemented on `rust-3b-launch-choices`; integration pending |
+| 3b part 1: emulator/launch-file choices and relaunch reconciliation | implemented in [PR #23](https://github.com/ricktap/romm-emudecky-ng/pull/23), targeting `rust`; see PR state/checks for integration status |
 | 3b remainder: game page, SGDB, playtime, … | not started |
 | 4 #12 firmware, 5 #13 save sync, 6 #14 delete Python | not started |
 
@@ -61,7 +61,7 @@ Step-3a part-2 implementation in [PR #22](https://github.com/ricktap/romm-emudec
 - PR #22 merged into `rust` on 2026-11-09 with green CI. Issue #11 covers more than this part and must not be closed prematurely.
   The shipping Python backend on `main` is unchanged; no release tag is part of step 3a.
 
-Step-3b part-1 implementation (`rust-3b-launch-choices`, integration pending):
+Step-3b part-1 implementation in [PR #23](https://github.com/ricktap/romm-emudecky-ng/pull/23):
 
 - Ported `get_platform_core_info`, `set_game_core`, `clear_game_core`, `get_disc_selection`, `select_disc`,
   `get_rom_relaunch_options`, and `get_installed_relaunch_options`. Switch only; non-Switch core/disc extras stay removed.
