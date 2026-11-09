@@ -97,6 +97,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # A tag with a semver pre-release suffix (v0.40.0-rc.1) is published as a
+          # pre-release, so it never becomes "latest" and is not offered by the self-updater.
+          PRE=""
+          case "$GITHUB_REF_NAME" in *-*) PRE="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" /tmp/romm-emudecky-ng.zip \
             --title "EmuDecky RomM Manager $GITHUB_REF_NAME" \
-            --notes-file /tmp/notes.md
+            --notes-file /tmp/notes.md $PRE

@@ -33,8 +33,8 @@ Rewrite steps (GitHub milestone **0.40.0**, issues #8–#14; the Python code + i
 | 3a part 2: port library sync, shortcuts, collections | merged into `rust` (PR #22); CI green |
 | 3b part 1: emulator/launch-file choices and relaunch reconciliation | merged into `rust` (PR #23); CI and release dry run green |
 | 3b part 2: game page, metadata, cover refresh and SteamGridDB | merged into `rust` (PR #24); CI and release dry run green |
-| 3b remainder: version choice, launch checks, removal, playtime, updates and Steam Input | implemented in [PR #25](https://github.com/ricktap/romm-emudecky-ng/pull/25) into `rust`; see PR checks for integration status |
-| 6 #14 delete the Python backend | done on branch `rust-6-remove-python` (stacked on PR #25; see "Python reference implementation") |
+| 3b remainder: version choice, launch checks, removal, playtime, updates and Steam Input | merged into `rust` (PR #25); CI and release dry run green |
+| 6 #14 delete the Python backend | merged into `rust` (PR #26); CI and release dry run green; see "Python reference implementation" |
 | 4 #12 firmware (**0.45.0**), 5 #13 save sync (**0.55.0**) | not started; moved out of 0.40.0 |
 
 After PR #22: Rust 365 tests / 96.90% lines, Python 5275, frontend 1530 (fewer because removed features' tests went).
