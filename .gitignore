@@ -46,3 +46,7 @@ coverage.json
 
 # Frontend test coverage
 coverage/
+
+# Rust backend build output (rust branch)
+backend/target/
+backend/out/
