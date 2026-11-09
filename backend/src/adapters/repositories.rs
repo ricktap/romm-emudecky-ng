@@ -9,7 +9,9 @@ use rusqlite::{OptionalExtension, Row, params};
 use crate::adapters::db::Db;
 use crate::domain::download_job::{DownloadJob, JobStatus};
 use crate::domain::rom_install::RomInstall;
-use crate::services::ports::{DownloadJobRepo, KvConfigRepo, LibraryRepo, RomRegionsReader, RomRow};
+use crate::services::ports::{
+    DownloadJobRepo, KvConfigRepo, LibraryRepo, RegistryPlatformRow, RomRegionsReader, RomRow,
+};
 
 /// The `kv_config` singleton-scalar table.
 #[derive(Clone)]
@@ -92,7 +94,6 @@ impl RomRegionsReader for SqliteRomRegions {
     }
 }
 
-
 const JOB_COLUMNS: &str = "rom_id, rom_name, platform_name, file_name, target_path, tmp_path, is_multi, total_bytes, \
      status, interrupt_reason, range_supported, position, created_at, updated_at";
 
@@ -109,7 +110,11 @@ fn row_to_job(r: &Row<'_>) -> rusqlite::Result<DownloadJob> {
         is_multi: r.get::<_, i64>(6)? != 0,
         total_bytes: total.and_then(|t| u64::try_from(t).ok()),
         status: JobStatus::parse(&status).ok_or_else(|| {
-            rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, format!("bad status {status}").into())
+            rusqlite::Error::FromSqlConversionFailure(
+                8,
+                rusqlite::types::Type::Text,
+                format!("bad status {status}").into(),
+            )
         })?,
         interrupt_reason: r.get(9)?,
         range_supported: r.get::<_, Option<i64>>(10)?.map(|v| v != 0),
@@ -179,7 +184,10 @@ impl DownloadJobRepo for SqliteDownloadJobs {
 
     async fn delete(&self, rom_id: i64) -> anyhow::Result<()> {
         self.db
-            .call(move |c| c.execute("DELETE FROM download_jobs WHERE rom_id = ?1", [rom_id]).map(|_| ()))
+            .call(move |c| {
+                c.execute("DELETE FROM download_jobs WHERE rom_id = ?1", [rom_id])
+                    .map(|_| ())
+            })
             .await
     }
 
@@ -242,7 +250,14 @@ fn row_to_install(r: &Row<'_>) -> rusqlite::Result<RomInstall> {
 fn insert_install(c: &rusqlite::Connection, i: &RomInstall) -> rusqlite::Result<()> {
     c.execute(
         &format!("INSERT OR REPLACE INTO rom_installs ({INSTALL_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6)"),
-        params![i.rom_id, i.file_path, i.rom_dir, i.platform_slug, i.system, i.installed_at],
+        params![
+            i.rom_id,
+            i.file_path,
+            i.rom_dir,
+            i.platform_slug,
+            i.system,
+            i.installed_at
+        ],
     )
     .map(|_| ())
 }
@@ -261,7 +276,9 @@ impl SqliteLibrary {
     async fn roms_where(&self, clause: &'static str, arg: String) -> anyhow::Result<Vec<RomRow>> {
         self.db
             .call(move |c| {
-                let mut stmt = c.prepare(&format!("SELECT {ROM_COLUMNS} FROM roms WHERE {clause} ORDER BY rom_id"))?;
+                let mut stmt = c.prepare(&format!(
+                    "SELECT {ROM_COLUMNS} FROM roms WHERE {clause} ORDER BY rom_id"
+                ))?;
                 let rows = stmt.query_map([arg], row_to_rom)?;
                 rows.collect()
             })
@@ -322,7 +339,10 @@ impl LibraryRepo for SqliteLibrary {
 
     async fn delete_install(&self, rom_id: i64) -> anyhow::Result<()> {
         self.db
-            .call(move |c| c.execute("DELETE FROM rom_installs WHERE rom_id = ?1", [rom_id]).map(|_| ()))
+            .call(move |c| {
+                c.execute("DELETE FROM rom_installs WHERE rom_id = ?1", [rom_id])
+                    .map(|_| ())
+            })
             .await
     }
 
@@ -356,6 +376,80 @@ impl LibraryRepo for SqliteLibrary {
                 insert_install(&tx, &i)?;
                 tx.commit()?;
                 Ok(true)
+            })
+            .await
+    }
+
+    async fn bound_rom_count(&self) -> anyhow::Result<i64> {
+        self.db
+            .call(|c| {
+                c.query_row("SELECT COUNT(*) FROM roms WHERE shortcut_app_id IS NOT NULL", [], |r| {
+                    r.get(0)
+                })
+            })
+            .await
+    }
+
+    async fn registry_platforms(&self) -> anyhow::Result<Vec<RegistryPlatformRow>> {
+        self.db
+            .call(|c| {
+                let mut stmt = c.prepare(
+                    "SELECT platform_slug, COUNT(*) FROM roms \
+                     WHERE shortcut_app_id IS NOT NULL GROUP BY platform_slug ORDER BY platform_slug",
+                )?;
+                let rows = stmt.query_map([], |r| {
+                    Ok(RegistryPlatformRow {
+                        platform_slug: r.get(0)?,
+                        count: r.get(1)?,
+                    })
+                })?;
+                rows.collect()
+            })
+            .await
+    }
+
+    async fn app_id_rom_id_map(&self) -> anyhow::Result<Vec<(i64, i64)>> {
+        self.db
+            .call(|c| {
+                let mut stmt =
+                    c.prepare("SELECT shortcut_app_id, rom_id FROM roms WHERE shortcut_app_id IS NOT NULL")?;
+                let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                rows.collect()
+            })
+            .await
+    }
+
+    async fn latest_completed_sync_finished_at(&self) -> anyhow::Result<Option<String>> {
+        self.db
+            .call(|c| {
+                c.query_row(
+                    "SELECT finished_at FROM sync_runs WHERE status = 'completed' ORDER BY started_at DESC LIMIT 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()
+            })
+            .await
+    }
+
+    async fn delete_completed_sync_runs(&self) -> anyhow::Result<()> {
+        self.db
+            .call(|c| {
+                c.execute("DELETE FROM sync_runs WHERE status = 'completed'", [])
+                    .map(|_| ())
+            })
+            .await
+    }
+
+    async fn interrupt_running_syncs(&self, finished_at: &str) -> anyhow::Result<usize> {
+        let finished_at = finished_at.to_string();
+        self.db
+            .call(move |c| {
+                c.execute(
+                    "UPDATE sync_runs SET status = 'errored', finished_at = ?1, \
+                     error = 'interrupted by restart' WHERE status = 'running'",
+                    [finished_at],
+                )
             })
             .await
     }
@@ -403,5 +497,64 @@ mod tests {
             regions,
             vec![vec![], vec!["Japan".to_string()], vec!["USA".into(), "Europe".into()]]
         );
+    }
+}
+
+#[async_trait]
+impl crate::services::ports::LibraryBaselineRepo for SqliteLibrary {
+    async fn baseline(&self, platform_slug: &str) -> anyhow::Result<crate::services::ports::IncrementalBaseline> {
+        let slug = platform_slug.to_string();
+        self.db.call(move |c| {
+            // A transaction also protects the watermark/rows pair against external
+            // connections; the DB actor alone serializes only this process's writes.
+            let tx = c.unchecked_transaction()?;
+            let last_sync = tx.query_row("SELECT finished_at FROM sync_runs WHERE status = 'completed' ORDER BY started_at DESC LIMIT 1", [], |r| r.get(0)).optional()?.flatten();
+            let mut baseline = crate::services::ports::IncrementalBaseline {last_sync, ..Default::default()};
+            let mut all_groups=std::collections::BTreeSet::new();
+            let mut bound_groups=std::collections::BTreeSet::new();
+            {
+                let mut stmt = tx.prepare("SELECT rom_id, name, fs_name, platform_slug, igdb_id, sgdb_id, ra_id, sibling_group_key, shortcut_app_id FROM roms WHERE platform_slug = ?1 ORDER BY rom_id")?;
+                let mut rows = stmt.query([slug])?;
+                while let Some(row) = rows.next()? {
+                    baseline.persisted_count += 1;
+                    let key: Option<String> = row.get(7)?;
+                    baseline.needs_backfill |= key.is_none();
+                    if let Some(key)=&key{all_groups.insert(key.clone());}
+                    if row.get::<_,Option<i64>>(8)?.is_some() {
+                        if let Some(key)=&key{bound_groups.insert(key.clone());}
+                        baseline.bound_roms.push(serde_json::json!({
+                            "id": row.get::<_,i64>(0)?, "name": row.get::<_,String>(1)?,
+                            "fs_name": row.get::<_,String>(2)?, "platform_slug": row.get::<_,String>(3)?,
+                            "igdb_id": row.get::<_,Option<i64>>(4)?, "sgdb_id": row.get::<_,Option<i64>>(5)?,
+                            "ra_id": row.get::<_,Option<i64>>(6)?, "sibling_group_key": key,
+                        }));
+                    }
+                }
+            }
+            baseline.missing_shortcuts=!all_groups.is_subset(&bound_groups);
+            tx.commit()?;
+            Ok(baseline)
+        }).await
+    }
+}
+
+#[cfg(test)]
+mod baseline_tests {
+    use super::*;
+    use crate::services::ports::LibraryBaselineRepo;
+    #[tokio::test]
+    async fn watermark_counts_all_rows_but_reconstructs_only_bound_rows() {
+        let dir=tempfile::tempdir().unwrap();
+        let (db,_)=Db::open(&dir.path().join("baseline.db")).await.unwrap();
+        let repo=SqliteLibrary::new(db.clone());
+        let empty=repo.baseline("switch").await.unwrap();
+        assert_eq!(empty.last_sync,None);assert_eq!(empty.persisted_count,0);
+        db.call(|c| c.execute_batch("INSERT INTO sync_runs (id,started_at,status,platforms_planned,roms_planned,finished_at) VALUES ('a','1','completed',1,2,'watermark'),('b','2','running',1,2,NULL);
+            INSERT INTO roms (rom_id,platform_slug,name,fs_name,last_synced_at,shortcut_app_id,sibling_group_key) VALUES (1,'switch','A','a.nsp','1',123,'igdb:7:1'),(2,'switch','B','b.nsp','1',NULL,NULL),(3,'other','C','c','1',456,NULL);")).await.unwrap();
+        let b=repo.baseline("switch").await.unwrap();
+        assert_eq!(b.last_sync.as_deref(),Some("watermark"));assert_eq!(b.persisted_count,2);assert!(b.needs_backfill);
+        assert_eq!(b.bound_roms.len(),1);assert_eq!(b.bound_roms[0]["id"],1);assert_eq!(b.bound_roms[0]["igdb_id"],serde_json::Value::Null);
+        db.call(|c|c.execute("UPDATE roms SET sibling_group_key='igdb:7:1' WHERE rom_id=2",[])).await.unwrap();
+        assert!(!repo.baseline("switch").await.unwrap().needs_backfill);
     }
 }

@@ -62,7 +62,13 @@ logs it and the plugin stays inert. The backend also exits cleanly on `SIGTERM`,
 Callables the Rust backend has not ported yet are still listed (the frontend's callable surface never changes) but
 answer with the error `not implemented in the Rust backend yet: <name>`. `PORTED_CALLABLES` in `backend/src/app.rs`
 lists the ported ones (settings + connection from step 1b; the download queue from step 2: `start_download`,
-`cancel_download`, `pause_download`, `resume_download`, `get_download_queue`, `get_installed_rom`). The listed surface is `backend/callables.json`;
+`cancel_download`, `pause_download`, `resume_download`, `get_download_queue`, `get_installed_rom`; and the first
+slice of step 3a: platform/collection reads and preferences, registry platforms, sync statistics, appId mappings,
+and clearing completed sync history). Startup also marks orphaned running sync records as interrupted.
+Sync execution, preview/apply, status/heartbeat and unit acknowledgement callables are wired to the sequential
+Rust pipeline. Cover caching/publication, Steam Input and removal/reconciliation are connected.
+Icon files are saved atomically with an optional `icon_path` response, then applied via SteamClient.Apps.SetShortcutIcon.
+The frontend cover reader `get_artwork_base64` reads staged cache bytes before unit acknowledgement. The listed surface is `backend/callables.json`;
 `tests/test_rust_backend_callables.py` keeps it identical to the Python `Backend`.
 
 ## Code

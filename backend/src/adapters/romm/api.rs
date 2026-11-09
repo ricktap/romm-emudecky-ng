@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::adapters::romm::http::RommHttp;
 use crate::domain::errors::RommError;
-use crate::services::ports::{RommConnectionApi, RommRomApi, TransferHooks};
+use crate::services::ports::{RommConnectionApi, RommLibraryApi, RommRomApi, TransferHooks};
 use crate::util::path_safety::quote;
 
 /// Timeout of the single-shot reachability probe.
@@ -117,6 +117,34 @@ impl RommConnectionApi for RommApi {
 }
 
 #[async_trait]
+impl RommLibraryApi for RommApi {
+    async fn list_platforms(&self) -> Result<Value, RommError> {
+        self.http.get_json("/api/platforms").await
+    }
+
+    async fn list_collections(&self) -> Result<Value, RommError> {
+        self.http.get_json("/api/collections").await.map(collection_list)
+    }
+
+    async fn list_smart_collections(&self) -> Result<Value, RommError> {
+        self.http.get_json("/api/collections/smart").await.map(collection_list)
+    }
+
+    async fn list_virtual_collections(&self, collection_type: &str) -> Result<Value, RommError> {
+        self.http
+            .get_json(&format!("/api/collections/virtual?type={}", quote(collection_type, "")))
+            .await
+            .map(collection_list)
+    }
+}
+
+// Match the Python API adapter: non-list collection responses are empty;
+// transport failures still propagate for the service's scoped-error policy.
+fn collection_list(value: Value) -> Value {
+    if value.is_array() { value } else { json!([]) }
+}
+
+#[async_trait]
 impl RommRomApi for RommApi {
     async fn get_rom(&self, rom_id: i64) -> Result<Value, RommError> {
         self.http.get_json(&format!("/api/roms/{rom_id}")).await
@@ -132,5 +160,30 @@ impl RommRomApi for RommApi {
     ) -> anyhow::Result<()> {
         let path = format!("/api/roms/{rom_id}/content/{}", quote(file_name, ""));
         self.http.download(&path, dest, resume, hooks).await
+    }
+}
+
+#[async_trait]
+impl crate::services::ports::RommLibraryPages for RommApi {
+    async fn page(&self, unit: &crate::domain::work_unit::WorkUnit, offset: usize) -> Result<Value, RommError> {
+        let (key, value) = unit.query_filter();
+        self.http.get_json(&format!("/api/roms?{key}={}&limit=50&offset={offset}", quote(&value, ""))).await
+    }
+}
+
+#[async_trait]
+impl crate::services::ports::RommLibraryDelta for RommApi {
+    async fn updated_after(&self, platform_id: i64, timestamp: &str) -> Result<Value, RommError> {
+        self.http.get_json(&format!("/api/roms?platform_ids={platform_id}&limit=1&offset=0&updated_after={}", quote(timestamp, "/"))).await
+    }
+}
+
+#[async_trait]
+impl crate::services::ports::RommCoverApi for RommApi {
+    async fn download_cover(&self,url:&str,dest:&str)->anyhow::Result<()> {
+        // RomM cover paths are relative; the HTTP adapter binds credentials to
+        // the configured server and quotes spaces through the normal download path.
+        anyhow::ensure!(url.starts_with('/')&&!url.starts_with("//"),"Invalid RomM cover path");
+        self.http.download(url,dest,false,TransferHooks{progress:Box::new(|_,_|{}),on_meta:None,cancel:tokio_util::sync::CancellationToken::new()}).await
     }
 }

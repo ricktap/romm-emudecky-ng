@@ -7,3 +7,6 @@ pub mod repositories;
 pub mod romm;
 pub mod download_files;
 pub mod emudeck;
+pub mod sync_runs;
+pub mod sync_library;
+pub mod steam_assets;

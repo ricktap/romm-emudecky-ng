@@ -249,6 +249,7 @@ impl Default for SystemClock {
 }
 
 impl Clock for SystemClock {
+    fn epoch_seconds(&self)->f64 {std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64()}
     fn now_iso(&self) -> String {
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -349,4 +350,19 @@ mod tests {
         assert!(c.now_iso().ends_with("+00:00"));
         assert!(c.monotonic() >= 0.0);
     }
+}
+
+/// Process-unique run/preview identities; generated only at the adapter boundary.
+#[derive(Default)]
+pub struct SyncRuntime {counter:std::sync::atomic::AtomicU64}
+impl crate::services::ports::SyncIds for SyncRuntime {
+    fn next_id(&self)->String {
+        let n=self.counter.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+        let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
+        format!("{now:x}-{:x}-{n:x}",std::process::id())
+    }
+}
+#[async_trait::async_trait]
+impl crate::services::ports::SyncSleeper for SyncRuntime {
+    async fn sleep(&self,seconds:f64) {tokio::time::sleep(std::time::Duration::from_secs_f64(seconds)).await;}
 }

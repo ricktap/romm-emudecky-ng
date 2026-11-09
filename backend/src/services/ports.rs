@@ -9,6 +9,15 @@ use serde_json::{Map, Value};
 use crate::domain::errors::RommError;
 use crate::domain::settings::truthy;
 
+/// Durable history used by the library sync orchestrator.
+#[async_trait]
+pub trait SyncRunRepo: Send + Sync {
+    async fn get(&self, id: &str) -> anyhow::Result<Option<crate::domain::sync_run::SyncRun>>;
+    async fn save(&self, run: &crate::domain::sync_run::SyncRun) -> anyhow::Result<()>;
+    async fn latest_completed(&self) -> anyhow::Result<Option<crate::domain::sync_run::SyncRun>>;
+    async fn running(&self) -> anyhow::Result<Option<crate::domain::sync_run::SyncRun>>;
+}
+
 /// The live, shared `settings.json` document.
 ///
 /// Every service reads and mutates the same map (as the Python services shared
@@ -106,6 +115,15 @@ pub trait RomRegionsReader: Send + Sync {
 
 // ── Downloads, installs, launch ────────────────────────────────────────────
 
+/// The RomM endpoints library sync uses for platform / collection metadata.
+#[async_trait]
+pub trait RommLibraryApi: Send + Sync {
+    async fn list_platforms(&self) -> Result<Value, RommError>;
+    async fn list_collections(&self) -> Result<Value, RommError>;
+    async fn list_smart_collections(&self) -> Result<Value, RommError>;
+    async fn list_virtual_collections(&self, collection_type: &str) -> Result<Value, RommError>;
+}
+
 /// Pushes a backend event (`{event, args: [payload]}`) to the frontend.
 pub trait EventSink: Send + Sync {
     fn emit(&self, event: &str, payload: Value);
@@ -115,6 +133,7 @@ pub trait EventSink: Send + Sync {
 pub trait Clock: Send + Sync {
     /// Now as ISO-8601 UTC.
     fn now_iso(&self) -> String;
+    fn epoch_seconds(&self) -> f64;
     /// Seconds on a monotonic clock.
     fn monotonic(&self) -> f64;
 }
@@ -235,6 +254,12 @@ pub struct RomRow {
     pub sibling_group_key: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistryPlatformRow {
+    pub platform_slug: String,
+    pub count: i64,
+}
+
 /// The synced library (`roms`) and its install records (`rom_installs`).
 #[async_trait]
 pub trait LibraryRepo: Send + Sync {
@@ -253,4 +278,93 @@ pub trait LibraryRepo: Send + Sync {
         install: &crate::domain::rom_install::RomInstall,
         group_key: Option<&str>,
     ) -> anyhow::Result<bool>;
+    async fn bound_rom_count(&self) -> anyhow::Result<i64>;
+    async fn registry_platforms(&self) -> anyhow::Result<Vec<RegistryPlatformRow>>;
+    async fn app_id_rom_id_map(&self) -> anyhow::Result<Vec<(i64, i64)>>;
+    async fn latest_completed_sync_finished_at(&self) -> anyhow::Result<Option<String>>;
+    async fn delete_completed_sync_runs(&self) -> anyhow::Result<()>;
+    /// Startup only: terminalize runs left in flight by the previous process.
+    async fn interrupt_running_syncs(&self, finished_at: &str) -> anyhow::Result<usize>;
+}
+
+/// Read-only paginated ROM endpoint used by library sync.
+#[async_trait]
+pub trait RommLibraryPages: Send + Sync {
+    async fn page(&self, unit: &crate::domain::work_unit::WorkUnit, offset: usize) -> Result<Value, RommError>;
+}
+
+/// Consistent read of the completed-run watermark and all persisted siblings.
+#[derive(Debug, Clone, Default)]
+pub struct IncrementalBaseline {
+    pub last_sync: Option<String>,
+    pub bound_roms: Vec<Value>,
+    pub persisted_count: usize,
+    pub needs_backfill: bool,
+    pub missing_shortcuts: bool,
+}
+
+#[async_trait]
+pub trait LibraryBaselineRepo: Send + Sync {
+    async fn baseline(&self, platform_slug: &str) -> anyhow::Result<IncrementalBaseline>;
+}
+
+#[async_trait]
+pub trait RommLibraryDelta: Send + Sync {
+    async fn updated_after(&self, platform_id: i64, timestamp: &str) -> Result<Value, RommError>;
+}
+
+/// Atomic unit persistence. Every sibling is saved; only acknowledged targets bind.
+#[derive(Debug, Clone)]
+pub struct SyncUnitCommit {
+    pub built: Vec<Value>,
+    pub raw: Vec<Value>,
+    pub bindings: std::collections::BTreeMap<i64,i64>,
+    pub covers: std::collections::BTreeMap<i64,String>,
+    pub synced_at: String,
+    pub cached_at: f64,
+}
+#[async_trait]
+pub trait SyncLibraryRepo: Send + Sync {
+    async fn registry(&self) -> anyhow::Result<std::collections::BTreeMap<i64,Value>>;
+    async fn commit_unit(&self, commit: SyncUnitCommit) -> anyhow::Result<()>;
+}
+
+pub trait SyncIds: Send + Sync { fn next_id(&self) -> String; }
+#[async_trait]
+pub trait SyncSleeper: Send + Sync { async fn sleep(&self, seconds:f64); }
+#[derive(Clone,Default)]
+pub struct SyncFinalization {
+    pub stale_ids:Vec<i64>,
+    pub platform_names:std::collections::BTreeMap<String,String>,
+    pub platform_rom_ids:std::collections::BTreeSet<i64>,
+    pub memberships:std::collections::BTreeMap<String,Vec<i64>>,
+    pub create_platform_groups:bool,
+}
+#[async_trait]
+pub trait SyncFinalizeRepo: Send + Sync {
+    async fn finalize(&self, request:SyncFinalization)->anyhow::Result<Value>;
+}
+
+#[async_trait]
+pub trait SteamAssets: Send + Sync {
+    async fn grid_dir(&self)->anyhow::Result<Option<String>>;
+    fn cache_path(&self,rom_id:i64)->String;
+    fn cache_dir(&self)->String;
+    async fn files_in(&self,dir:&str)->anyhow::Result<Vec<String>>;
+    async fn exists(&self,path:&str)->bool;
+    async fn read(&self,path:&str)->anyhow::Result<Vec<u8>>;
+    async fn copy_atomic(&self,src:&str,dest:&str)->anyhow::Result<()>;
+    async fn rename(&self,src:&str,dest:&str)->anyhow::Result<()>;
+    async fn remove(&self,path:&str)->anyhow::Result<()>;
+    async fn write_icon(&self,app_id:i64,bytes:&[u8])->anyhow::Result<Option<String>>;
+    async fn steam_input(&self,app_ids:&[i64],mode:&str)->anyhow::Result<()>;
+}
+#[async_trait]
+pub trait RommCoverApi: Send + Sync {
+    async fn download_cover(&self,url:&str,dest:&str)->anyhow::Result<()>;
+}
+#[async_trait]
+pub trait ShortcutBindings: Send + Sync {
+    async fn unbind(&self,ids:Vec<i64>)->anyhow::Result<()>;
+    async fn reconcile(&self,live:std::collections::BTreeSet<i64>)->anyhow::Result<usize>;
 }

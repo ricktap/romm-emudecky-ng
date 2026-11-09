@@ -30,11 +30,36 @@ Rewrite steps (GitHub milestone **0.40.0**, issues #8–#14; the Python code + i
 | 1b #9 Rust foundation (protocol server, DB actor, settings + connection) | merged into `rust` |
 | 2 #10 download queue, adoption, Switch launch | merged into `rust` |
 | 3a #11 part 1: removals (`REMOVED_TILL_0_90_0.md`) | merged into `rust` (PR #21); CI and the release dry-run are green |
-| 3a part 2: port library sync, shortcuts, collections | **next up — not started** (scope below). Work on the `rust` branch: create `rust-3a-sync-port` from it, one PR back into `rust` |
+| 3a part 2: port library sync, shortcuts, collections | implemented in [PR #22](https://github.com/ricktap/romm-emudecky-ng/pull/22), targeting `rust`; see the PR checks for integration status |
 | 3b: remaining callables (game page, SGDB, playtime, …) | not started |
 | 4 #12 firmware, 5 #13 save sync, 6 #14 delete Python | not started |
 
 `rust` branch numbers: Rust 286 tests / 97% lines, Python 5275, frontend 1528 (fewer because removed features' tests went).
+
+Step-3a part-2 implementation in [PR #22](https://github.com/ricktap/romm-emudecky-ng/pull/22):
+
+- Ported library preferences/reads and the complete sequential sync callable/event flow: work planning,
+  paginated/incremental fetch, sibling component keys/ranking/collapse, preview/apply with TTL, heartbeat,
+  scoped cancellation/acknowledgement, atomic unit commits, post-commit adoption, stale handling and collections.
+- Ported cover cache/download/publish/base64/progress/startup cleanup, Steam Input with backup + VDF round-trip
+  verification, shortcut removal/reconcile, and atomic icon files applied via SteamClient (no shortcuts.vdf writes).
+  `save_shortcut_icon` now returns an optional `icon_path` for Rust; existing Python `{success}` responses remain
+  compatible. Content-addressed icon paths prevent stale saves from overwriting newer selected images.
+- Review fixes include full re-fetch for groups whose Steam binding was removed out-of-band, protection of
+  bound siblings covered only by a partial collection view, empty launch options for unresolved emulators,
+  durable run termination before terminal events, and serialized admission/task tracking.
+- Validation: Rust **365 tests / 96.90% line coverage** (`--fail-under-lines 80`), Python **5275 passed**
+  (two pre-existing unawaited-download-coroutine warnings), frontend **1530 passed**, pinned pnpm build passed.
+  `backend/tests/domain_parity.rs` compares the sibling kernels against 128 deterministic Python-generated
+  cases and reversed fetch order. `sync_lifecycle.rs` uses controlled time with real HTTP/SQLite for TTL,
+  busy apply, heartbeat renewal, timeout and late acknowledgement. `library.rs` drives the real binary/socket.
+- `get_registry_platforms` is required by DangerZone's per-platform shortcut removal. Keep it.
+- `get_artwork_base64` belongs to this step because syncManager calls it BEFORE acknowledging a unit.
+- Reporter commits identity/metadata, publishes art/applies Steam Input and runs post-commit adoption before
+  signalling the orchestrator. Its late-ack path executes the same post-commit adoption exactly once.
+- Integration is tracked by PR #22 into `rust`, with CI and the release workflow dry-run required before merge.
+  After it merges, continue with step 3b. Issue #11 covers more than this part and must not be closed prematurely.
+  The shipping Python backend on `main` is unchanged; no release tag is part of step 3a.
 
 ## How the rewrite works
 
