@@ -44,7 +44,6 @@ import { showCoreChangeModal } from "./CoreChangeModal";
 import { handleConflicts } from "./SyncConflictModal";
 import { showOfflineDriftModal } from "./OfflineDriftModal";
 import { showFallbackLaunchModal } from "./FallbackLaunchModal";
-import { getMigrationState } from "../utils/migrationStore";
 import { runLaunchGate, markLaunchSkipped } from "../utils/launchGate";
 import type { GateVerdict, LaunchGateOps, PreLaunchSyncOutcome } from "../utils/launchGate";
 import { getActiveSessionRomId } from "../utils/sessionManager";
@@ -535,7 +534,6 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
   // auto-adopt. Reachability is a FRESH probe at Play time (decision B), so the
   // page-open-stale `getRommConnectionState()` flag no longer gates the launch.
   const makePlayButtonOps = (rid: number): LaunchGateOps => ({
-    migrationPending: () => getMigrationState().pending,
     ensureTrackingConfigured: () => ensureTrackingConfigured(rid),
     checkCoreChange: () => confirmCoreChangeIfNeeded(rid),
     checkReachability: async () => {
@@ -625,9 +623,9 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
         return "done";
       case "abort":
       case "block":
-        // abort: the user saw setup/core UI and declined. block: migration
-        // pending (the QAM/page already surfaces it). Either way, bail silently
-        // to "play" without launching.
+        // abort: the user saw setup/core UI and declined. block: a hard
+        // precondition failed. Either way, bail silently to "play" without
+        // launching.
         setState("play");
         return "done";
       case "conflict": {

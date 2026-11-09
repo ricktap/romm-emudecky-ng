@@ -10,14 +10,8 @@ import { render, fireEvent, act } from "@testing-library/react";
 import { createElement, type ComponentProps, type ReactElement } from "react";
 import { SettingsPage } from "./SettingsPage";
 import * as backend from "../api/backend";
-import type { SaveSortMigrationStatus, RegisteredDevice } from "../types";
+import type { RegisteredDevice } from "../types";
 import { showModal } from "@decky/ui";
-import { toaster } from "@decky/api";
-import {
-  setSaveSortMigrationStatus,
-  clearSaveSortMigration,
-  onSaveSortMigrationChange,
-} from "../utils/saveSortMigrationStore";
 import { pendingEdits } from "./settings/TextInputModal";
 
 // Type-only imports — vi.mock(...) below replaces the runtime implementations,
@@ -31,7 +25,6 @@ import type { ControllerSection } from "./settings/ControllerSection";
 import type { AdvancedSection } from "./settings/AdvancedSection";
 import type { LibrarySection } from "./settings/LibrarySection";
 import { showPreferredRegionModal } from "./settings/PreferredRegionModal";
-import type { SaveSortMigrationSection } from "./settings/SaveSortMigrationSection";
 
 type ConnectionProps = ComponentProps<typeof ConnectionSection>;
 type SteamGridDBProps = ComponentProps<typeof SteamGridDBSection>;
@@ -40,7 +33,6 @@ type RegisteredDevicesProps = ComponentProps<typeof RegisteredDevicesSection>;
 type ControllerProps = ComponentProps<typeof ControllerSection>;
 type AdvancedProps = ComponentProps<typeof AdvancedSection>;
 type LibraryProps = ComponentProps<typeof LibrarySection>;
-type SaveSortMigrationProps = ComponentProps<typeof SaveSortMigrationSection>;
 
 // Captured props arrays — reset in beforeEach. Each child mock pushes the
 // props it was called with so tests can inspect handler wiring + state
@@ -52,7 +44,6 @@ const capturedDevices: RegisteredDevicesProps[] = [];
 const capturedController: ControllerProps[] = [];
 const capturedAdvanced: AdvancedProps[] = [];
 const capturedLibrary: LibraryProps[] = [];
-const capturedMigration: SaveSortMigrationProps[] = [];
 
 vi.mock("./settings/ConnectionSection", () => ({
   ConnectionSection: (p: ConnectionProps) => {
@@ -110,13 +101,6 @@ vi.mock("./settings/LibrarySection", async (importOriginal) => {
 vi.mock("./settings/PreferredRegionModal", () => ({
   showPreferredRegionModal: vi.fn(() => Promise.resolve(true)),
 }));
-vi.mock("./settings/SaveSortMigrationSection", () => ({
-  SaveSortMigrationSection: (p: SaveSortMigrationProps) => {
-    capturedMigration.push(p);
-    return createElement("div", { "data-testid": "migration-section" });
-  },
-}));
-
 // pendingEdits is a mutable module-level object — tests may pre-populate it
 // before render to verify the mount-time override path.
 vi.mock("./settings/TextInputModal", () => ({
@@ -140,29 +124,6 @@ vi.mock("@decky/ui", () => ({
 
 // scrollToTop is a no-op in jsdom; mock for cleanliness.
 vi.mock("../utils/scrollHelpers", () => ({ scrollToTop: vi.fn() }));
-
-// Mock the saveSortMigrationStore — own listener list + state so tests can
-// drive the subscribe/unsubscribe + state-change flow deterministically.
-const saveSortListeners: Array<() => void> = [];
-let currentSortState: SaveSortMigrationStatus = { pending: false };
-vi.mock("../utils/saveSortMigrationStore", () => ({
-  getSaveSortMigrationState: vi.fn(() => currentSortState),
-  setSaveSortMigrationStatus: vi.fn((s: SaveSortMigrationStatus) => {
-    currentSortState = s;
-    saveSortListeners.forEach((fn) => fn());
-  }),
-  clearSaveSortMigration: vi.fn(() => {
-    currentSortState = { pending: false };
-    saveSortListeners.forEach((fn) => fn());
-  }),
-  onSaveSortMigrationChange: vi.fn((cb: () => void) => {
-    saveSortListeners.push(cb);
-    return () => {
-      const i = saveSortListeners.indexOf(cb);
-      if (i >= 0) saveSortListeners.splice(i, 1);
-    };
-  }),
-}));
 
 // Wait one microtask for the mount-time useEffect promises to resolve.
 const flushAsync = () =>
@@ -216,9 +177,6 @@ describe("SettingsPage", () => {
     capturedController.length = 0;
     capturedAdvanced.length = 0;
     capturedLibrary.length = 0;
-    capturedMigration.length = 0;
-    saveSortListeners.length = 0;
-    currentSortState = { pending: false };
     for (const k of Object.keys(pendingEdits) as Array<keyof typeof pendingEdits>) {
       delete pendingEdits[k];
     }
@@ -227,7 +185,6 @@ describe("SettingsPage", () => {
     vi.mocked(backend.getKnownRegions).mockResolvedValue([]);
     vi.mocked(showPreferredRegionModal).mockResolvedValue(true);
     vi.mocked(backend.getSaveSyncSettings).mockResolvedValue(defaultSaveSyncSettings());
-    vi.mocked(backend.getSaveSortMigrationStatus).mockResolvedValue({ pending: false });
     vi.mocked(backend.listDevices).mockResolvedValue({ success: true, devices: [] });
     vi.mocked(backend.ensureDeviceRegistered).mockResolvedValue({
       success: true,
@@ -246,7 +203,6 @@ describe("SettingsPage", () => {
         sgdb_api_key_masked: "abc",
         steam_input_mode: "force_on",
         log_level: "debug",
-        retroarch_input_check: { warning: true, current: "sdl2" },
       });
       render(<SettingsPage onBack={vi.fn()} />);
       await flushAsync();
@@ -261,7 +217,6 @@ describe("SettingsPage", () => {
 
       const ctrl = capturedController[capturedController.length - 1];
       expect(ctrl?.steamInputMode).toBe("force_on");
-      expect(ctrl?.retroarchWarning).toEqual({ warning: true, current: "sdl2" });
 
       const adv = capturedAdvanced[capturedAdvanced.length - 1];
       expect(adv?.logLevel).toBe("debug");
@@ -284,12 +239,6 @@ describe("SettingsPage", () => {
       render(<SettingsPage onBack={vi.fn()} />);
       await flushAsync();
       expect(capturedConnection[capturedConnection.length - 1]?.hasToken).toBe(false);
-    });
-
-    it("does not set retroarchWarning when retroarch_input_check is absent", async () => {
-      render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-      expect(capturedController[capturedController.length - 1]?.retroarchWarning).toBeNull();
     });
 
     it("logs the failure and surfaces 'Failed to load settings' when getSettings rejects", async () => {
@@ -370,40 +319,6 @@ describe("SettingsPage", () => {
       render(<SettingsPage onBack={vi.fn()} />);
       await flushAsync();
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to load save sync settings"));
-      logSpy.mockRestore();
-    });
-  });
-
-  describe("initial mount — getSaveSortMigrationStatus", () => {
-    it("forwards a pending status into the store and into local state", async () => {
-      const pending: SaveSortMigrationStatus = {
-        pending: true,
-        old_settings: { sort_by_content: true, sort_by_core: false },
-        new_settings: { sort_by_content: false, sort_by_core: false },
-        saves_count: 5,
-      };
-      vi.mocked(backend.getSaveSortMigrationStatus).mockResolvedValue(pending);
-      render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-      expect(vi.mocked(setSaveSortMigrationStatus)).toHaveBeenCalledWith(pending);
-      expect(capturedMigration[capturedMigration.length - 1]?.migration).toEqual(pending);
-    });
-
-    it("does nothing when the status is not pending", async () => {
-      // defaults — pending=false
-      render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-      expect(vi.mocked(setSaveSortMigrationStatus)).not.toHaveBeenCalled();
-    });
-
-    it("silently swallows a getSaveSortMigrationStatus rejection", async () => {
-      vi.mocked(backend.getSaveSortMigrationStatus).mockRejectedValue(new Error("oops"));
-      const logSpy = vi.spyOn(backend, "logError").mockImplementation(() => {});
-      render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-      // No logError for this branch — it's a fire-and-forget probe.
-      const calls = logSpy.mock.calls.map((c) => c[0]);
-      expect(calls.some((m) => m.includes("save_sort_migration"))).toBe(false);
       logSpy.mockRestore();
     });
   });
@@ -1414,59 +1329,6 @@ describe("SettingsPage", () => {
       expect(capturedController[capturedController.length - 1]?.steamInputStatus).toBe("Failed to apply");
     });
 
-    it("handleFixInputDriver success=true clears the retroarchWarning + surfaces result.message", async () => {
-      vi.mocked(backend.getSettings).mockResolvedValue({
-        ...defaultSettings(),
-        retroarch_input_check: { warning: true, current: "sdl2" },
-      });
-      vi.mocked(backend.fixRetroarchInputDriver).mockResolvedValue({
-        success: true,
-        message: "Fixed",
-      });
-      render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-      // Pre-condition: warning is set
-      expect(capturedController[capturedController.length - 1]?.retroarchWarning).not.toBeNull();
-
-      await act(async () => {
-        capturedController[capturedController.length - 1]?.onFixInputDriver();
-        await Promise.resolve();
-      });
-      const ctrl = capturedController[capturedController.length - 1];
-      expect(ctrl?.retroarchWarning).toBeNull();
-      expect(ctrl?.retroarchFixStatus).toBe("Fixed");
-    });
-
-    it("handleFixInputDriver success=false leaves the warning + surfaces the message", async () => {
-      vi.mocked(backend.getSettings).mockResolvedValue({
-        ...defaultSettings(),
-        retroarch_input_check: { warning: true, current: "sdl2" },
-      });
-      vi.mocked(backend.fixRetroarchInputDriver).mockResolvedValue({
-        success: false,
-        message: "Could not write",
-      });
-      render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-      await act(async () => {
-        capturedController[capturedController.length - 1]?.onFixInputDriver();
-        await Promise.resolve();
-      });
-      const ctrl = capturedController[capturedController.length - 1];
-      expect(ctrl?.retroarchWarning).not.toBeNull();
-      expect(ctrl?.retroarchFixStatus).toBe("Could not write");
-    });
-
-    it("handleFixInputDriver throw → retroarchFixStatus='Failed to apply fix'", async () => {
-      vi.mocked(backend.fixRetroarchInputDriver).mockRejectedValue(new Error("perm"));
-      render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-      await act(async () => {
-        capturedController[capturedController.length - 1]?.onFixInputDriver();
-        await Promise.resolve();
-      });
-      expect(capturedController[capturedController.length - 1]?.retroarchFixStatus).toBe("Failed to apply fix");
-    });
   });
 
   describe("Advanced handlers", () => {
@@ -1548,131 +1410,6 @@ describe("SettingsPage", () => {
     });
   });
 
-  describe("save-sort migration handlers", () => {
-    it("handleMigrateSaveSort success clears the store, toasts, and forwards result.message", async () => {
-      vi.mocked(backend.getSaveSortMigrationStatus).mockResolvedValue({
-        pending: true,
-        old_settings: { sort_by_content: true, sort_by_core: false },
-        new_settings: { sort_by_content: false, sort_by_core: false },
-        saves_count: 2,
-      });
-      vi.mocked(backend.migrateSaveSortFiles).mockResolvedValue({
-        success: true,
-        message: "Moved 2 files",
-      });
-      render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-
-      await act(async () => {
-        capturedMigration[capturedMigration.length - 1]?.onMigrate();
-        await Promise.resolve();
-      });
-
-      expect(vi.mocked(clearSaveSortMigration)).toHaveBeenCalled();
-      expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: "EmuDecky RomM Manager",
-          body: "Moved 2 files",
-        }),
-      );
-    });
-
-    it("handleMigrateSaveSort success with empty message falls back to 'Migration complete.'", async () => {
-      vi.mocked(backend.getSaveSortMigrationStatus).mockResolvedValue({
-        pending: true,
-      });
-      vi.mocked(backend.migrateSaveSortFiles).mockResolvedValue({
-        success: true,
-        message: "",
-      });
-      render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-
-      await act(async () => {
-        capturedMigration[capturedMigration.length - 1]?.onMigrate();
-        await Promise.resolve();
-      });
-
-      expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(
-        expect.objectContaining({
-          body: "Migration complete.",
-        }),
-      );
-    });
-
-    it("handleMigrateSaveSort throw → onMigrate result='Migration failed'", async () => {
-      vi.mocked(backend.getSaveSortMigrationStatus).mockResolvedValue({
-        pending: true,
-      });
-      vi.mocked(backend.migrateSaveSortFiles).mockRejectedValue(new Error("io"));
-      render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-      await act(async () => {
-        capturedMigration[capturedMigration.length - 1]?.onMigrate();
-        await Promise.resolve();
-      });
-      expect(capturedMigration[capturedMigration.length - 1]?.result).toBe("Migration failed");
-    });
-
-    it("handleDismissSaveSort calls dismissSaveSortMigration + clearSaveSortMigration", async () => {
-      vi.mocked(backend.getSaveSortMigrationStatus).mockResolvedValue({
-        pending: true,
-      });
-      vi.mocked(backend.dismissSaveSortMigration).mockResolvedValue({ success: true });
-      render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-      await act(async () => {
-        capturedMigration[capturedMigration.length - 1]?.onDismiss();
-        await Promise.resolve();
-      });
-      expect(vi.mocked(backend.dismissSaveSortMigration)).toHaveBeenCalled();
-      expect(vi.mocked(clearSaveSortMigration)).toHaveBeenCalled();
-    });
-
-    it("handleDismissSaveSort silently swallows a rejection", async () => {
-      vi.mocked(backend.getSaveSortMigrationStatus).mockResolvedValue({
-        pending: true,
-      });
-      vi.mocked(backend.dismissSaveSortMigration).mockRejectedValue(new Error("net"));
-      render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-      await act(async () => {
-        capturedMigration[capturedMigration.length - 1]?.onDismiss();
-        await Promise.resolve();
-      });
-      // No assertion beyond "did not throw" — the catch block is `/* ignore */`.
-    });
-  });
-
-  describe("saveSortMigrationStore subscribe / unsubscribe", () => {
-    it("subscribes on mount and unsubscribes on unmount", async () => {
-      const { unmount } = render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-      expect(vi.mocked(onSaveSortMigrationChange)).toHaveBeenCalledTimes(1);
-      expect(saveSortListeners.length).toBe(1);
-      unmount();
-      expect(saveSortListeners.length).toBe(0);
-    });
-
-    it("re-renders the migration section when the store flips to pending", async () => {
-      render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-      // Initially: no migration section because pending=false.
-      expect(capturedMigration.length).toBe(0);
-
-      // Drive a store flip — simulates a different surface (e.g. launch
-      // interceptor) setting the pending state while SettingsPage is mounted.
-      await act(async () => {
-        vi.mocked(setSaveSortMigrationStatus)({
-          pending: true,
-          saves_count: 1,
-        });
-      });
-      expect(capturedMigration.length).toBeGreaterThan(0);
-      expect(capturedMigration[capturedMigration.length - 1]?.migration.pending).toBe(true);
-    });
-  });
-
   describe("conditional renders", () => {
     it("hides RegisteredDevicesSection when save sync is disabled", async () => {
       const { queryByTestId } = render(<SettingsPage onBack={vi.fn()} />);
@@ -1688,22 +1425,6 @@ describe("SettingsPage", () => {
       const { queryByTestId } = render(<SettingsPage onBack={vi.fn()} />);
       await flushAsync();
       expect(queryByTestId("devices-section")).not.toBeNull();
-    });
-
-    it("hides SaveSortMigrationSection when pending=false", async () => {
-      const { queryByTestId } = render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-      expect(queryByTestId("migration-section")).toBeNull();
-    });
-
-    it("shows SaveSortMigrationSection when pending=true", async () => {
-      vi.mocked(backend.getSaveSortMigrationStatus).mockResolvedValue({
-        pending: true,
-        saves_count: 3,
-      });
-      const { queryByTestId } = render(<SettingsPage onBack={vi.fn()} />);
-      await flushAsync();
-      expect(queryByTestId("migration-section")).not.toBeNull();
     });
   });
 

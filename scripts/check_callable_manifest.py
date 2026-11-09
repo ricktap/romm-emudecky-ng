@@ -3,29 +3,30 @@
 
 The Decky callable surface is declared twice: once on the frontend as
 ``callable<[Args], Return>("wire_name")`` (TypeScript) and once on the backend
-as a public ``async def`` method on the ``Backend`` class in
-``py_modules/backend.py`` (the backend behind the protocol socket; the Decky shim
-in ``main.py`` generates one forwarder per name the backend lists). Nothing
-ties the two together at build time — a renamed/added/removed callable on either
-side, or an arg-count change that the other side doesn't follow, only surfaces as
-a runtime "method not found" / wrong-arity failure once the plugin is loaded.
+in ``backend/callables.json`` — the sorted list of wire names the native Rust
+backend serves (and prints for ``--list-methods``); the Decky shim in
+``main.py`` generates one forwarder per listed name. On the Rust-rewrite branch
+that JSON file is the source of truth for the backend surface; the Python
+``Backend`` in ``py_modules/backend.py`` is legacy spec only and is no longer
+consulted here. Nothing ties the two declarations together at build time — a
+renamed/added/removed callable on either side only surfaces as a runtime
+"method not found" once the plugin is loaded.
 
 This check derives both surfaces from source and fails when they diverge, so the
 wire stays one source of truth. It is the static sibling of the
-``tests/contract/`` tier: the contract tests drive the *real* callables
-frontend-shaped; this gate pins that the two *declarations* agree before any
-callable is driven.
+``tests/contract/`` tier.
 
 What it guarantees (and what it deliberately does not):
 
-  * Every frontend ``callable("name")`` has a matching backend ``async def name``
-    and vice versa — no orphan on either side.
-  * Where a name exists on both sides, the **arity** (positional parameter count,
-    ``self`` dropped on the backend) matches. Python method signatures carry no
-    type hints, so arity is the only mechanically checkable shape — arg TYPES are
-    out of scope (the contract tier exercises those by driving real values).
-  * A backend method that takes ``*args`` has a variable arity; its name is still
-    checked, but the arity comparison is skipped for it.
+  * Every frontend ``callable("name")`` has a matching entry in
+    ``backend/callables.json`` and vice versa — no orphan on either side.
+  * A frontend name declared more than once is flagged.
+  * **Arity is not compared.** ``callables.json`` carries names only (a Rust
+    handler's parameter list is not mechanically derivable from it), so every
+    backend entry has variable arity (``None``) and the arity comparison in
+    :func:`find_discrepancies` is skipped for it. The frontend arity is still
+    parsed (it is what the comparison would use if a backend surface ever
+    carries arity again); arg shapes are exercised by the backend's own tests.
 
 ``EXEMPT`` holds wire names deliberately kept out of the parity check. It is
 empty today; an entry here is a conscious "this name is intentionally declared on
@@ -37,14 +38,13 @@ Exit 0 when the two surfaces match, 1 (one line per discrepancy) otherwise.
 
 from __future__ import annotations
 
-import ast
+import json
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = REPO_ROOT / "src"
-BACKEND_PY = REPO_ROOT / "py_modules" / "backend.py"
-BACKEND_CLASS = "Backend"
+BACKEND_JSON = REPO_ROOT / "backend" / "callables.json"
 
 # Wire names deliberately excluded from the parity check. Empty today; add an
 # entry only as a conscious decision (see the module docstring). Do NOT add a
@@ -304,39 +304,20 @@ def _parse_text_into(text: str, result: dict[str, int]) -> None:
         i = end
 
 
-def parse_backend_callables(backend_py: Path, class_name: str = BACKEND_CLASS) -> dict[str, int]:
-    """Parse the public ``async def`` methods of the *class_name* class in *backend_py*.
+def parse_backend_callables(callables_json: Path) -> dict[str, int | None]:
+    """Read the backend callable surface from *callables_json*.
 
-    Uses ``ast`` (never imports the backend — it needs the plugin runtime). Returns
-    ``{method_name: arity}`` for every ``AsyncFunctionDef`` on the class whose
-    name does not start with ``_`` (those are internal lifecycle, not callables).
-    Arity counts positional parameters only — ``posonlyargs`` + ``args`` minus
-    ``self``; a method with ``*args`` has variable arity, recorded as ``None``
-    (name still checked). Keyword-only args (``*, c``) and ``**kwargs`` are NOT
-    part of positional arity: the frontend's positional ``[Args]`` tuple can't
-    fill them, so they're excluded by design (a non-occurring corner on this
-    callable surface).
+    The file is a JSON array of wire-name strings. Returns ``{name: None}`` —
+    the list carries no arity, so every backend name has variable arity and
+    :func:`find_discrepancies` checks its name only. A missing file yields
+    ``{}`` (every frontend callable is then reported as an orphan). A name
+    listed twice is recorded once; :func:`main` does not treat that as a
+    finding (the sorted/unique invariant is pinned by the pytest suite).
     """
-    result: dict[str, int | None] = {}
-    source = backend_py.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(backend_py))
-    plugin = next(
-        (node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name),
-        None,
-    )
-    if plugin is None:
+    if not callables_json.is_file():
         return {}
-    for node in plugin.body:
-        if not isinstance(node, ast.AsyncFunctionDef) or node.name.startswith("_"):
-            continue
-        args = node.args
-        if args.vararg is not None:
-            result[node.name] = None
-            continue
-        # posonly + regular positional params, minus ``self``. Defaults still
-        # occupy a positional slot the frontend fills (e.g. ``null``).
-        result[node.name] = len(args.posonlyargs) + len(args.args) - 1
-    return result
+    names = json.loads(callables_json.read_text(encoding="utf-8"))
+    return dict.fromkeys((n for n in names if isinstance(n, str)), None)
 
 
 def find_discrepancies(
@@ -362,13 +343,13 @@ def find_discrepancies(
     backend_names = set(backend) - exempt
 
     findings.extend(
-        f'{name}: frontend declares callable("{name}") but the backend has no public '
-        f"async def {name} on {BACKEND_CLASS} — add the backend method, fix a rename, or "
+        f'{name}: frontend declares callable("{name}") but the backend has no '
+        f"entry in backend/callables.json — add the backend callable, fix a rename, or "
         f"add it to EXEMPT in this script if it is intentionally frontend-only."
         for name in sorted(frontend_names - backend_names)
     )
     findings.extend(
-        f"{name}: the backend exposes public async def {name} on {BACKEND_CLASS} but no frontend "
+        f"{name}: backend/callables.json lists {name} but no frontend "
         f'callable("{name}") declares it — add the frontend declaration, fix a '
         f"rename, or add it to EXEMPT in this script if it is intentionally backend-only."
         for name in sorted(backend_names - frontend_names)
@@ -384,8 +365,8 @@ def find_discrepancies(
         if fe_arity != be_arity:
             findings.append(
                 f"{name}: arity mismatch — frontend declares {fe_arity} arg(s) "
-                f"(callable<[...]>) but backend async def {name} takes {be_arity} "
-                f"(self dropped). Align the argument count on one side."
+                f"(callable<[...]>) but the backend takes {be_arity}. "
+                f"Align the argument count on one side."
             )
 
     return sorted(findings)
@@ -396,7 +377,7 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 0
     frontend = parse_frontend_callables(SRC_DIR)
-    backend = parse_backend_callables(BACKEND_PY)
+    backend = parse_backend_callables(BACKEND_JSON)
     findings = find_discrepancies(frontend, backend, EXEMPT)
     if findings:
         for line in findings:
@@ -404,8 +385,8 @@ def main(argv: list[str]) -> int:
         print()
         print(
             "ERROR: the frontend (src/**/*.ts callable declarations) and backend "
-            "(Backend async methods in py_modules/backend.py) callable surfaces have drifted. Every "
-            "callable must be declared on both sides with matching arity (or be "
+            "(backend/callables.json) callable surfaces have drifted. Every "
+            "callable must be declared on both sides (or be "
             "explicitly EXEMPT) so the frontend↔backend wire stays one source of truth."
         )
         return 1

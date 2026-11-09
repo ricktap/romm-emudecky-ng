@@ -7,9 +7,6 @@ import {
   ProgressBar,
   ToggleField,
   Spinner,
-  DialogButton,
-  ConfirmModal,
-  showModal,
 } from "@decky/ui";
 import { FaCheckCircle, FaTimesCircle, FaExclamationTriangle } from "react-icons/fa";
 import {
@@ -17,15 +14,12 @@ import {
   cancelSync,
   getSyncStats,
   getSettings,
-  fixRetroarchInputDriver,
   startSync,
   syncPreview,
   syncApplyDelta,
   syncCancelPreview,
   clearSyncCache,
-  refreshMigrationState,
   getSyncStatus,
-  getRetroDeckStatus,
   logError,
 } from "../api/backend";
 import { formatBytes } from "../utils/formatters";
@@ -33,20 +27,11 @@ import { getSyncProgress, setSyncProgress as setStoredSyncProgress, onSyncProgre
 import { scrollToTop } from "../utils/scrollHelpers";
 import { getDownloadState } from "../utils/downloadStore";
 import { isUnfinishedStatus, interruptedLabel } from "../utils/downloadStatus";
-import { getMigrationState, onMigrationChange, setMigrationStatus } from "../utils/migrationStore";
 import { getSettingsResetState, onSettingsResetChange } from "../utils/settingsResetStore";
 import { getPlaytimeScopeState, onPlaytimeScopeChange, fetchPlaytimeScopeState } from "../utils/playtimeScopeStore";
-import {
-  getSaveSortMigrationState,
-  onSaveSortMigrationChange,
-  setSaveSortMigrationStatus,
-} from "../utils/saveSortMigrationStore";
 import { reconcileStaleShortcuts, requestSyncCancel, isCancelRequested, resetSyncCancel } from "../utils/syncManager";
 import { setVersionError } from "../utils/connectionState";
-import { retroDeckBanner, type RetroDeckBanner } from "../utils/retrodeckHealth";
 import { VersionErrorCard, useVersionError } from "./VersionErrorCard";
-import { WarningCard } from "./WarningCard";
-import { MigrationBlockedPage } from "./MigrationBlockedPage";
 import { SettingsResetBanner } from "./SettingsResetBanner";
 import { PlaytimeScopeBanner } from "./PlaytimeScopeBanner";
 import { UpdateBanner } from "./UpdateBanner";
@@ -58,7 +43,6 @@ import type {
   SyncPreview,
   SyncPreviewSummary,
   DownloadItem,
-  MigrationStatus,
 } from "../types";
 import { detach } from "../utils/detach";
 import { withTimeout } from "../utils/withTimeout";
@@ -233,13 +217,9 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
   const [preview, setPreview] = useState<SyncPreview | null>(null);
   const [skipPreview, setSkipPreview] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [retroarchWarning, setRetroarchWarning] = useState<{ warning: boolean; current?: string } | null>(null);
-  const [retrodeckBanner, setRetrodeckBanner] = useState<RetroDeckBanner | null>(null);
-  const [migration, setMigration] = useState<MigrationStatus>(getMigrationState());
   const [settingsReset, setSettingsReset] = useState(getSettingsResetState());
   const [playtimeScope, setPlaytimeScope] = useState(getPlaytimeScopeState());
   const [updateState, setUpdateState] = useState(getUpdateState());
-  const [saveSortMigration, setSaveSortMigration] = useState(getSaveSortMigrationState());
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const downloadPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -257,12 +237,6 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
     let cancelled = false;
     let connectionRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    refreshMigrationState()
-      .then(({ retrodeck, save_sort }) => {
-        setMigrationStatus(retrodeck);
-        setSaveSortMigrationStatus(save_sort);
-      })
-      .catch((e) => logError(`Failed to refresh migration state: ${e}`));
     getSyncStats()
       .then(setStats)
       .catch((e) => logError(`Failed to load sync stats: ${e}`));
@@ -313,21 +287,6 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
     };
     detach(probeConnection(() => cancelled));
 
-    getSettings()
-      .then((s) => {
-        if (s.retroarch_input_check) {
-          setRetroarchWarning(s.retroarch_input_check);
-        }
-      })
-      .catch((e) => logError(`Failed to load settings: ${e}`));
-
-    // RetroDECK path-resolution health — warn the user when the resolved roots
-    // are likely wrong (retrodeck.json unreadable, or its home missing on
-    // disk). "ok"/"absent" stay quiet (banner cleared to null).
-    getRetroDeckStatus()
-      .then((s) => setRetrodeckBanner(retroDeckBanner(s.status, s)))
-      .catch((e) => logError(`Failed to query RetroDECK status: ${e}`));
-
     // Cross-device playtime scope notice. The backend sets a durable flag when a
     // playtime reconcile is rejected for a token missing `roms.user.read`; it
     // self-clears once a scoped token is minted, so we re-read it on every mount.
@@ -377,20 +336,16 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
       setDownloads([...getDownloadState()]);
     }, 1000);
 
-    const unsubMigration = onMigrationChange(() => setMigration(getMigrationState()));
     const unsubSettingsReset = onSettingsResetChange(() => setSettingsReset(getSettingsResetState()));
     const unsubPlaytimeScope = onPlaytimeScopeChange(() => setPlaytimeScope(getPlaytimeScopeState()));
     const unsubUpdate = onUpdateStateChange(() => setUpdateState(getUpdateState()));
-    const unsubSaveSort = onSaveSortMigrationChange(() => setSaveSortMigration(getSaveSortMigrationState()));
     return () => {
       cancelled = true;
       if (connectionRetryTimer) clearTimeout(connectionRetryTimer);
       unsubProgress();
-      unsubMigration();
       unsubSettingsReset();
       unsubPlaytimeScope();
       unsubUpdate();
-      unsubSaveSort();
       if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);
       if (downloadPollRef.current) clearInterval(downloadPollRef.current);
     };
@@ -554,10 +509,6 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
 
   if (versionError) {
     return <VersionErrorCard message={versionError} compact />;
-  }
-
-  if (migration.pending) {
-    return <MigrationBlockedPage migration={migration} />;
   }
 
   let syncBody: ReactNode;
@@ -729,11 +680,6 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
       {playtimeScope.pending && <PlaytimeScopeBanner />}
       {updateState.info?.update_available && <UpdateBanner info={updateState.info} />}
       <PanelSection title="Status">
-        {retrodeckBanner && (
-          <PanelSectionRow>
-            <WarningCard title={retrodeckBanner.title} message={retrodeckBanner.message} compact />
-          </PanelSectionRow>
-        )}
         <PanelSectionRow>
           <Field
             label="Connection"
@@ -764,73 +710,6 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
                 </Field>
               </PanelSectionRow>
             )}
-          </>
-        )}
-        {retroarchWarning?.warning && (
-          <PanelSectionRow>
-            <Field label="RetroArch: input_driver issue" description={`Using "${retroarchWarning.current}"`}>
-              <DialogButton
-                onClick={() =>
-                  showModal(
-                    <ConfirmModal
-                      strTitle="Fix RetroArch input_driver?"
-                      strDescription="This will change input_driver to sdl2 in your RetroArch config. Controllers should work better in RetroArch menus after this change."
-                      strOKButtonText="Apply Fix"
-                      strCancelButtonText="Cancel"
-                      onOK={() => {
-                        detach(
-                          (async () => {
-                            try {
-                              const result = await fixRetroarchInputDriver();
-                              if (result.success) {
-                                setRetroarchWarning(null);
-                              }
-                            } catch {
-                              // ignore
-                            }
-                          })(),
-                        );
-                      }}
-                    />,
-                  )
-                }
-                onFocus={scrollToTop}
-              >
-                Fix
-              </DialogButton>
-            </Field>
-          </PanelSectionRow>
-        )}
-        {saveSortMigration.pending && (
-          <>
-            <PanelSectionRow>
-              <div
-                style={{
-                  padding: "8px 12px",
-                  backgroundColor: "rgba(212, 167, 44, 0.15)",
-                  borderLeft: "3px solid #d4a72c",
-                  borderRadius: "4px",
-                  fontSize: "12px",
-                }}
-              >
-                <div style={{ fontWeight: "bold", color: "#d4a72c", marginBottom: "4px" }}>
-                  {"\u26A0\uFE0F"} RetroArch save sorting changed
-                </div>
-                <div style={{ color: "rgba(255, 255, 255, 0.7)" }}>
-                  {saveSortMigration.saves_count ?? 0} save file(s) to migrate
-                </div>
-              </div>
-            </PanelSectionRow>
-            <PanelSectionRow>
-              <ButtonItem
-                layout="below"
-                onClick={() => onNavigate("settings")}
-                // @ts-expect-error onFocus works at runtime; not in Decky's ButtonItem types
-                onFocus={scrollToTop}
-              >
-                Go to Settings
-              </ButtonItem>
-            </PanelSectionRow>
           </>
         )}
       </PanelSection>

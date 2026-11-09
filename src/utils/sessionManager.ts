@@ -9,8 +9,6 @@
 
 import { toaster } from "@decky/api";
 import { recordSessionStart, getAppIdRomIdMap, finalizeGameSession, logInfo, logError, debugLog } from "../api/backend";
-import { setMigrationStatus } from "./migrationStore";
-import { setSaveSortMigrationStatus } from "./saveSortMigrationStore";
 import { updatePlaytimeDisplay } from "../patches/metadataPatches";
 import { detach } from "./detach";
 import { readPrimaryRunningApp, readRunningApps, type RunningApp } from "./runningApps";
@@ -204,17 +202,6 @@ async function handleGameStop(): Promise<void> {
     // Additive conflicts toast — backend renders the count string.
     if (result.sync.conflicts_toast) {
       toaster.toast({ title: "RomM Save Sync", body: result.sync.conflicts_toast });
-    }
-
-    // Migration store updates — backend ran refresh_state, frontend just
-    // feeds the typed payloads into the stores. When backend refresh
-    // failed (``migration == null``) leave the stores untouched, matching
-    // the pre-PR ``refreshMigrationState().catch`` behavior where a
-    // refresh failure logged a warning without clearing any stale
-    // "pending" badge.
-    if (result.migration) {
-      setMigrationStatus(result.migration.retrodeck);
-      setSaveSortMigrationStatus(result.migration.save_sort);
     }
   } catch (e) {
     logError(`Failed to finalize game session: ${e}`);

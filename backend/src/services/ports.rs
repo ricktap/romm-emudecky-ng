@@ -104,16 +104,6 @@ pub trait RomRegionsReader: Send + Sync {
     async fn all_rom_regions(&self) -> anyhow::Result<Vec<Vec<String>>>;
 }
 
-/// RetroArch's `input_driver` setting (a bad `x` value breaks controllers).
-#[async_trait]
-pub trait RetroArchInputConfig: Send + Sync {
-    /// `{warning, current, config_path}` for the first config that sets
-    /// `input_driver`, or `None` when no config sets it.
-    async fn check_input_driver(&self) -> Option<Value>;
-    /// Rewrite a bad `input_driver` to `sdl2`; returns the frontend result dict.
-    async fn fix_input_driver(&self) -> Value;
-}
-
 // ── Downloads, installs, launch ────────────────────────────────────────────
 
 /// Pushes a backend event (`{event, args: [payload]}`) to the frontend.

@@ -26,8 +26,6 @@ import {
   ensureDeviceRegistered,
   getSaveSyncSettings,
   getAllPlaytime,
-  getMigrationStatus,
-  getSaveSortMigrationStatus,
   getInstalledRelaunchOptions,
   testConnection,
   logError,
@@ -39,10 +37,8 @@ import {
   clearPlatformCollection,
   getHostname,
 } from "./utils/collections";
-import { setMigrationStatus } from "./utils/migrationStore";
 import { fetchSettingsResetState } from "./utils/settingsResetStore";
 import { resetSyncDelta, recordSyncRemoved, getSyncDelta } from "./utils/syncDeltaStore";
-import { setSaveSortMigrationStatus } from "./utils/saveSortMigrationStore";
 import { setVersionError, setServerRetryProgress } from "./utils/connectionState";
 import { initSessionManager, destroySessionManager } from "./utils/sessionManager";
 import { findOutermostScrollParent } from "./utils/scrollHelpers";
@@ -216,39 +212,6 @@ export default definePlugin(() => {
         }
       } catch {
         // Silent — other components will retry; don't block startup on connection failure
-      }
-    })(),
-  );
-
-  // Check for pending RetroDECK path migration on startup. The QAM block page
-  // and game-detail card surface this to the user — no toast needed.
-  detach(
-    (async () => {
-      try {
-        const status = await getMigrationStatus();
-        if (status.pending) {
-          setMigrationStatus(status);
-        }
-      } catch (e) {
-        logError(`Failed to check migration status: ${e}`);
-      }
-    })(),
-  );
-
-  // Check for pending save sort migration on startup
-  detach(
-    (async () => {
-      try {
-        const status = await getSaveSortMigrationStatus();
-        if (status.pending) {
-          setSaveSortMigrationStatus(status);
-          toaster.toast({
-            title: "EmuDecky RomM Manager",
-            body: "RetroArch save sorting changed. Go to Settings to migrate save files.",
-          });
-        }
-      } catch (e) {
-        logError(`Failed to check save sort migration status: ${e}`);
       }
     })(),
   );
@@ -557,37 +520,6 @@ export default definePlugin(() => {
     (data: DownloadFailedEvent) => handleGlobalDownloadFailure(data, { getDownloadState, updateDownload }, toaster),
   );
 
-  const pathChangedListener = addEventListener<[{ old_path: string; new_path: string; cleared?: boolean }]>(
-    "retrodeck_path_changed",
-    (data) => {
-      // Backend auto-clears the migration when the new path matches a previous
-      // RetroDECK home (round-trip / branch reset). Drop the pending block so
-      // all subscribers re-render without the migration UI.
-      if (data.cleared) {
-        setMigrationStatus({ pending: false });
-        return;
-      }
-      // Path actually changed — refetch authoritative status (file counts).
-      getMigrationStatus()
-        .then((status) => setMigrationStatus(status))
-        .catch((e) => logError(`Failed to refresh migration status: ${e}`));
-    },
-  );
-
-  const saveSortChangedListener = addEventListener<
-    [
-      {
-        old_settings: { sort_by_content: boolean; sort_by_core: boolean };
-        new_settings: { sort_by_content: boolean; sort_by_core: boolean };
-      },
-    ]
-  >("save_sort_changed", () => {
-    toaster.toast({
-      title: "EmuDecky RomM Manager",
-      body: "RetroArch save sorting changed. Go to Settings to migrate save files.",
-    });
-  });
-
   const saveStatusListener = addEventListener<[SaveStatus]>("save_status_updated", (data: SaveStatus) => {
     const hasConflict = hasAnySaveConflict(data);
     globalThis.dispatchEvent(
@@ -596,16 +528,6 @@ export default definePlugin(() => {
       }),
     );
   });
-
-  // After a RetroDECK-home migration the backend rewrites each installed ROM's
-  // launch command to the new path and emits the new command per shortcut.
-  // Confirm-set each so existing shortcuts launch from the migrated location.
-  const migrationRelaunchListener = addEventListener<[{ items: { app_id: number; launch_options: string }[] }]>(
-    "migration_relaunch_options",
-    (data) => {
-      detach(batchConfirmLaunchOptions(data.items, "migration_relaunch_options"));
-    },
-  );
 
   // Server retry-ladder progress (#1345): the backend emits one frame per HTTP
   // retry so the saves surfaces can show "Connecting to RomM… (attempt N/M)".
@@ -637,10 +559,7 @@ export default definePlugin(() => {
       removeEventListener("download_progress", downloadProgressListener);
       removeEventListener("download_complete", downloadCompleteListener);
       removeEventListener("download_failed", downloadFailedListener);
-      removeEventListener("retrodeck_path_changed", pathChangedListener);
-      removeEventListener("save_sort_changed", saveSortChangedListener);
       removeEventListener("save_status_updated", saveStatusListener);
-      removeEventListener("migration_relaunch_options", migrationRelaunchListener);
       removeEventListener("server_retry_progress", serverRetryListener);
     },
   };

@@ -547,7 +547,6 @@ describe("sessionManager session-changed dispatch (#1313)", () => {
         toast_body: null,
         conflicts_toast: null,
       },
-      migration: null,
     });
     sessionEvents = [];
     sessionListener = (e) => sessionEvents.push(e.detail);

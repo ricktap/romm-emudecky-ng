@@ -39,7 +39,6 @@ import {
   testConnection,
   probeReachability,
   getSaveStatus,
-  getBiosStatus,
   getPlatformCoreInfo,
   getSgdbResolution,
   getRomMetadata,
@@ -57,23 +56,16 @@ import {
 import { setLaunchOptionsConfirmed } from "../utils/steamShortcuts";
 import { updatePlaytimeDisplay } from "../patches/metadataPatches";
 import { buildEmulatorMenu } from "../utils/emulatorMenu";
-import type { BiosStatus, EmulatorOption, SaveStatus } from "../types";
+import type { EmulatorOption, SaveStatus } from "../types";
 import type { RommDataChangedDetail } from "../types/events";
 import { formatLastPlayed, formatPlaytime } from "../utils/formatters";
-import { biosColorForLevel } from "../utils/biosColor";
 import {
   applySaveSyncDisplay,
-  extractBiosInfo,
   extractCoreInfo,
   resolveSaveSyncLabel,
   timeoutMs,
 } from "../utils/playSection";
-import {
-  refreshAchievementsInBackground,
-  refreshActiveSlotInBackground,
-  refreshBiosInBackground,
-  refreshCoreInfoInBackground,
-} from "../utils/sectionRefresh";
+import { refreshActiveSlotInBackground, refreshCoreInfoInBackground } from "../utils/sectionRefresh";
 
 /** Track which appIds have had auto-artwork applied this session */
 const artworkApplied = new Set<number>();
@@ -115,9 +107,6 @@ interface InfoState {
    *  populated even offline (independent of connectivity). Drives the prominent
    *  "Save sync off" WarningCard. */
   savefilesInContentDir: boolean;
-  biosNeeded: boolean;
-  biosStatus: "ok" | "partial" | "missing" | null; // NOSONAR(typescript:S4323) — inline union inside InfoState; extracting an alias adds indirection for no reuse benefit.
-  biosLabel: string;
   activeCoreLabel: string | null;
   activeCoreIsDefault: boolean;
   emulators: EmulatorOption[];
@@ -126,20 +115,16 @@ interface InfoState {
   hasGameOverride: boolean;
   gameOverrideLabel?: string | null;
   activeSlot: string | null;
-  raId: number | null;
-  achievementEarned: number;
-  achievementTotal: number;
 }
 
 import { setRommConnectionState, setVersionError, useRommConnectionState } from "../utils/connectionState";
 import { registerConnectionHeartbeat } from "../utils/connectionHeartbeat";
 import { useVersionError } from "./VersionErrorCard";
-import { useMigrationStatus } from "./MigrationBlockedPage";
 import { detach } from "../utils/detach";
 
 /** Cache-first initial render. Resolves the cached game detail for this appId,
  *  pushes it into InfoState, and fires the background refresh tasks (active
- *  slot, artwork, metadata, achievements, BIOS) whose results are merged in
+ *  slot, artwork, metadata, core info) whose results are merged in
  *  later. Module-scope so the FC body stays focused on rendering. */
 async function loadCached(
   appId: number,
@@ -171,13 +156,6 @@ async function loadCached(
       saveSyncEnabled: cached.save_sync_enabled ?? false,
       saveSyncStatus,
       saveSyncLabel,
-      raId: cached.ra_id ?? null,
-      // Keep the last-known count when the re-derived cache has no achievement
-      // summary (e.g. a version switch during an offline window, where the
-      // backend progress cache is cold) — don't degrade a shown "7/70" to 0
-      // (#1345). A genuine earned:0 is a real object, so it still shows through.
-      achievementEarned: cached.achievement_summary?.earned ?? prev.achievementEarned,
-      achievementTotal: cached.achievement_summary?.total ?? prev.achievementTotal,
     }));
 
     // Background: fetch active_slot from save status (not in cached data)
@@ -202,27 +180,8 @@ async function loadCached(
       getRomMetadata(romId).catch((e) => debugLog(`Background metadata fetch error: ${e}`));
     }
 
-    // Achievements: render from cache, background refresh if stale
-    if (cached.ra_id && staleFields.includes("achievements")) {
-      refreshAchievementsInBackground(romId, cancelled, setter);
-    }
-
-    // BIOS: render from cache first, background refresh if stale
-    const cachedBios = cached.bios_status;
-    if (cachedBios) {
-      setter((prev) => ({
-        ...prev,
-        ...extractBiosInfo(cached.bios_level ?? null, cached.bios_label ?? null),
-      }));
-    }
-
-    if (staleFields.includes("bios")) {
-      refreshBiosInBackground(romId, cancelled, setter);
-    }
-
-    // Core info: sourced from its OWN path (#923), independent of BIOS status.
-    // Fetched non-blocking so the core button / badge can render once cores are
-    // known, regardless of whether the platform needs BIOS. Keyed on rom_id so
+    // Core info: sourced from its OWN path (#923). Fetched non-blocking so the
+    // core button / badge can render once cores are known. Keyed on rom_id so
     // the active core reflects a per-game DB override (epic #945).
     if (romId) {
       refreshCoreInfoInBackground(romId, cancelled, setter);
@@ -238,10 +197,9 @@ async function loadCached(
 // S3776 is raised on the declaration line, so its NOSONAR must stay there. prettier-ignore stops
 // Prettier from relocating the trailing comment into the body (which would break the suppression).
 // prettier-ignore
-export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOSONAR(typescript:S3776) — React FC body; decomposed in #392. Holds Steam menu + achievements + save-sync row.
+export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOSONAR(typescript:S3776) — React FC body; decomposed in #392. Holds Steam menu + save-sync row.
   // Subscribe to version error — re-renders when global state changes
   const versionError = useVersionError();
-  const migration = useMigrationStatus();
 
   // Read playtime from Steam's own overview synchronously (already written by metadataPatches)
   // This avoids an unnecessary render from setting it inside the async effect.
@@ -260,9 +218,6 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
     saveSyncStatus: null,
     saveSyncLabel: "",
     savefilesInContentDir: false,
-    biosNeeded: false,
-    biosStatus: null,
-    biosLabel: "",
     activeCoreLabel: null,
     activeCoreIsDefault: true,
     emulators: [],
@@ -271,9 +226,6 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
     hasGameOverride: false,
     gameOverrideLabel: null,
     activeSlot: "default",
-    raId: null,
-    achievementEarned: 0,
-    achievementTotal: 0,
   });
   // Badge derives from the shared store so it appears/disappears live on any
   // reachability signal (mount check, a failed/succeeded call, or the offline
@@ -330,20 +282,12 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
       if (!rid) return;
       // Core data comes from the dedicated core-info path (#923), keyed on the
       // rom_id from a ref to avoid a stale-closure read of InfoState. The active
-      // core reflects the per-game DB override (epic #945). BIOS level/label
-      // still come from the (now core-free) BIOS status — the active core just
-      // switched, so the BIOS requirements may have changed.
-      const [coreInfo, biosResult] = await Promise.all([getPlatformCoreInfo(rid), getBiosStatus(rid)]);
+      // core reflects the per-game DB override (epic #945).
+      const coreInfo = await getPlatformCoreInfo(rid);
       if (cancelled) return;
       setInfo((prev) => ({
         ...prev,
         ...extractCoreInfo(coreInfo),
-        // The new core may need different (or no) BIOS — re-derive biosNeeded
-        // from the refreshed status so the missing-BIOS badge keys off the
-        // active core, not the core that was active at mount (#923).
-        biosNeeded: !!biosResult.bios_status,
-        biosStatus: biosResult.bios_level,
-        biosLabel: biosResult.bios_label ?? "",
       }));
     };
 
@@ -370,7 +314,7 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
       if (detail.app_id !== appId) return;
       // A version switch re-bound this appId to a new rom_id. The picker already
       // invalidated the cached detail, so re-run the cache-first load to re-derive
-      // the info badges (save-sync / BIOS / core rows) and romId for the new
+      // the info badges (save-sync / core rows) and romId for the new
       // version. Reset the artwork-applied gate first so the Steam tile's SGDB art
       // re-applies for the new rom_id (#1298 item 3) — loadCached only applies it
       // when the appId is absent from the set.
@@ -755,24 +699,6 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
       const result = await downloadAllFirmware(info.platformSlug);
       if (result.success) {
         toaster.toast({ title: "EmuDecky RomM Manager", body: `BIOS downloaded (${result.downloaded ?? 0} files)` });
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_data_changed", { detail: { type: "bios", platform_slug: info.platformSlug } }),
-        );
-        // Refresh BIOS status — getBiosStatus ships pre-computed level/label so we don't re-derive.
-        if (info.romId) {
-          const refreshed = await getBiosStatus(info.romId).catch(() => ({
-            bios_status: null as BiosStatus | null,
-            bios_level: null as "ok" | "partial" | "missing" | null,
-            bios_label: null as string | null,
-          }));
-          if (refreshed.bios_status) {
-            setInfo((prev) => ({
-              ...prev,
-              biosStatus: refreshed.bios_level,
-              biosLabel: refreshed.bios_label ?? "",
-            }));
-          }
-        }
       } else {
         toaster.toast({ title: "EmuDecky RomM Manager", body: result.message || "BIOS download failed" });
       }
@@ -839,29 +765,15 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
     );
   };
 
-  /** Refresh the core badge + BIOS state from their dedicated paths and notify
-   *  sibling components after a successful override pin/clear. */
+  /** Refresh the core badge from its dedicated path and notify sibling
+   *  components after a successful override pin/clear. */
   const refreshCoreDisplay = async (romId: number, platformSlug: string) => {
     // Core data comes from the dedicated core-info path (#923), keyed on rom_id
     // so the per-game DB override (epic #945) reads back as the active core.
-    // BIOS level/label still come from getBiosStatus — the active core just
-    // switched, so the BIOS requirements may have changed.
-    const [coreInfo, refreshed] = await Promise.all([
-      getPlatformCoreInfo(romId),
-      getBiosStatus(romId).catch(() => ({
-        bios_status: null as BiosStatus | null,
-        bios_level: null as "ok" | "partial" | "missing" | null,
-        bios_label: null as string | null,
-      })),
-    ]);
+    const coreInfo = await getPlatformCoreInfo(romId);
     setInfo((prev) => ({
       ...prev,
       ...extractCoreInfo(coreInfo),
-      // Re-derive biosNeeded from the refreshed status so the missing-BIOS
-      // badge keys off the now-active core (#923).
-      biosNeeded: !!refreshed.bios_status,
-      biosStatus: refreshed.bios_level,
-      biosLabel: refreshed.bios_label ?? "",
     }));
     // Invalidate the frontend cache and notify other components (e.g. GameInfoPanel)
     invalidateCachedGameDetail(appId);
@@ -1048,11 +960,6 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
     return null;
   }
 
-  // Pending RetroDECK migration — render nothing (MigrationBlockedCard is shown in RomMGameInfoPanel instead)
-  if (migration.pending) {
-    return null;
-  }
-
   // Build info items array
   const infoItems: ReturnType<typeof createElement>[] = [];
 
@@ -1092,73 +999,6 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
     infoItems.push(infoItem("playtime", "PLAYTIME", info.playtime));
   }
 
-  // Achievements badge (only when RA data available)
-  if (info.raId) {
-    const hasEarned = info.achievementEarned > 0;
-    const countLabel =
-      info.achievementTotal > 0 ? `${info.achievementEarned}/${info.achievementTotal}` : `${info.achievementEarned}`;
-
-    // Generate sparkle dots at random fixed positions (only when earned > 0)
-    // Positions are deterministic per-index so they don't shift on re-render
-    const sparklePositions = [
-      { top: "5%", left: "80%" },
-      { top: "70%", left: "10%" },
-      { top: "15%", left: "35%" },
-      { top: "85%", left: "70%" },
-      { top: "45%", left: "90%" },
-    ];
-    const sparkleDurs = [2.4, 3.5, 2.8, 3.8, 3.1];
-    const sparkleDelays = [0, 0.9, 0.3, 1.6, 1.1];
-    const sparkleDots = hasEarned
-      ? sparklePositions.map((pos, i) =>
-          createElement("span", {
-            key: `sparkle-${pos.top}-${pos.left}`,
-            className: "romm-sparkle-dot",
-            style: {
-              "--romm-sparkle-top": pos.top,
-              "--romm-sparkle-left": pos.left,
-              "--romm-sparkle-delay": `${sparkleDelays[i]}s`,
-              "--romm-sparkle-dur": `${sparkleDurs[i]}s`,
-            } satisfies CSSPropertiesWithVars,
-          }),
-        )
-      : [];
-
-    infoItems.push(
-      createElement(
-        "div",
-        {
-          key: "achievements",
-          className: "romm-info-item romm-cheevo-badge",
-          onClick: () => {
-            globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "achievements" } }));
-          },
-        },
-        createElement("div", { className: "romm-info-header" }, "ACHIEVEMENTS"),
-        createElement(
-          "div",
-          {
-            className: "romm-cheevo-badge-sparkle",
-          },
-          // Trophy icon with sparkle container
-          createElement(
-            "span",
-            { style: { position: "relative", display: "inline-block" } },
-            createElement(
-              "span",
-              {
-                className: hasEarned ? "romm-cheevo-trophy" : "romm-cheevo-trophy-none",
-              },
-              "\uD83C\uDFC6",
-            ),
-            hasEarned ? createElement("span", { className: "romm-sparkle-container" }, ...sparkleDots) : null,
-          ),
-          createElement("span", { className: "romm-cheevo-count" }, countLabel),
-        ),
-      ),
-    );
-  }
-
   // Save Sync moved to dedicated tab — show legacy slot warning only
   if (info.activeSlot == null && info.saveSyncEnabled) {
     infoItems.push(
@@ -1175,37 +1015,6 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
             style: { fontSize: "11px", color: "#ff8800", marginTop: "4px" },
           },
           "\u26A0 Legacy save slot",
-        ),
-      ),
-    );
-  }
-
-  // BIOS warning (only when files are missing — OK status moved to tab)
-  if (info.biosNeeded && info.biosStatus && info.biosStatus !== "ok") {
-    const biosColor = biosColorForLevel(info.biosStatus);
-    infoItems.push(
-      createElement(
-        "div",
-        {
-          key: "bios",
-          className: "romm-info-item",
-          onClick: () => {
-            globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "bios" } }));
-          },
-          style: { cursor: "pointer" },
-        },
-        createElement("div", { className: "romm-info-header" }, "BIOS"),
-        createElement(
-          "div",
-          {
-            className: "romm-info-value",
-            style: { display: "flex", alignItems: "center", gap: "6px" },
-          },
-          createElement("span", {
-            className: "romm-status-dot",
-            style: { backgroundColor: biosColor },
-          }),
-          info.biosLabel,
         ),
       ),
     );

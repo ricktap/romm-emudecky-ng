@@ -14,7 +14,6 @@ use crate::adapters::emudeck::{EmuDeckSettingsPaths, HomeEmulatorLocator, Platfo
 use crate::adapters::persistence::{EpochClock, FileSettingsPersister, SettingsFile};
 use crate::adapters::plugin_metadata::read_plugin_version;
 use crate::adapters::repositories::{SqliteDownloadJobs, SqliteKvConfig, SqliteLibrary, SqliteRomRegions};
-use crate::adapters::retroarch::RetroArchConfigFiles;
 use crate::adapters::romm::api::RommApi;
 use crate::adapters::romm::http::{RetryListener, RetryPolicy, RommHttp};
 use crate::domain::settings::{RESET_NOTICE_KEY, fold_legacy_save_sync_settings, migrate_settings, stored_version};
@@ -41,7 +40,6 @@ pub const PORTED_CALLABLES: &[&str] = &[
     "connect_with_token",
     "debug_log",
     "dismiss_settings_reset_notice",
-    "fix_retroarch_input_driver",
     "frontend_log",
     "get_download_queue",
     "get_installed_rom",
@@ -137,7 +135,6 @@ impl Backend {
             settings: settings.clone(),
             persister: persister.clone(),
             regions: Arc::new(SqliteRomRegions::new(db.clone())),
-            retroarch: Arc::new(RetroArchConfigFiles::new(&env.user_home)),
         }));
         let connection_service = Arc::new(ConnectionService::new(ConnectionServiceConfig {
             settings: settings.clone(),
@@ -283,15 +280,6 @@ impl Backend {
                 s,
                 |s, _| async move { s.get_known_regions().await.map_err(err) },
             ),
-            "fix_retroarch_input_driver" => {
-                bind(
-                    name,
-                    0,
-                    0,
-                    s,
-                    |s, _| async move { Ok(s.fix_retroarch_input_driver().await) },
-                )
-            }
             "get_settings" => bind(name, 0, 0, s, |s, _| async move { Ok(s.get_settings().await) }),
             "get_whitelist_settings" => bind(name, 0, 0, s, |s, _| async move { Ok(s.get_whitelist_settings()) }),
             "update_whitelist_settings" => bind(name, 2, 2, s, |s, a| async move {
@@ -405,7 +393,7 @@ mod tests {
     #[test]
     fn surface_matches_python_backend_size_and_includes_ported() {
         let names = callable_names();
-        assert_eq!(names.len(), 121);
+        assert_eq!(names.len(), 106);
         let mut dedup = names.clone();
         dedup.dedup();
         assert_eq!(dedup.len(), names.len());

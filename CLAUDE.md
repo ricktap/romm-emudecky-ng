@@ -5,7 +5,10 @@ install/uninstall games, launch via EmuDeck emulators, save sync, BIOS/firmware.
 a thin Decky shim (`main.py`), React/TypeScript frontend (`src/`). The backend is being rewritten in Rust for 0.40.0
 (GitHub milestone "0.40.0"); the shim's socket protocol is the contract both must satisfy.
 
+- **Start with [`HANDOFF.md`](HANDOFF.md)** — current state, the Rust-rewrite workflow and remaining steps, working
+  agreements with Patrick, and gotchas.
 - **Roadmap and decisions:** [`EMUDECK_PORT_PLAN.md`](EMUDECK_PORT_PLAN.md) — read it before starting work.
+- `REMOVED_TILL_0_90_0.md` lists features deliberately dropped during the rewrite (Switch-only until v0.75).
 - **Fork of** `danielcopper/decky-romm-sync` (RetroDECK). `#NNN` refs in code/docs/ADRs are **upstream** issues.
   RetroDECK support is dropped; leftover RetroDECK names (e.g. `RetroDeckPaths`) are naming debt, not targets.
 - `docs/` is upstream reference material — useful, but not authoritative over the plan or the code.

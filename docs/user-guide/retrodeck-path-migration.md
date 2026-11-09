@@ -1,3 +1,5 @@
+> **Removed in the Rust rewrite until v0.90** — see REMOVED_TILL_0_90_0.md.
+
 # EmuDeck Path Migration
 
 If you move your EmuDeck installation to a different location — for example, from internal storage to an SD card, or

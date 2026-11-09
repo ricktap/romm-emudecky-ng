@@ -7,7 +7,7 @@
 // those, assert the absence of state change instead.
 //
 // The PanelState is per-instance, but module-level helpers (formatReleaseDate,
-// pickBiosColor, ...) are pure. We pick a unique appId per test to keep
+// ...) are pure. We pick a unique appId per test to keep
 // any module-scope mock state isolated.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -31,7 +31,7 @@ import {
   setServerRetryProgress,
   getServerRetryProgress,
 } from "../utils/connectionState";
-import type { MigrationStatus, SaveSortMigrationStatus, RomMetadata, DownloadCompleteEvent } from "../types";
+import type { RomMetadata, DownloadCompleteEvent } from "../types";
 
 // Type-only imports — vi.mock(...) below replaces the runtime impl, but
 // pinning captured-props shapes to the real component keeps assertions in
@@ -39,17 +39,14 @@ import type { MigrationStatus, SaveSortMigrationStatus, RomMetadata, DownloadCom
 import type { SlotSetupWizard } from "./SlotSetupWizard";
 import type { SavesTab } from "./SavesTab";
 import type { VersionErrorCard } from "./VersionErrorCard";
-import type { MigrationBlockedCard } from "./MigrationBlockedCard";
 
 type SlotSetupWizardProps = ComponentProps<typeof SlotSetupWizard>;
 type SavesTabProps = ComponentProps<typeof SavesTab>;
 type VersionErrorCardProps = ComponentProps<typeof VersionErrorCard>;
-type MigrationBlockedCardProps = ComponentProps<typeof MigrationBlockedCard>;
 
 const capturedSlotSetupWizard: SlotSetupWizardProps[] = [];
 const capturedSavesTab: SavesTabProps[] = [];
 const capturedVersionErrorCard: VersionErrorCardProps[] = [];
-const capturedMigrationBlockedCard: MigrationBlockedCardProps[] = [];
 
 vi.mock("./SlotSetupWizard", () => ({
   SlotSetupWizard: (props: SlotSetupWizardProps) => {
@@ -73,13 +70,6 @@ vi.mock("./VersionErrorCard", () => ({
   useVersionError: vi.fn(() => null),
 }));
 
-vi.mock("./MigrationBlockedCard", () => ({
-  MigrationBlockedCard: (props: MigrationBlockedCardProps) => {
-    capturedMigrationBlockedCard.push(props);
-    return createElement("div", { "data-testid": "migration-blocked-card" });
-  },
-}));
-
 // ----- Slot state helpers — already tested in src/utils/slotState.test.ts.
 // Mock so we can observe + assert the panel routes through them with the
 // right arg shape.
@@ -97,49 +87,6 @@ vi.mock("../utils/cachedGameDetailStore", () => ({
   getCachedGameDetail: vi.fn(),
   invalidateCachedGameDetail: vi.fn(),
 }));
-
-// ----- migrationStore — own listener list + state so tests drive the
-// subscribe/unsubscribe + state-change flow deterministically.
-// `vi.resetAllMocks()` in beforeEach wipes the impls — re-stubbed there.
-const migrationListeners: Array<() => void> = [];
-let currentMigrationState: MigrationStatus = { pending: false };
-vi.mock("../utils/migrationStore", () => ({
-  getMigrationState: vi.fn(() => currentMigrationState),
-  setMigrationStatus: vi.fn((s: MigrationStatus) => {
-    currentMigrationState = s;
-    migrationListeners.forEach((fn) => fn());
-  }),
-  onMigrationChange: vi.fn((cb: () => void) => {
-    migrationListeners.push(cb);
-    return () => {
-      const i = migrationListeners.indexOf(cb);
-      if (i >= 0) migrationListeners.splice(i, 1);
-    };
-  }),
-}));
-import * as migrationStore from "../utils/migrationStore";
-
-// ----- saveSortMigrationStore — same listener-array pattern as
-// migrationStore. The panel reads .pending on mount and re-renders when the
-// store notifies. clearSaveSortMigration isn't used by the panel but the mock
-// declares it as a vi.fn for shape parity with the real module.
-const saveSortListeners: Array<() => void> = [];
-let currentSaveSortState: SaveSortMigrationStatus = { pending: false };
-vi.mock("../utils/saveSortMigrationStore", () => ({
-  getSaveSortMigrationState: vi.fn(() => currentSaveSortState),
-  setSaveSortMigrationStatus: vi.fn((s: SaveSortMigrationStatus) => {
-    currentSaveSortState = s;
-    saveSortListeners.forEach((fn) => fn());
-  }),
-  onSaveSortMigrationChange: vi.fn((cb: () => void) => {
-    saveSortListeners.push(cb);
-    return () => {
-      const i = saveSortListeners.indexOf(cb);
-      if (i >= 0) saveSortListeners.splice(i, 1);
-    };
-  }),
-}));
-import * as saveSortMigrationStore from "../utils/saveSortMigrationStore";
 
 // ----- @decky/ui — global stub from test-setup.ts covers Focusable +
 // DialogButton. Pass-through is enough for this panel.
@@ -183,11 +130,6 @@ describe("RomMGameInfoPanel", () => {
     capturedSlotSetupWizard.length = 0;
     capturedSavesTab.length = 0;
     capturedVersionErrorCard.length = 0;
-    capturedMigrationBlockedCard.length = 0;
-    migrationListeners.length = 0;
-    saveSortListeners.length = 0;
-    currentMigrationState = { pending: false };
-    currentSaveSortState = { pending: false };
     testAppId++;
     installDomEventListenerSpy();
 
@@ -198,32 +140,6 @@ describe("RomMGameInfoPanel", () => {
     // resetAllMocks wipes module-mock impls — re-stub below.
     vi.mocked(useVersionError).mockReturnValue(null);
 
-    // Re-stub migrationStore impls (resetAllMocks wiped them).
-    vi.mocked(migrationStore.getMigrationState).mockImplementation(() => currentMigrationState);
-    vi.mocked(migrationStore.setMigrationStatus).mockImplementation((s: MigrationStatus) => {
-      currentMigrationState = s;
-      migrationListeners.forEach((fn) => fn());
-    });
-    vi.mocked(migrationStore.onMigrationChange).mockImplementation((cb: () => void) => {
-      migrationListeners.push(cb);
-      return () => {
-        const i = migrationListeners.indexOf(cb);
-        if (i >= 0) migrationListeners.splice(i, 1);
-      };
-    });
-    // Re-stub saveSortMigrationStore impls.
-    vi.mocked(saveSortMigrationStore.getSaveSortMigrationState).mockImplementation(() => currentSaveSortState);
-    vi.mocked(saveSortMigrationStore.setSaveSortMigrationStatus).mockImplementation((s: SaveSortMigrationStatus) => {
-      currentSaveSortState = s;
-      saveSortListeners.forEach((fn) => fn());
-    });
-    vi.mocked(saveSortMigrationStore.onSaveSortMigrationChange).mockImplementation((cb: () => void) => {
-      saveSortListeners.push(cb);
-      return () => {
-        const i = saveSortListeners.indexOf(cb);
-        if (i >= 0) saveSortListeners.splice(i, 1);
-      };
-    });
 
     // Defaults — cached.found=false; tests opt into specific shapes per case.
     vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
@@ -231,24 +147,9 @@ describe("RomMGameInfoPanel", () => {
     });
     vi.mocked(cachedStore.invalidateCachedGameDetail).mockReturnValue(undefined);
     vi.mocked(backend.debugLog).mockResolvedValue(undefined);
-    vi.mocked(backend.refreshMigrationState).mockResolvedValue({
-      retrodeck: { pending: false },
-      save_sort: { pending: false },
-    });
     vi.mocked(backend.getRomMetadata).mockResolvedValue(makeMetadata());
     vi.mocked(backend.getInstalledRom).mockResolvedValue(null);
     vi.mocked(backend.getArtworkBase64).mockResolvedValue({ base64: null });
-    vi.mocked(backend.checkPlatformBios).mockResolvedValue({ needs_bios: false });
-    // Core info comes from the dedicated get_platform_core_info path (#923),
-    // decoupled from BIOS status. Default: no cores. Tests opt into shapes.
-    vi.mocked(backend.getPlatformCoreInfo).mockResolvedValue({
-      emulator_data_available: true,
-      emulators: [],
-      active_core: null,
-      active_core_label: null,
-      platform_core_label: null,
-      has_game_override: false,
-    });
     vi.mocked(backend.getSaveStatus).mockResolvedValue({
       rom_id: 0,
       files: [],
@@ -271,17 +172,6 @@ describe("RomMGameInfoPanel", () => {
       slots: [],
       active_slot: "",
     });
-    vi.mocked(backend.getAchievements).mockResolvedValue({
-      success: true,
-      achievements: [],
-      total: 0,
-    });
-    vi.mocked(backend.getAchievementProgress).mockResolvedValue({
-      success: true,
-      earned: 0,
-      total: 0,
-      earned_achievements: [],
-    });
   });
 
   afterEach(() => {
@@ -298,24 +188,7 @@ describe("RomMGameInfoPanel", () => {
       const { queryByTestId } = render(<RomMGameInfoPanel appId={testAppId} />);
       await flushAsync();
       expect(queryByTestId("version-error-card")).not.toBeNull();
-      expect(queryByTestId("migration-blocked-card")).toBeNull();
       expect(capturedVersionErrorCard[0]?.message).toBe("server too old");
-    });
-
-    it("renders only MigrationBlockedCard when migration is pending", async () => {
-      currentMigrationState = { pending: true };
-      // refreshMigrationState() runs on mount and overwrites the store state —
-      // also return pending=true so it doesn't clobber the gate after the
-      // useEffect resolves.
-      vi.mocked(backend.refreshMigrationState).mockResolvedValue({
-        retrodeck: { pending: true },
-        save_sort: { pending: false },
-      });
-      const { queryByTestId } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(queryByTestId("migration-blocked-card")).not.toBeNull();
-      expect(queryByTestId("version-error-card")).toBeNull();
-      expect(capturedMigrationBlockedCard.length).toBeGreaterThanOrEqual(1);
     });
 
     it("renders 'Loading...' before loadData resolves", () => {
@@ -363,15 +236,7 @@ describe("RomMGameInfoPanel", () => {
         installed: true,
         save_sync_enabled: true,
         metadata: makeMetadata({ summary: "An RPG.", genres: ["RPG"] }),
-        ra_id: 7,
         stale_fields: ["metadata"],
-        bios_status: {
-          needs_bios: true,
-          platform_slug: "snes",
-          server_count: 1,
-          local_count: 1,
-          all_downloaded: true,
-        } as never,
       });
 
       render(<RomMGameInfoPanel appId={testAppId} />);
@@ -386,21 +251,6 @@ describe("RomMGameInfoPanel", () => {
       expect(backend.getArtworkBase64).toHaveBeenCalledWith(99);
       // metadata in stale_fields → getRomMetadata fires (even though cache has metadata)
       expect(backend.getRomMetadata).toHaveBeenCalledWith(99);
-    });
-
-    it("keys the dedicated core-info path on rom_id on mount (#945)", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 99,
-        platform_slug: "snes",
-        rom_file: "mario.sfc",
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      // The background core-info fetch reads the per-game DB override by rom_id.
-      expect(vi.mocked(backend.getPlatformCoreInfo)).toHaveBeenCalledWith(99);
     });
 
     it("skips metadata refresh when metadata exists AND not in stale_fields", async () => {
@@ -503,34 +353,6 @@ describe("RomMGameInfoPanel", () => {
       // applyRefreshSlotResult fires for the successful getSaveSlots call,
       // and the rejected isSaveTrackingConfigured does NOT crash the mount.
       expect(vi.mocked(slotState.applyRefreshSlotResult)).toHaveBeenCalled();
-    });
-  });
-
-  // ------------------------------------------------------------------
-  // C. refreshMigrationState mount-time call + logError on rejection
-  // ------------------------------------------------------------------
-
-  describe("refreshMigrationState on mount", () => {
-    it("calls setMigrationStatus + setSaveSortMigrationStatus on success", async () => {
-      const { setMigrationStatus } = await import("../utils/migrationStore");
-      const { setSaveSortMigrationStatus } = await import("../utils/saveSortMigrationStore");
-      vi.mocked(backend.refreshMigrationState).mockResolvedValue({
-        retrodeck: { pending: false },
-        save_sort: { pending: true } as SaveSortMigrationStatus,
-      });
-      render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(setMigrationStatus).toHaveBeenCalledWith(expect.objectContaining({ pending: false }));
-      expect(setSaveSortMigrationStatus).toHaveBeenCalledWith(expect.objectContaining({ pending: true }));
-    });
-
-    it("calls logError when refreshMigrationState rejects", async () => {
-      const logSpy = vi.spyOn(backend, "logError").mockImplementation(() => {});
-      vi.mocked(backend.refreshMigrationState).mockRejectedValue(new Error("boom"));
-      render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to refresh migration state"));
-      logSpy.mockRestore();
     });
   });
 
@@ -772,7 +594,6 @@ describe("RomMGameInfoPanel", () => {
       render(<RomMGameInfoPanel appId={testAppId} />);
       await flushAsync();
       vi.mocked(backend.getSaveStatus).mockClear();
-      vi.mocked(backend.checkPlatformBios).mockClear();
       vi.mocked(backend.getRomMetadata).mockClear();
       await act(async () => {
         globalThis.dispatchEvent(
@@ -784,7 +605,6 @@ describe("RomMGameInfoPanel", () => {
       });
       // None of the data-changed handlers should run.
       expect(backend.getSaveStatus).not.toHaveBeenCalled();
-      expect(backend.checkPlatformBios).not.toHaveBeenCalled();
       expect(backend.getRomMetadata).not.toHaveBeenCalled();
     });
 
@@ -1010,357 +830,6 @@ describe("RomMGameInfoPanel", () => {
       expect(vi.mocked(backend.debugLog)).not.toHaveBeenCalledWith(expect.stringContaining("onDataChanged error"));
     });
 
-    it("bios: matching platform_slug → calls checkPlatformBios; updates biosStatus when needs_bios=true", async () => {
-      // Panel's own platform is snes; a matching-platform bios event must be
-      // applied (the positive case for the #1082 guard).
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 60,
-        platform_slug: "snes",
-        save_sync_enabled: true,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      vi.mocked(backend.checkPlatformBios).mockResolvedValue({
-        needs_bios: true,
-        server_count: 2,
-        local_count: 2,
-        all_downloaded: true,
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_data_changed", {
-            detail: { type: "bios", platform_slug: "snes" },
-          }),
-        );
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      // BIOS tab now visible (biosStatus non-null).
-      expect(container.textContent).toContain("BIOS");
-    });
-
-    it("bios: threads bios_level from the callable result into the rendered status-dot color (#461)", async () => {
-      // The check_platform_bios refresh path now ships bios_level straight from
-      // the backend (compute_bios_level) — the handler threads it through, never
-      // re-deriving from counts. amber (#d4a72c) is the observable side effect.
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 60,
-        platform_slug: "snes",
-        save_sync_enabled: true,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      vi.mocked(backend.checkPlatformBios).mockResolvedValue({
-        needs_bios: true,
-        server_count: 5,
-        local_count: 2,
-        all_downloaded: false,
-        required_count: 5,
-        required_downloaded: 2,
-        bios_level: "partial",
-      });
-      const view = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_data_changed", {
-            detail: { type: "bios", platform_slug: "snes" },
-          }),
-        );
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      // Open the BIOS tab so the status dot renders.
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "bios" } }));
-        await Promise.resolve();
-      });
-      expect(view.container.innerHTML).toContain("#d4a72c");
-    });
-
-    it("bios: detail.platform_slug absent → no fetch (early return)", async () => {
-      await mountWithRomId(60);
-      vi.mocked(backend.checkPlatformBios).mockClear();
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_data_changed", {
-            detail: { type: "bios", platform_slug: "" },
-          }),
-        );
-        await Promise.resolve();
-      });
-      expect(vi.mocked(backend.checkPlatformBios)).not.toHaveBeenCalled();
-    });
-
-    it("bios: checkPlatformBios rejection → falls back to { needs_bios: false } (non-vacuous .catch)", async () => {
-      // Mount on the snes platform (so the #1082 guard lets the matching
-      // event through) without bios_status, so biosStatus starts null and
-      // the BIOS tab is NOT visible — the assertion that it STAYS hidden
-      // after the rejection is the fallback-state observable.
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 60,
-        platform_slug: "snes",
-        save_sync_enabled: true,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(container.textContent).not.toContain("BIOS");
-      vi.mocked(backend.checkPlatformBios).mockRejectedValue(new Error("net"));
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_data_changed", {
-            detail: { type: "bios", platform_slug: "snes" },
-          }),
-        );
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      // The outer try/catch did not fire — inline .catch swallowed and
-      // produced { needs_bios: false }, which means biosStatus stays null
-      // (the handler's setState resolves the ternary to null) and the
-      // BIOS tab remains hidden.
-      expect(vi.mocked(backend.debugLog)).not.toHaveBeenCalledWith(expect.stringContaining("onDataChanged error"));
-      expect(container.textContent).not.toContain("BIOS");
-    });
-
-    it("bios: cross-platform event (#1082) → ignored; no fetch, foreign BIOS list never bleeds in", async () => {
-      // Regression for #1082: bios events fan out to every mounted panel.
-      // A gba panel must ignore a psx bios event (e.g. a psx BIOS bulk
-      // download) instead of repainting itself with the psx BIOS list.
-      // Mount a gba panel WITHOUT bios_status, so the BIOS tab starts hidden.
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 70,
-        platform_slug: "gba",
-        save_sync_enabled: true,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(container.textContent).not.toContain("BIOS");
-
-      // The psx event would, if applied, repaint this panel with a needs_bios
-      // psx status (surfacing the BIOS tab + a psx-specific marker). Make the
-      // assertion non-vacuous: a distinct psx payload that must NOT appear.
-      vi.mocked(backend.checkPlatformBios).mockClear();
-      vi.mocked(backend.checkPlatformBios).mockResolvedValue({
-        needs_bios: true,
-        server_count: 1,
-        local_count: 1,
-        all_downloaded: true,
-        files: [
-          {
-            file_name: "PSX_BLEED_MARKER.bin",
-            description: "PSX BIOS",
-            classification: "required",
-            downloaded: true,
-          },
-        ],
-      } as never);
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_data_changed", {
-            detail: { type: "bios", platform_slug: "psx" },
-          }),
-        );
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-
-      // Guard returns BEFORE the fetch — checkPlatformBios("psx") never runs.
-      expect(vi.mocked(backend.checkPlatformBios)).not.toHaveBeenCalled();
-      // BIOS tab stayed hidden; the psx marker never bled into this gba panel.
-      expect(container.textContent).not.toContain("BIOS");
-      expect(container.innerHTML).not.toContain("PSX_BLEED_MARKER.bin");
-    });
-
-    it("bios: matching-platform event (#1082) → still applied (guard not over-broad)", async () => {
-      // The guard must reject other platforms WITHOUT blocking the panel's own.
-      // Mount a gba panel and feed it a gba bios event — it must update.
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 70,
-        platform_slug: "gba",
-        save_sync_enabled: true,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(container.textContent).not.toContain("BIOS");
-
-      vi.mocked(backend.checkPlatformBios).mockClear();
-      vi.mocked(backend.checkPlatformBios).mockResolvedValue({
-        needs_bios: true,
-        server_count: 1,
-        local_count: 1,
-        all_downloaded: true,
-      });
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_data_changed", {
-            detail: { type: "bios", platform_slug: "gba" },
-          }),
-        );
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-
-      // Own-platform event flows through: fetch fired and BIOS tab surfaced.
-      expect(vi.mocked(backend.checkPlatformBios)).toHaveBeenCalledWith("gba");
-      expect(container.textContent).toContain("BIOS");
-    });
-
-    it("core_changed: invalidates cache + re-fetches getCachedGameDetail and updates biosStatus state", async () => {
-      // Mount without bios_status so the initial state.biosStatus is null
-      // and the BIOS tab is NOT visible. Then dispatch core_changed with a
-      // cache response that DOES carry bios_status — the handler's setState
-      // call is the only path that surfaces the BIOS tab.
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 60,
-        rom_file: "mario.sfc",
-        save_sync_enabled: true,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(container.textContent).not.toContain("BIOS");
-      vi.mocked(cachedStore.invalidateCachedGameDetail).mockClear();
-      vi.mocked(cachedStore.getCachedGameDetail).mockClear();
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 60,
-        rom_file: "mario.sfc",
-        bios_status: {
-          platform_slug: "snes",
-          server_count: 1,
-          local_count: 1,
-          all_downloaded: true,
-        } as never,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      // Core data comes from the dedicated path (#923), keyed on rom_id so the
-      // active core reflects the per-game DB override (epic #945).
-      vi.mocked(backend.getPlatformCoreInfo).mockResolvedValue({
-        active_core: "from_core_changed.so",
-        active_core_label: "FROM_CORE_CHANGED",
-        platform_core_label: null,
-        has_game_override: false,
-        emulator_data_available: true,
-        emulators: [
-          {
-            label: "FROM_CORE_CHANGED",
-            kind: "libretro",
-            core_so: "from_core_changed.so",
-            is_default: true,
-            bakeable: true,
-            reason: null,
-          },
-        ],
-      });
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_data_changed", {
-            detail: { type: "core_changed", platform_slug: "snes" },
-          }),
-        );
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(vi.mocked(cachedStore.invalidateCachedGameDetail)).toHaveBeenCalledWith(testAppId);
-      expect(vi.mocked(cachedStore.getCachedGameDetail)).toHaveBeenCalled();
-      // Keyed on rom_id (#945) — the active core reflects the per-game DB override.
-      expect(vi.mocked(backend.getPlatformCoreInfo)).toHaveBeenCalledWith(60);
-      // biosStatus now non-null → BIOS tab visible. Removing the
-      // handler's `setState((prev) => ({ ..., biosStatus }))` line
-      // makes this assertion fail.
-      expect(container.textContent).toContain("BIOS");
-      // Switch to the BIOS tab and assert the new active core label (from the
-      // dedicated core-info path) reached the rendered Emulator column.
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "bios" } }));
-        await Promise.resolve();
-      });
-      expect(container.textContent).toContain("FROM_CORE_CHANGED");
-    });
-
-    it("core_changed: cache returns found=false → no state mutation", async () => {
-      // Mount with a bios_status on the cache so biosStatus starts non-null
-      // (BIOS tab visible). After a found=false core_changed re-fetch, the
-      // handler should early-return — biosStatus must NOT be reset.
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 60,
-        platform_slug: "snes",
-        save_sync_enabled: true,
-        bios_status: {
-          platform_slug: "snes",
-          server_count: 1,
-          local_count: 1,
-          all_downloaded: true,
-        } as never,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      // Initial core label from the dedicated path (loadData background fetch).
-      vi.mocked(backend.getPlatformCoreInfo).mockResolvedValue({
-        active_core: "initial_core.so",
-        active_core_label: "INITIAL_CORE",
-        platform_core_label: null,
-        has_game_override: false,
-        emulator_data_available: true,
-        emulators: [
-          {
-            label: "INITIAL_CORE",
-            kind: "libretro",
-            core_so: "initial_core.so",
-            is_default: true,
-            bakeable: true,
-            reason: null,
-          },
-        ],
-      });
-      const view = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(view.container.textContent).toContain("BIOS");
-      // Second resolve: found=false. The handler's early-return means
-      // biosStatus is NOT touched.
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValueOnce({
-        found: false,
-      });
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_data_changed", {
-            detail: { type: "core_changed", platform_slug: "snes" },
-          }),
-        );
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      // Outer catch did NOT fire …
-      expect(vi.mocked(backend.debugLog)).not.toHaveBeenCalledWith(expect.stringContaining("onDataChanged error"));
-      // … and biosStatus is unchanged from the initial value (BIOS tab
-      // still visible and the INITIAL_CORE label still reaches the BIOS
-      // section after a tab switch).
-      expect(view.container.textContent).toContain("BIOS");
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "bios" } }));
-        await Promise.resolve();
-      });
-      expect(view.container.textContent).toContain("INITIAL_CORE");
-    });
-
     it("metadata: matching rom_id → getRomMetadata + updates metadata state", async () => {
       const { container } = await mountWithRomId(70);
       vi.mocked(backend.getRomMetadata).mockClear();
@@ -1426,7 +895,6 @@ describe("RomMGameInfoPanel", () => {
     it("unknown detail.type → no-op (no fetches, no throw)", async () => {
       await mountWithRomId(99);
       vi.mocked(backend.getSaveStatus).mockClear();
-      vi.mocked(backend.checkPlatformBios).mockClear();
       vi.mocked(backend.getRomMetadata).mockClear();
       await act(async () => {
         globalThis.dispatchEvent(
@@ -1437,13 +905,12 @@ describe("RomMGameInfoPanel", () => {
         await Promise.resolve();
       });
       expect(backend.getSaveStatus).not.toHaveBeenCalled();
-      expect(backend.checkPlatformBios).not.toHaveBeenCalled();
       expect(backend.getRomMetadata).not.toHaveBeenCalled();
     });
 
     it("handler outer try/catch → debugLog fires when an inner await rejects without .catch", async () => {
-      // The core_changed branch is the only one without an inline .catch on
-      // its fetch — make getCachedGameDetail reject after mount so the inner
+      // The version_switched branch has no inline .catch on its cache
+      // re-read — make getCachedGameDetail reject after mount so the inner
       // await throws and the outer try/catch in onDataChanged surfaces it.
       await mountWithRomId(99);
       vi.mocked(backend.debugLog).mockClear();
@@ -1451,71 +918,13 @@ describe("RomMGameInfoPanel", () => {
       await act(async () => {
         globalThis.dispatchEvent(
           new CustomEvent("romm_data_changed", {
-            detail: { type: "core_changed", platform_slug: "snes" },
+            detail: { type: "version_switched", app_id: testAppId, rom_id: 2 },
           }),
         );
         await Promise.resolve();
         await Promise.resolve();
       });
       expect(vi.mocked(backend.debugLog)).toHaveBeenCalledWith(expect.stringContaining("onDataChanged error"));
-    });
-  });
-
-  // ------------------------------------------------------------------
-  // F. Migration store subscriptions
-  // ------------------------------------------------------------------
-
-  describe("migration store subscriptions", () => {
-    it("subscribes to migrationStore on mount and unsubscribes on unmount", async () => {
-      const before = migrationListeners.length;
-      const { unmount } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(migrationListeners.length).toBe(before + 1);
-      unmount();
-      expect(migrationListeners.length).toBe(before);
-    });
-
-    it("subscribes to saveSortMigrationStore on mount and unsubscribes on unmount", async () => {
-      const before = saveSortListeners.length;
-      const { unmount } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(saveSortListeners.length).toBe(before + 1);
-      unmount();
-      expect(saveSortListeners.length).toBe(before);
-    });
-
-    it("listener fired after migrationStore changes to pending=true → switches to MigrationBlockedCard", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 1,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      const { queryByTestId } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(queryByTestId("migration-blocked-card")).toBeNull();
-      await act(async () => {
-        currentMigrationState = { pending: true };
-        migrationListeners.forEach((fn) => fn());
-      });
-      expect(queryByTestId("migration-blocked-card")).not.toBeNull();
-    });
-
-    it("listener fired after saveSortMigrationStore changes to pending=true → renders save-sort warning", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 1,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(container.textContent).not.toContain("RetroArch save sorting changed");
-      await act(async () => {
-        currentSaveSortState = { pending: true };
-        saveSortListeners.forEach((fn) => fn());
-      });
-      expect(container.textContent).toContain("RetroArch save sorting changed");
     });
   });
 
@@ -1538,52 +947,6 @@ describe("RomMGameInfoPanel", () => {
       expect(container.textContent).toContain("Super Nintendo");
     });
 
-    it("ACHIEVEMENTS tab is hidden when raId is null", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 1,
-        ra_id: null,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(container.textContent).not.toContain("ACHIEVEMENTS");
-    });
-
-    it("ACHIEVEMENTS tab is visible when raId is set", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 1,
-        ra_id: 42,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(container.textContent).toContain("ACHIEVEMENTS");
-    });
-
-    it("BIOS tab is visible only when biosStatus is non-null", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 1,
-        bios_status: {
-          needs_bios: true,
-          platform_slug: "snes",
-          server_count: 1,
-          local_count: 0,
-          all_downloaded: false,
-        } as never,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      // Tab bar label (uppercase).
-      expect(container.innerHTML).toContain("BIOS");
-    });
-
     it("SAVES tab visible only when save_sync_enabled=true", async () => {
       vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
         found: true,
@@ -1595,368 +958,6 @@ describe("RomMGameInfoPanel", () => {
       const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
       await flushAsync();
       expect(container.textContent).not.toContain("SAVES");
-    });
-
-    it("achievements tab activation triggers lazy-load (getAchievements + getAchievementProgress)", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 88,
-        ra_id: 42,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      // Switch via the tab-switch event.
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_tab_switch", {
-            detail: { tab: "achievements" },
-          }),
-        );
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(vi.mocked(backend.getAchievements)).toHaveBeenCalledWith(88);
-      expect(vi.mocked(backend.getAchievementProgress)).toHaveBeenCalledWith(88);
-    });
-
-    it("achievements tab: renders achievement rows (earned + locked + hardcore + rarity)", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 88,
-        ra_id: 42,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      vi.mocked(backend.getAchievements).mockResolvedValue({
-        success: true,
-        total: 3,
-        achievements: [
-          {
-            ra_id: 1,
-            badge_id: "b1",
-            title: "First Steps",
-            description: "Did the thing",
-            points: 5,
-            badge_url: "http://example/b1.png",
-            badge_url_lock: "http://example/b1-lock.png",
-            display_order: 1,
-            type: "win",
-            num_awarded: 1234,
-            num_awarded_hardcore: 1,
-          },
-          {
-            ra_id: 2,
-            badge_id: "b2",
-            title: "Hardcore Run",
-            description: "HC mode",
-            points: 20,
-            badge_url: "http://example/b2.png",
-            badge_url_lock: "http://example/b2-lock.png",
-            display_order: 2,
-            type: "win",
-            num_awarded: 0,
-            num_awarded_hardcore: 1,
-          },
-          {
-            ra_id: 3,
-            badge_id: "b3",
-            title: "Locked One",
-            description: "Locked",
-            points: 10,
-            badge_url: "http://example/b3.png",
-            badge_url_lock: "http://example/b3-lock.png",
-            display_order: 3,
-            type: "win",
-            num_awarded: 5,
-            num_awarded_hardcore: 0,
-          },
-        ],
-      });
-      vi.mocked(backend.getAchievementProgress).mockResolvedValue({
-        success: true,
-        earned: 2,
-        earned_hardcore: 1,
-        total: 3,
-        earned_achievements: [
-          { id: "b1", date: "2025-02-14 15:45:38", date_hardcore: null },
-          {
-            id: "b2",
-            date: "2025-02-15 16:00:00",
-            date_hardcore: "2025-02-15 17:00:00",
-          },
-        ],
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_tab_switch", {
-            detail: { tab: "achievements" },
-          }),
-        );
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(container.textContent).toContain("2 / 3 Achievements");
-      expect(container.textContent).toContain("1 hardcore");
-      expect(container.textContent).toContain("Earned (2)");
-      expect(container.textContent).toContain("Locked (1)");
-      expect(container.textContent).toContain("First Steps");
-      expect(container.textContent).toContain("Locked One");
-      // num_awarded > 0 — rarity row
-      expect(container.textContent).toContain("1234 players earned this");
-      // HC badge present (hardcore achievement)
-      expect(container.innerHTML).toContain("romm-cheevo-hc-badge");
-      // Date strips the seconds.
-      expect(container.textContent).toContain("2025-02-14 15:45");
-      expect(container.textContent).not.toContain("2025-02-14 15:45:38");
-    });
-
-    it("achievements tab: empty list → 'No achievements found' message", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 88,
-        ra_id: 42,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      vi.mocked(backend.getAchievements).mockResolvedValue({
-        success: true,
-        total: 0,
-        achievements: [],
-      });
-      vi.mocked(backend.getAchievementProgress).mockResolvedValue({
-        success: true,
-        earned: 0,
-        total: 0,
-        earned_achievements: [],
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_tab_switch", {
-            detail: { tab: "achievements" },
-          }),
-        );
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(container.textContent).toContain("No achievements found for this game");
-    });
-
-    it("achievements tab: achievementsLoading=true → ConnectingIndicator with retry progress (#1345 F1)", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 88,
-        ra_id: 42,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      // Hold the achievement promises so achievementsLoading stays true.
-      vi.mocked(backend.getAchievements).mockReturnValue(new Promise(() => {}));
-      vi.mocked(backend.getAchievementProgress).mockReturnValue(new Promise(() => {}));
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_tab_switch", {
-            detail: { tab: "achievements" },
-          }),
-        );
-        await Promise.resolve();
-      });
-      // The load pays the retry ladder → surface the shared ConnectingIndicator
-      // (achievements-flavoured label) instead of frozen "Loading…" text.
-      expect(container.textContent).toContain("Loading achievements…");
-      // A retry frame from the ladder appends the "(attempt N/M)" suffix.
-      act(() => {
-        setServerRetryProgress({ attempt: 2, maxAttempts: 3 });
-      });
-      expect(container.textContent).toContain("Loading achievements… (attempt 2/3)");
-    });
-
-    it("achievements tab known-offline fast path: skips the fetch, shows degraded line, reloads on reconnect (#1345 F1)", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 88,
-        ra_id: 42,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      setRommConnectionState("offline");
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      vi.mocked(backend.getAchievements).mockClear();
-      vi.mocked(backend.getAchievementProgress).mockClear();
-
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "achievements" } }));
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      // Fast path: no server calls (no ladder hang) and a short degraded line.
-      expect(vi.mocked(backend.getAchievements)).not.toHaveBeenCalled();
-      expect(vi.mocked(backend.getAchievementProgress)).not.toHaveBeenCalled();
-      expect(container.textContent).toContain("RomM offline — achievements unavailable.");
-
-      // Reconnect → the effect re-runs (isOffline dep) and loads.
-      await act(async () => {
-        reportServerReachable(true);
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(vi.mocked(backend.getAchievements)).toHaveBeenCalledWith(88);
-      expect(vi.mocked(backend.getAchievementProgress)).toHaveBeenCalledWith(88);
-    });
-
-    it("achievements tab feed: both calls unreachable → store flips offline + retries on reconnect (#1345 F1)", async () => {
-      setRommConnectionState("connected");
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 88,
-        ra_id: 42,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      vi.mocked(backend.getAchievements).mockResolvedValue({
-        success: false,
-        achievements: [],
-        total: 0,
-        reason: "server_unreachable",
-        message: "down",
-      });
-      vi.mocked(backend.getAchievementProgress).mockResolvedValue({
-        success: false,
-        earned: 0,
-        total: 0,
-        earned_achievements: [],
-        reason: "server_unreachable",
-        message: "down",
-      });
-      render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "achievements" } }));
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      // Genuine unreachable verdict → store flips offline.
-      expect(getRommConnectionState()).toBe("offline");
-
-      // The unreachable settle released the load-once gate, so a reconnect
-      // retries (mirrors the slot lane's applyLoadSlotsResult failure reset).
-      vi.mocked(backend.getAchievements).mockClear();
-      vi.mocked(backend.getAchievementProgress).mockClear();
-      vi.mocked(backend.getAchievements).mockResolvedValue({ success: true, achievements: [], total: 0 });
-      await act(async () => {
-        reportServerReachable(true);
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(vi.mocked(backend.getAchievements)).toHaveBeenCalledWith(88);
-    });
-
-    it("achievements tab feed: no_ra_username failure leaves the store untouched (#1345 F1)", async () => {
-      setRommConnectionState("connected");
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 88,
-        ra_id: 42,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      vi.mocked(backend.getAchievements).mockResolvedValue({ success: true, achievements: [], total: 0 });
-      vi.mocked(backend.getAchievementProgress).mockResolvedValue({
-        success: false,
-        earned: 0,
-        total: 0,
-        earned_achievements: [],
-        reason: "no_ra_username",
-        message: "No RA username configured in RomM",
-      });
-      render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "achievements" } }));
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      // A config gap (list succeeded) — not a connectivity verdict.
-      expect(getRommConnectionState()).toBe("connected");
-    });
-
-    it("achievements lazy-load: rejection → debugLog fires with 'Failed to load achievements'", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 88,
-        ra_id: 42,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      vi.mocked(backend.getAchievements).mockRejectedValue(new Error("net"));
-      render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      vi.mocked(backend.debugLog).mockClear();
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_tab_switch", {
-            detail: { tab: "achievements" },
-          }),
-        );
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(vi.mocked(backend.debugLog)).toHaveBeenCalledWith(expect.stringContaining("Failed to load achievements"));
-    });
-
-    it("achievements tab: no refetch on second activation (achievementsLoadedRef guard)", async () => {
-      // First activation fires getAchievements + getAchievementProgress
-      // exactly once each. Switching away and back must NOT trigger a
-      // second fetch — the achievementsLoadedRef guard short-circuits the
-      // lazy-load effect. Removing the
-      // `if (achievementsLoadedRef.current) return;` line makes the
-      // toHaveBeenCalledTimes(1) assertion fail.
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 88,
-        ra_id: 42,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      // First activation → triggers the lazy-load.
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_tab_switch", {
-            detail: { tab: "achievements" },
-          }),
-        );
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(vi.mocked(backend.getAchievements)).toHaveBeenCalledTimes(1);
-      expect(vi.mocked(backend.getAchievementProgress)).toHaveBeenCalledTimes(1);
-      // Switch away …
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "info" } }));
-        await Promise.resolve();
-      });
-      // … and back. Guard should prevent a second fetch.
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_tab_switch", {
-            detail: { tab: "achievements" },
-          }),
-        );
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(vi.mocked(backend.getAchievements)).toHaveBeenCalledTimes(1);
-      expect(vi.mocked(backend.getAchievementProgress)).toHaveBeenCalledTimes(1);
     });
 
     it("saves tab: no refetch on second activation (slotsLoadedRef guard)", async () => {
@@ -2118,59 +1119,6 @@ describe("RomMGameInfoPanel", () => {
         await Promise.resolve();
       });
       expect(vi.mocked(backend.getSaveSlots)).toHaveBeenCalledWith(55);
-    });
-
-    it("shared load generation: a stale slot settle does not clear the achievements lane's retry frame (#1345)", async () => {
-      // Both lazy lanes feed ONE serverRetryProgress store gated by one shared
-      // load counter. A slot fetch torn down mid-flight must not, when it resolves
-      // late, wipe a newer achievements load's live "(attempt N/M)" frame.
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 70,
-        ra_id: 42,
-        save_sync_enabled: true,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      vi.mocked(backend.isSaveTrackingConfigured).mockResolvedValue({ configured: true, active_slot: "main" });
-      render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-
-      // Slot fetch in flight (older load, gen N).
-      let resolveSlots!: (v: Awaited<ReturnType<typeof backend.getSaveSlots>>) => void;
-      const slotsInflight = new Promise<Awaited<ReturnType<typeof backend.getSaveSlots>>>((r) => {
-        resolveSlots = r;
-      });
-      vi.mocked(backend.getSaveSlots).mockClear();
-      vi.mocked(backend.getSaveSlots).mockReturnValueOnce(slotsInflight);
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "saves" } }));
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-
-      // Switch to achievements → the slot load is torn down (still pending) and a
-      // newer achievements load starts (gen N+1). Hold its calls in flight too.
-      vi.mocked(backend.getAchievements).mockReturnValue(new Promise(() => {}));
-      vi.mocked(backend.getAchievementProgress).mockReturnValue(new Promise(() => {}));
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "achievements" } }));
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      // The achievements ladder posts its own live frame (index.tsx funnels these).
-      act(() => {
-        setServerRetryProgress({ attempt: 2, maxAttempts: 3 });
-      });
-
-      // The stale slot fetch finally resolves — its settle must NOT clear the
-      // shared store, because a newer load now owns it (shared generation guard).
-      await act(async () => {
-        resolveSlots({ success: false, slots: [], active_slot: "", reason: "server_unreachable" });
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(getServerRetryProgress()).toEqual({ attempt: 2, maxAttempts: 3 });
     });
 
     // Pins the slot-load reachability feed (#1345): success → connected,
@@ -2365,273 +1313,6 @@ describe("RomMGameInfoPanel", () => {
         globalThis.removeEventListener("romm_data_changed", listener);
       }
     });
-
-    it("bios tab activation renders biosSection content (BIOS file list + Emulator column)", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 55,
-        platform_slug: "snes",
-        bios_status: {
-          needs_bios: true,
-          platform_slug: "snes",
-          server_count: 2,
-          local_count: 1,
-          all_downloaded: false,
-          required_count: 2,
-          required_downloaded: 1,
-          files: [
-            {
-              file_name: "bios.smc",
-              description: "BIOS file",
-              downloaded: false,
-              classification: "required",
-              cores: { snes9x_libretro: { required: true } },
-              used_by_active: true,
-            },
-            {
-              file_name: "unknown.bin",
-              description: "",
-              downloaded: false,
-              classification: "unknown",
-            },
-          ],
-        } as never,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      // Core info (label map + Emulator column) from the dedicated path (#923).
-      vi.mocked(backend.getPlatformCoreInfo).mockResolvedValue({
-        active_core: "snes9x_libretro",
-        active_core_label: "Snes9x",
-        platform_core_label: null,
-        has_game_override: false,
-        emulator_data_available: true,
-        emulators: [
-          {
-            label: "Snes9x",
-            kind: "libretro",
-            core_so: "snes9x_libretro",
-            is_default: true,
-            bakeable: true,
-            reason: null,
-          },
-        ],
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "bios" } }));
-        await Promise.resolve();
-      });
-      expect(container.textContent).toContain("Emulator");
-      expect(container.textContent).toContain("Snes9x");
-      // unknown file is filtered out of the visible list; the "+1 other"
-      // note appears instead.
-      expect(container.textContent).toContain("other file");
-    });
-
-    it("highlights the active core's per-BIOS line and leaves non-active cores grey (#955)", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 56,
-        platform_slug: "psx",
-        bios_status: {
-          needs_bios: true,
-          platform_slug: "psx",
-          server_count: 1,
-          local_count: 0,
-          all_downloaded: false,
-          required_count: 1,
-          required_downloaded: 0,
-          files: [
-            {
-              file_name: "scph5501.bin",
-              description: "PSX BIOS",
-              downloaded: false,
-              classification: "required",
-              cores: {
-                beetle_psx_hw_libretro: { required: true },
-                swanstation_libretro: { required: false },
-              },
-              used_by_active: true,
-            },
-          ],
-        } as never,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      // Active core is Beetle PSX HW; SwanStation is an alternative core.
-      vi.mocked(backend.getPlatformCoreInfo).mockResolvedValue({
-        active_core: "beetle_psx_hw_libretro",
-        active_core_label: "Beetle PSX HW",
-        platform_core_label: null,
-        has_game_override: false,
-        emulator_data_available: true,
-        emulators: [
-          {
-            label: "Beetle PSX HW",
-            kind: "libretro",
-            core_so: "beetle_psx_hw_libretro",
-            is_default: true,
-            bakeable: true,
-            reason: null,
-          },
-          {
-            label: "SwanStation",
-            kind: "libretro",
-            core_so: "swanstation_libretro",
-            is_default: false,
-            bakeable: true,
-            reason: null,
-          },
-        ],
-      });
-      const { getByText } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "bios" } }));
-        await Promise.resolve();
-      });
-      // Active core line: amber + bold.
-      const activeLine = getByText("Beetle PSX HW (required)");
-      expect(activeLine.style.color).toBe("#d4a72c");
-      expect(activeLine.style.fontWeight).toBe("bold");
-      // Non-active core line: grey + normal weight.
-      const inactiveLine = getByText("SwanStation (optional)");
-      expect(inactiveLine.style.color).toBe("rgba(255, 255, 255, 0.5)");
-      expect(inactiveLine.style.fontWeight).toBe("normal");
-    });
-
-    it("highlights no core line when active_core is null (#955)", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 57,
-        platform_slug: "psx",
-        bios_status: {
-          needs_bios: true,
-          platform_slug: "psx",
-          server_count: 1,
-          local_count: 0,
-          all_downloaded: false,
-          required_count: 1,
-          required_downloaded: 0,
-          files: [
-            {
-              file_name: "scph5501.bin",
-              description: "PSX BIOS",
-              downloaded: false,
-              classification: "required",
-              cores: {
-                beetle_psx_hw_libretro: { required: true },
-                swanstation_libretro: { required: false },
-              },
-              used_by_active: false,
-            },
-          ],
-        } as never,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      // No active core resolved → no line is highlighted.
-      vi.mocked(backend.getPlatformCoreInfo).mockResolvedValue({
-        active_core: null,
-        active_core_label: null,
-        platform_core_label: null,
-        has_game_override: false,
-        emulator_data_available: true,
-        emulators: [
-          {
-            label: "Beetle PSX HW",
-            kind: "libretro",
-            core_so: "beetle_psx_hw_libretro",
-            is_default: false,
-            bakeable: true,
-            reason: null,
-          },
-          {
-            label: "SwanStation",
-            kind: "libretro",
-            core_so: "swanstation_libretro",
-            is_default: false,
-            bakeable: true,
-            reason: null,
-          },
-        ],
-      });
-      const { getByText } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "bios" } }));
-        await Promise.resolve();
-      });
-      const beetleLine = getByText("Beetle PSX HW (required)");
-      expect(beetleLine.style.color).toBe("rgba(255, 255, 255, 0.5)");
-      expect(beetleLine.style.fontWeight).toBe("normal");
-      const swanLine = getByText("SwanStation (optional)");
-      expect(swanLine.style.color).toBe("rgba(255, 255, 255, 0.5)");
-      expect(swanLine.style.fontWeight).toBe("normal");
-    });
-
-    it("falls back to the de-suffixed .so when a core is absent from coreInfo (#955)", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 58,
-        platform_slug: "psx",
-        bios_status: {
-          needs_bios: true,
-          platform_slug: "psx",
-          server_count: 1,
-          local_count: 0,
-          all_downloaded: false,
-          required_count: 1,
-          required_downloaded: 0,
-          files: [
-            {
-              file_name: "scph5501.bin",
-              description: "PSX BIOS",
-              downloaded: false,
-              classification: "required",
-              cores: {
-                some_obscure_libretro: { required: true },
-              },
-              used_by_active: true,
-            },
-          ],
-        } as never,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      // coreInfo does NOT enumerate `some_obscure_libretro`, so coreLabelMap[coreSo]
-      // is undefined and the `.replace(/_libretro$/, "")` fallback renders the label.
-      vi.mocked(backend.getPlatformCoreInfo).mockResolvedValue({
-        active_core: "beetle_psx_hw_libretro",
-        active_core_label: "Beetle PSX HW",
-        platform_core_label: null,
-        has_game_override: false,
-        emulator_data_available: true,
-        emulators: [
-          {
-            label: "Beetle PSX HW",
-            kind: "libretro",
-            core_so: "beetle_psx_hw_libretro",
-            is_default: true,
-            bakeable: true,
-            reason: null,
-          },
-        ],
-      });
-      const { getByText } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "bios" } }));
-        await Promise.resolve();
-      });
-      // Fallback label = `.so` key with `_libretro` stripped; not the active core,
-      // so it stays grey + normal weight.
-      const fallbackLine = getByText("some_obscure (required)");
-      expect(fallbackLine.style.color).toBe("rgba(255, 255, 255, 0.5)");
-      expect(fallbackLine.style.fontWeight).toBe("normal");
-    });
   });
 
   // ------------------------------------------------------------------
@@ -2679,135 +1360,6 @@ describe("RomMGameInfoPanel", () => {
       const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
       await flushAsync();
       expect(container.textContent).not.toContain("Release Date");
-    });
-  });
-
-  describe("BIOS status-dot color (sourced from backend bios_level)", () => {
-    // Mirror the backend compute_bios_level trichotomy so the cached payload
-    // ships the same bios_level the real backend would — the panel sources the
-    // dot color from bios_level now, never re-deriving it from the counts.
-    function deriveBiosLevel(
-      required_downloaded: number | null,
-      required_count: number | null,
-      local_count: number,
-      all_downloaded: boolean,
-    ): "ok" | "partial" | "missing" {
-      if (required_count !== null && required_downloaded !== null) {
-        if (required_downloaded >= required_count) return "ok";
-        if (required_downloaded > 0) return "partial";
-        return "missing";
-      }
-      if (all_downloaded) return "ok";
-      if (local_count > 0) return "partial";
-      return "missing";
-    }
-
-    async function renderWithBios(
-      required_downloaded: number | null,
-      required_count: number | null,
-      local_count = 0,
-      all_downloaded = false,
-    ) {
-      const bios: Record<string, unknown> = {
-        needs_bios: true,
-        platform_slug: "snes",
-        server_count: required_count ?? 1,
-        local_count,
-        all_downloaded,
-      };
-      if (required_count !== null) bios.required_count = required_count;
-      if (required_downloaded !== null) bios.required_downloaded = required_downloaded;
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 1,
-        bios_status: bios as never,
-        bios_level: deriveBiosLevel(required_downloaded, required_count, local_count, all_downloaded),
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      const view = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "bios" } }));
-        await Promise.resolve();
-      });
-      return view;
-    }
-
-    it("done >= total → green (#5ba32b) status dot", async () => {
-      const { container } = await renderWithBios(5, 5, 5, true);
-      expect(container.innerHTML).toContain("#5ba32b");
-      expect(container.textContent).toContain("All required ready");
-    });
-
-    it("0 < done < total → amber (#d4a72c) status dot", async () => {
-      const { container } = await renderWithBios(2, 5, 2, false);
-      expect(container.innerHTML).toContain("#d4a72c");
-      expect(container.textContent).toContain("2/5 required files ready");
-    });
-
-    it("done = 0 → red (#d94126) status dot", async () => {
-      const { container } = await renderWithBios(0, 5, 0, false);
-      expect(container.innerHTML).toContain("#d94126");
-    });
-
-    it("required_count null + all_downloaded=true → green; localCount>0 (no req) → amber; localCount=0 → red", async () => {
-      // a) all_downloaded=true → green
-      {
-        const { container } = await renderWithBios(null, null, 1, true);
-        expect(container.innerHTML).toContain("#5ba32b");
-        expect(container.textContent).toContain("All ready");
-      }
-    });
-  });
-
-  describe("biosStatusFromCache + saveStatusFromCache (cache-first rendering)", () => {
-    it("biosStatusFromCache(null) yields no biosStatus → no BIOS tab", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 1,
-        bios_status: null,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(container.textContent).not.toContain("BIOS");
-    });
-
-    it("biosStatusFromCache drives BIOS tab; active core comes from the dedicated path (#923)", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 1,
-        platform_slug: "snes",
-        bios_status: {
-          platform_slug: "snes",
-          server_count: 1,
-          local_count: 1,
-          all_downloaded: true,
-        } as never,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      // Active core label is served from get_platform_core_info, not bios_status.
-      vi.mocked(backend.getPlatformCoreInfo).mockResolvedValue({
-        active_core: "mycore.so",
-        active_core_label: "MyCore",
-        platform_core_label: null,
-        has_game_override: false,
-        emulator_data_available: true,
-        emulators: [
-          { label: "MyCore", kind: "libretro", core_so: "mycore.so", is_default: true, bakeable: true, reason: null },
-        ],
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      // Active core label from the dedicated path reaches the BIOS tab's Emulator column.
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "bios" } }));
-        await Promise.resolve();
-      });
-      expect(container.textContent).toContain("MyCore");
     });
   });
 
@@ -3192,85 +1744,6 @@ describe("RomMGameInfoPanel", () => {
       });
       await flushAsync();
       expect(vi.mocked(backend.getSaveSlots)).toHaveBeenCalledWith(2);
-    });
-
-    it("re-fetches ACHIEVEMENTS for the new version while sitting on the achievements tab (achievementsLoadedRef reset, #1297)", async () => {
-      // Achievements loaded for the OLD rom (1). A switch to rom 2 (its own
-      // ra_id) while ON the achievements tab must reset the load-once gate and
-      // re-fetch for the new rom_id. Without the reset, the tab keeps the OLD
-      // rom's achievements.
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 1,
-        ra_id: 42,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      await act(async () => {
-        globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "achievements" } }));
-      });
-      await flushAsync();
-      expect(vi.mocked(backend.getAchievements)).toHaveBeenCalledWith(1);
-
-      // Switch to rom 2 (new ra_id) while sitting on the achievements tab.
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 2,
-        ra_id: 43,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      vi.mocked(backend.getAchievements).mockClear();
-      vi.mocked(backend.getAchievementProgress).mockClear();
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_data_changed", {
-            detail: { type: "version_switched", app_id: testAppId, rom_id: 2 },
-          }),
-        );
-      });
-      await flushAsync();
-      expect(vi.mocked(backend.getAchievements)).toHaveBeenCalledWith(2);
-      expect(vi.mocked(backend.getAchievementProgress)).toHaveBeenCalledWith(2);
-    });
-  });
-
-  // ------------------------------------------------------------------
-  // J. Save-sort warning rendering
-  // ------------------------------------------------------------------
-
-  describe("save-sort warning banner", () => {
-    it("does NOT render when saveSortPending=false", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 1,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(container.textContent).not.toContain("RetroArch save sorting changed");
-    });
-
-    it("renders when saveSortPending=true at mount", async () => {
-      currentSaveSortState = { pending: true };
-      // refreshMigrationState() on mount overwrites the store — return
-      // pending=true so the gate survives the useEffect resolution.
-      vi.mocked(backend.refreshMigrationState).mockResolvedValue({
-        retrodeck: { pending: false },
-        save_sort: { pending: true },
-      });
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 1,
-        metadata: makeMetadata(),
-        stale_fields: [],
-      });
-      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
-      await flushAsync();
-      expect(container.textContent).toContain("RetroArch save sorting changed");
     });
   });
 });

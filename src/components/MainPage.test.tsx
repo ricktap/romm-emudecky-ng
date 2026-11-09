@@ -8,8 +8,6 @@
 // absence of state change.
 //
 // MainPage catch sites (asserted below):
-//   - mount: refreshMigrationState().catch → logError("Failed to refresh
-//     migration state: ...") — asserted via vi.spyOn(backend, "logError").
 //   - handleSync wrapping try/catch → setStatus("Failed to start sync") —
 //     asserted via rendered Field label.
 //   - handleApply try/catch → setStatus("Failed to apply sync") — asserted.
@@ -18,37 +16,29 @@
 //   - handleCancel try/catch → finishCancelWithStatus("Failed to cancel sync")
 //     surfaces the message after stopPolling + setSyncing(false) + setLoading(false)
 //     un-gate the status field; #733 fix landed — message now visible.
-//   - fixRetroarchInputDriver inline `.catch(() => {})` (inside ConfirmModal
-//     onOK) — truly-ignored; warning state remains (no clear).
 //
 // MUTATION CHECKS (by inspection — auto-mode classifier likely blocks on
 // React state internals + listener cleanup, so confidence is recorded here):
-//   1. Removing the `unsubMigration()` call from the unmount cleanup would
-//      break the "subscribes on mount and unsubscribes on unmount" test —
-//      migrationListeners.length would stay at 1 after unmount.
-//   2. Removing `clearInterval(pollRef.current)` from stopPolling would
+//   1. Removing `clearInterval(pollRef.current)` from stopPolling would
 //      break the "interval cleared on unmount" test — clearIntervalSpy
 //      would not be called with the captured pollRef id.
-//   3. Removing the setStatus("Failed to start sync") assignment from
+//   2. Removing the setStatus("Failed to start sync") assignment from
 //      handleSync's catch would break the "syncPreview rejection surfaces
 //      'Failed to start sync'" test — the Field label would render as the
 //      empty string instead of the failure message.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
-import { createElement, type ReactElement } from "react";
+import { createElement } from "react";
 import { MainPage } from "./MainPage";
 import * as backend from "../api/backend";
 import { useVersionError } from "./VersionErrorCard";
 import { setSyncProgress } from "../utils/syncProgress";
 import { setDownloads } from "../utils/downloadStore";
-import { showModal } from "@decky/ui";
 import * as syncManager from "../utils/syncManager";
 import * as connectionState from "../utils/connectionState";
 import { resetUpdateState } from "../utils/updateStore";
 import type {
-  MigrationStatus,
-  SaveSortMigrationStatus,
   SyncStats,
   SyncPreview,
   SyncPreviewSummary,
@@ -66,50 +56,6 @@ vi.mock("./VersionErrorCard", () => ({
   VersionErrorCard: (props: { message: string; compact?: boolean }) =>
     createElement("div", { "data-testid": "version-error-card" }, props.message),
 }));
-
-vi.mock("./MigrationBlockedPage", () => ({
-  MigrationBlockedPage: (_props: { migration: MigrationStatus }) =>
-    createElement("div", { "data-testid": "migration-blocked-page" }),
-}));
-
-// migrationStore — listener-array mock so tests drive subscribe/notify
-// deterministically. resetAllMocks wipes impls; re-stubbed in beforeEach.
-const migrationListeners: Array<() => void> = [];
-let currentMigrationState: MigrationStatus = { pending: false };
-vi.mock("../utils/migrationStore", () => ({
-  getMigrationState: vi.fn(() => currentMigrationState),
-  setMigrationStatus: vi.fn((s: MigrationStatus) => {
-    currentMigrationState = s;
-    migrationListeners.forEach((fn) => fn());
-  }),
-  onMigrationChange: vi.fn((cb: () => void) => {
-    migrationListeners.push(cb);
-    return () => {
-      const i = migrationListeners.indexOf(cb);
-      if (i >= 0) migrationListeners.splice(i, 1);
-    };
-  }),
-}));
-import * as migrationStore from "../utils/migrationStore";
-
-// saveSortMigrationStore — same listener-array pattern.
-const saveSortListeners: Array<() => void> = [];
-let currentSaveSortState: SaveSortMigrationStatus = { pending: false };
-vi.mock("../utils/saveSortMigrationStore", () => ({
-  getSaveSortMigrationState: vi.fn(() => currentSaveSortState),
-  setSaveSortMigrationStatus: vi.fn((s: SaveSortMigrationStatus) => {
-    currentSaveSortState = s;
-    saveSortListeners.forEach((fn) => fn());
-  }),
-  onSaveSortMigrationChange: vi.fn((cb: () => void) => {
-    saveSortListeners.push(cb);
-    return () => {
-      const i = saveSortListeners.indexOf(cb);
-      if (i >= 0) saveSortListeners.splice(i, 1);
-    };
-  }),
-}));
-import * as saveSortMigrationStore from "../utils/saveSortMigrationStore";
 
 vi.mock("../utils/syncManager", () => ({
   requestSyncCancel: vi.fn(),
@@ -241,13 +187,6 @@ function buttonByExactText(container: HTMLElement, text: string): HTMLButtonElem
   return (btn as HTMLButtonElement | undefined) ?? null;
 }
 
-function lastConfirmModalProps<T = Record<string, unknown>>(): T | null {
-  const calls = vi.mocked(showModal).mock.calls;
-  if (calls.length === 0) return null;
-  const el = calls[calls.length - 1]?.[0] as ReactElement<T> | undefined;
-  return el?.props ?? null;
-}
-
 function fieldLabels(container: HTMLElement): string[] {
   return Array.from(container.querySelectorAll('[data-testid="field-label"]')).map((n) => n.textContent);
 }
@@ -259,10 +198,6 @@ function fieldLabels(container: HTMLElement): string[] {
 describe("MainPage", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    migrationListeners.length = 0;
-    saveSortListeners.length = 0;
-    currentMigrationState = { pending: false };
-    currentSaveSortState = { pending: false };
     setDownloads([]);
     setSyncProgress({
       running: false,
@@ -280,39 +215,7 @@ describe("MainPage", () => {
     // RC-CANCEL-PREVIEW test flips it true (#1202).
     vi.mocked(syncManager.isCancelRequested).mockReturnValue(false);
 
-    // Re-stub migrationStore impls.
-    vi.mocked(migrationStore.getMigrationState).mockImplementation(() => currentMigrationState);
-    vi.mocked(migrationStore.setMigrationStatus).mockImplementation((s: MigrationStatus) => {
-      currentMigrationState = s;
-      migrationListeners.forEach((fn) => fn());
-    });
-    vi.mocked(migrationStore.onMigrationChange).mockImplementation((cb: () => void) => {
-      migrationListeners.push(cb);
-      return () => {
-        const i = migrationListeners.indexOf(cb);
-        if (i >= 0) migrationListeners.splice(i, 1);
-      };
-    });
-
-    // Re-stub saveSortMigrationStore impls.
-    vi.mocked(saveSortMigrationStore.getSaveSortMigrationState).mockImplementation(() => currentSaveSortState);
-    vi.mocked(saveSortMigrationStore.setSaveSortMigrationStatus).mockImplementation((s: SaveSortMigrationStatus) => {
-      currentSaveSortState = s;
-      saveSortListeners.forEach((fn) => fn());
-    });
-    vi.mocked(saveSortMigrationStore.onSaveSortMigrationChange).mockImplementation((cb: () => void) => {
-      saveSortListeners.push(cb);
-      return () => {
-        const i = saveSortListeners.indexOf(cb);
-        if (i >= 0) saveSortListeners.splice(i, 1);
-      };
-    });
-
     // Default backend mocks — tests override per case.
-    vi.mocked(backend.refreshMigrationState).mockResolvedValue({
-      retrodeck: { pending: false },
-      save_sort: { pending: false },
-    });
     vi.mocked(backend.getSyncStats).mockResolvedValue(defaultStats());
     vi.mocked(backend.testConnection).mockResolvedValue({
       success: true,
@@ -351,11 +254,6 @@ describe("MainPage", () => {
       total: 0,
       message: "",
     });
-    vi.mocked(backend.getRetroDeckStatus).mockResolvedValue({
-      status: "ok",
-      config_path: "/cfg/retrodeck.json",
-      resolved_home: "/home/deck/retrodeck",
-    });
     vi.mocked(backend.cancelSync).mockResolvedValue({
       success: true,
       message: "Cancelled",
@@ -364,11 +262,6 @@ describe("MainPage", () => {
       success: true,
       message: "Cleared",
     });
-    vi.mocked(backend.fixRetroarchInputDriver).mockResolvedValue({
-      success: true,
-      message: "Fixed",
-    });
-
     // Reset version error spy + connectionState side-channel.
     connectionState.setVersionError(null);
   });
@@ -382,20 +275,7 @@ describe("MainPage", () => {
       const { queryByTestId } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       expect(queryByTestId("version-error-card")).not.toBeNull();
-      expect(queryByTestId("migration-blocked-page")).toBeNull();
       expect(queryByTestId("panel-section")).toBeNull();
-    });
-
-    it("renders only MigrationBlockedPage when migration.pending=true", async () => {
-      currentMigrationState = { pending: true };
-      vi.mocked(backend.refreshMigrationState).mockResolvedValue({
-        retrodeck: { pending: true },
-        save_sort: { pending: false },
-      });
-      const { queryByTestId } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      expect(queryByTestId("migration-blocked-page")).not.toBeNull();
-      expect(queryByTestId("version-error-card")).toBeNull();
     });
 
     it("renders the full panel with Status / Sync / Settings sections by default", async () => {
@@ -410,28 +290,6 @@ describe("MainPage", () => {
   // B. Mount useEffect — initial fetches
   // ===========================================================================
   describe("mount useEffect", () => {
-    it("calls refreshMigrationState and pushes the result into both stores", async () => {
-      const retrodeck: MigrationStatus = { pending: false, roms_count: 1 };
-      const saveSort: SaveSortMigrationStatus = { pending: false };
-      vi.mocked(backend.refreshMigrationState).mockResolvedValue({
-        retrodeck,
-        save_sort: saveSort,
-      });
-      render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      expect(vi.mocked(migrationStore.setMigrationStatus)).toHaveBeenCalledWith(retrodeck);
-      expect(vi.mocked(saveSortMigrationStore.setSaveSortMigrationStatus)).toHaveBeenCalledWith(saveSort);
-    });
-
-    it("logs the failure when refreshMigrationState rejects", async () => {
-      vi.mocked(backend.refreshMigrationState).mockRejectedValue(new Error("boom"));
-      const logSpy = vi.spyOn(backend, "logError").mockImplementation(() => {});
-      render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to refresh migration state"));
-      logSpy.mockRestore();
-    });
-
     it("populates stats from getSyncStats", async () => {
       vi.mocked(backend.getSyncStats).mockResolvedValue({
         ...defaultStats(),
@@ -488,22 +346,6 @@ describe("MainPage", () => {
       setVerSpy.mockRestore();
     });
 
-    it("getSettings retroarch_input_check renders the warning section", async () => {
-      vi.mocked(backend.getSettings).mockResolvedValue({
-        ...defaultSettings(),
-        retroarch_input_check: { warning: true, current: "sdl2" },
-      });
-      const { container } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      expect(container.textContent).toContain("RetroArch: input_driver issue");
-    });
-
-    it("getSettings without retroarch_input_check does NOT render the warning", async () => {
-      const { container } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      expect(container.textContent).not.toContain("RetroArch: input_driver");
-    });
-
     it("recovers in-flight sync state from getSyncStatus() on mount", async () => {
       // Backend is authoritative: the mount query returns a live run, so the
       // in-flight UI is shown even though the event-fed store was idle.
@@ -554,64 +396,6 @@ describe("MainPage", () => {
       expect(container.textContent).not.toContain("Backend error");
     });
 
-    it("logs the failure when getSettings rejects on mount", async () => {
-      vi.mocked(backend.getSettings).mockRejectedValue(new Error("io"));
-      const logSpy = vi.spyOn(backend, "logError").mockImplementation(() => {});
-      render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to load settings"));
-      logSpy.mockRestore();
-    });
-  });
-
-  // ===========================================================================
-  // C. Store subscribers — subscribe + cleanup + re-render on notify
-  // ===========================================================================
-  describe("store subscribers", () => {
-    it("subscribes to onMigrationChange on mount, unsubscribes on unmount", async () => {
-      const { unmount } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      expect(migrationListeners.length).toBe(1);
-      unmount();
-      expect(migrationListeners.length).toBe(0);
-    });
-
-    it("subscribes to onSaveSortMigrationChange on mount, unsubscribes on unmount", async () => {
-      const { unmount } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      expect(saveSortListeners.length).toBe(1);
-      unmount();
-      expect(saveSortListeners.length).toBe(0);
-    });
-
-    it("re-renders MigrationBlockedPage when migration store flips to pending", async () => {
-      const { queryByTestId } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      // Initially: normal panel
-      expect(queryByTestId("migration-blocked-page")).toBeNull();
-
-      await act(async () => {
-        vi.mocked(migrationStore.setMigrationStatus)({ pending: true });
-      });
-
-      expect(queryByTestId("migration-blocked-page")).not.toBeNull();
-    });
-
-    it("re-renders the save-sort migration banner when saveSort store flips to pending", async () => {
-      const { container } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      expect(container.textContent).not.toContain("RetroArch save sorting changed");
-
-      await act(async () => {
-        vi.mocked(saveSortMigrationStore.setSaveSortMigrationStatus)({
-          pending: true,
-          saves_count: 7,
-        });
-      });
-
-      expect(container.textContent).toContain("RetroArch save sorting changed");
-      expect(container.textContent).toContain("7 save file(s) to migrate");
-    });
   });
 
   describe("self-update banner", () => {
@@ -1712,87 +1496,6 @@ describe("MainPage", () => {
   });
 
   // ===========================================================================
-  // K. Fix Retroarch input driver flow
-  // ===========================================================================
-  describe("handleFixInputDriver (via ConfirmModal onOK)", () => {
-    async function renderWithWarning(): Promise<HTMLElement> {
-      vi.mocked(backend.getSettings).mockResolvedValue({
-        ...defaultSettings(),
-        retroarch_input_check: { warning: true, current: "udev" },
-      });
-      const { container } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      return container;
-    }
-
-    it("clicking the Fix button opens the ConfirmModal via showModal", async () => {
-      const container = await renderWithWarning();
-      const fixBtn = Array.from(container.querySelectorAll('[data-testid="dialog-button"]')).find(
-        (b) => b.textContent === "Fix",
-      ) as HTMLButtonElement | undefined;
-      expect(fixBtn).not.toBeUndefined();
-      fireEvent.click(fixBtn!);
-      expect(vi.mocked(showModal)).toHaveBeenCalledTimes(1);
-      const props = lastConfirmModalProps<{
-        strTitle?: string;
-        strOKButtonText?: string;
-      }>();
-      expect(props?.strTitle).toBe("Fix RetroArch input_driver?");
-      expect(props?.strOKButtonText).toBe("Apply Fix");
-    });
-
-    it("onOK success=true clears the retroarchWarning section", async () => {
-      vi.mocked(backend.fixRetroarchInputDriver).mockResolvedValue({
-        success: true,
-        message: "Done",
-      });
-      const container = await renderWithWarning();
-      const fixBtn = Array.from(container.querySelectorAll('[data-testid="dialog-button"]')).find(
-        (b) => b.textContent === "Fix",
-      ) as HTMLButtonElement | undefined;
-      fireEvent.click(fixBtn!);
-      const props = lastConfirmModalProps<{ onOK?: () => void | Promise<void> }>();
-      await act(async () => {
-        await props?.onOK?.();
-      });
-      expect(container.textContent).not.toContain("RetroArch: input_driver");
-    });
-
-    it("onOK success=false leaves the warning in place", async () => {
-      vi.mocked(backend.fixRetroarchInputDriver).mockResolvedValue({
-        success: false,
-        message: "Could not write",
-      });
-      const container = await renderWithWarning();
-      const fixBtn = Array.from(container.querySelectorAll('[data-testid="dialog-button"]')).find(
-        (b) => b.textContent === "Fix",
-      ) as HTMLButtonElement | undefined;
-      fireEvent.click(fixBtn!);
-      const props = lastConfirmModalProps<{ onOK?: () => void | Promise<void> }>();
-      await act(async () => {
-        await props?.onOK?.();
-      });
-      // Warning stays
-      expect(container.textContent).toContain("RetroArch: input_driver");
-    });
-
-    it("onOK rejection is silently swallowed (warning stays, no crash)", async () => {
-      vi.mocked(backend.fixRetroarchInputDriver).mockRejectedValue(new Error("perm"));
-      const container = await renderWithWarning();
-      const fixBtn = Array.from(container.querySelectorAll('[data-testid="dialog-button"]')).find(
-        (b) => b.textContent === "Fix",
-      ) as HTMLButtonElement | undefined;
-      fireEvent.click(fixBtn!);
-      const props = lastConfirmModalProps<{ onOK?: () => void | Promise<void> }>();
-      await act(async () => {
-        await props?.onOK?.();
-      });
-      // Truly-ignored catch — warning unchanged.
-      expect(container.textContent).toContain("RetroArch: input_driver");
-    });
-  });
-
-  // ===========================================================================
   // L. Navigation buttons
   // ===========================================================================
   describe("navigation", () => {
@@ -1826,21 +1529,6 @@ describe("MainPage", () => {
       await flushAsync();
       fireEvent.click(buttonByExactText(container, "Data Management")!);
       expect(onNavigate).toHaveBeenCalledWith("data");
-    });
-
-    it("clicking 'Go to Settings' (save-sort migration banner) invokes onNavigate('settings')", async () => {
-      currentSaveSortState = { pending: true, saves_count: 3 };
-      // refreshMigrationState runs on mount and writes save_sort back to the
-      // store — also return pending:true so the banner stays visible.
-      vi.mocked(backend.refreshMigrationState).mockResolvedValue({
-        retrodeck: { pending: false },
-        save_sort: { pending: true, saves_count: 3 },
-      });
-      const onNavigate = vi.fn();
-      const { container } = render(<MainPage onNavigate={onNavigate} />);
-      await flushAsync();
-      fireEvent.click(buttonByExactText(container, "Go to Settings")!);
-      expect(onNavigate).toHaveBeenCalledWith("settings");
     });
 
     it("clicking 'View All' (Downloads section) invokes onNavigate('downloads')", async () => {
@@ -2248,74 +1936,6 @@ describe("MainPage", () => {
       // Re-query — the toggle is re-rendered.
       const updated = container.querySelector('[data-testid="toggle-input"]') as HTMLInputElement | null;
       expect(updated!.checked).toBe(true);
-    });
-  });
-
-  // ===========================================================================
-  // P. RetroDECK config-health banner
-  // ===========================================================================
-  describe("RetroDECK config-health banner", () => {
-    it("shows the unreadable banner when status is 'unreadable'", async () => {
-      vi.mocked(backend.getRetroDeckStatus).mockResolvedValue({
-        status: "unreadable",
-        config_path: "/cfg/retrodeck.json",
-        resolved_home: "/home/deck/retrodeck",
-      });
-      const { findByText } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      expect(await findByText("RetroDECK configuration unreadable")).toBeInTheDocument();
-      expect(await findByText(/syncs and downloads may target the wrong location/)).toBeInTheDocument();
-      // Probed config path is surfaced.
-      expect(await findByText(/\/cfg\/retrodeck\.json/)).toBeInTheDocument();
-    });
-
-    it("shows the root-missing banner when status is 'root_missing'", async () => {
-      vi.mocked(backend.getRetroDeckStatus).mockResolvedValue({
-        status: "root_missing",
-        config_path: "/cfg/retrodeck.json",
-        resolved_home: "/run/media/sdcard/retrodeck",
-      });
-      const { findByText } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      expect(await findByText("RetroDECK library not found")).toBeInTheDocument();
-      expect(await findByText(/make sure the card is inserted/)).toBeInTheDocument();
-      // Resolved home is surfaced.
-      expect(await findByText(/\/run\/media\/sdcard\/retrodeck/)).toBeInTheDocument();
-    });
-
-    it("renders no banner when status is 'ok'", async () => {
-      vi.mocked(backend.getRetroDeckStatus).mockResolvedValue({
-        status: "ok",
-        config_path: "/cfg/retrodeck.json",
-        resolved_home: "/home/deck/retrodeck",
-      });
-      const { queryByText } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      expect(queryByText("RetroDECK configuration unreadable")).toBeNull();
-      expect(queryByText("RetroDECK library not found")).toBeNull();
-    });
-
-    it("renders no banner when status is 'absent' (fresh-install case)", async () => {
-      vi.mocked(backend.getRetroDeckStatus).mockResolvedValue({
-        status: "absent",
-        config_path: "/cfg/retrodeck.json",
-        resolved_home: "/home/deck/retrodeck",
-      });
-      const { queryByText } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      expect(queryByText("RetroDECK configuration unreadable")).toBeNull();
-      expect(queryByText("RetroDECK library not found")).toBeNull();
-    });
-
-    it("leaves the banner cleared when getRetroDeckStatus rejects", async () => {
-      vi.mocked(backend.getRetroDeckStatus).mockRejectedValue(new Error("boom"));
-      const logSpy = vi.spyOn(backend, "logError").mockImplementation(() => {});
-      const { queryByText } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      // No banner, and the rejection is logged (non-vacuous .catch assertion).
-      expect(queryByText("RetroDECK configuration unreadable")).toBeNull();
-      expect(queryByText("RetroDECK library not found")).toBeNull();
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to query RetroDECK status"));
     });
   });
 });

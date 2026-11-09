@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
 import { createElement } from "react";
 import { ControllerSection } from "./ControllerSection";
-import type { RetroArchInputCheck } from "../../types";
 
 // Local re-mock: ButtonItem must forward `disabled`, DropdownItem must
 // capture rgOptions + onChange so we can drive the dropdown without a real
@@ -48,12 +47,9 @@ function defaultProps(overrides: Partial<React.ComponentProps<typeof ControllerS
   return {
     steamInputMode: "default",
     steamInputStatus: "",
-    retroarchWarning: null,
-    retroarchFixStatus: "",
     loading: false,
     onModeChange: vi.fn(),
     onApplyMode: vi.fn(),
-    onFixInputDriver: vi.fn(),
     ...overrides,
   };
 }
@@ -116,67 +112,6 @@ describe("ControllerSection", () => {
     it("omits the status Field when empty", () => {
       const { queryAllByTestId } = render(<ControllerSection {...defaultProps()} />);
       expect(queryAllByTestId("field")).toHaveLength(0);
-    });
-  });
-
-  describe("RetroArch warning block", () => {
-    function warning(overrides: Partial<RetroArchInputCheck> = {}): RetroArchInputCheck {
-      return {
-        warning: true,
-        current: "udev",
-        config_path: "/home/deck/.config/retroarch/retroarch.cfg",
-        ...overrides,
-      };
-    }
-
-    it("is hidden when retroarchWarning is null", () => {
-      const { container } = render(<ControllerSection {...defaultProps()} />);
-      expect(container.textContent).not.toContain("RetroArch input_driver");
-      expect(container.textContent).not.toContain("Fix input_driver");
-    });
-
-    it("is hidden when retroarchWarning.warning is false", () => {
-      const { container } = render(
-        <ControllerSection {...defaultProps({ retroarchWarning: warning({ warning: false }) })} />,
-      );
-      expect(container.textContent).not.toContain("RetroArch input_driver");
-    });
-
-    it("renders the current input_driver in the warning label", () => {
-      const { container } = render(
-        <ControllerSection {...defaultProps({ retroarchWarning: warning({ current: "udev" }) })} />,
-      );
-      expect(container.textContent).toContain('RetroArch input_driver: "udev"');
-    });
-
-    it("fires onFixInputDriver when the fix button is clicked", () => {
-      const onFixInputDriver = vi.fn();
-      const { getByText } = render(
-        <ControllerSection {...defaultProps({ retroarchWarning: warning(), onFixInputDriver })} />,
-      );
-      fireEvent.click(getByText("Fix input_driver to sdl2"));
-      expect(onFixInputDriver).toHaveBeenCalledTimes(1);
-    });
-
-    it("renders the fix-status Field when retroarchFixStatus is non-empty", () => {
-      const { getAllByTestId } = render(
-        <ControllerSection
-          {...defaultProps({
-            retroarchWarning: warning(),
-            retroarchFixStatus: "Updated retroarch.cfg",
-          })}
-        />,
-      );
-      const labels = getAllByTestId("field-label").map((el) => el.textContent);
-      expect(labels).toContain("Updated retroarch.cfg");
-    });
-
-    it("omits the fix-status Field when retroarchFixStatus is empty", () => {
-      const { getAllByTestId } = render(<ControllerSection {...defaultProps({ retroarchWarning: warning() })} />);
-      // Only the warning-label Field, no fix-status Field.
-      const labels = getAllByTestId("field-label").map((el) => el.textContent);
-      expect(labels).toHaveLength(1);
-      expect(labels[0]).toContain("RetroArch input_driver");
     });
   });
 });

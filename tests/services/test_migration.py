@@ -465,7 +465,7 @@ class TestMigrateRetroDeckFiles:
 
         plugin._persistence = PersistenceAdapter(str(tmp_path), str(tmp_path), decky.logger)
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
         assert result["success"] is False
         assert "No path migration needed" in result["message"]
 
@@ -491,7 +491,7 @@ class TestMigrateRetroDeckFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
         _seed_install(plugin._uow, 1, file_path=old_rom, system="n64")
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
         assert result["success"] is True
         assert result["roms_moved"] == 1
         assert os.path.exists(new_rom)
@@ -541,7 +541,7 @@ class TestMigrateRetroDeckFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
         _seed_install(plugin._uow, 1, file_path=old_launch, rom_dir=old_rom_dir, system="psx", platform_slug="psx")
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
 
         assert result["success"] is True
         # One ROM moved — the moved directory counts as a single ROM.
@@ -589,7 +589,7 @@ class TestMigrateRetroDeckFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
         _seed_install(plugin._uow, 1, file_path=old_rom, rom_dir=None, system="n64")
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
 
         assert result["success"] is True
         assert result["roms_moved"] == 1
@@ -624,7 +624,7 @@ class TestMigrateRetroDeckFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
         _seed_bios(plugin._uow, platform_slug="psx", file_name="scph5501.bin", file_path=old_bios, firmware_id=42)
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
         assert result["success"] is True
         assert result["bios_moved"] == 1
         # File physically moved to the new RetroDECK home.
@@ -662,7 +662,7 @@ class TestMigrateRetroDeckFiles:
         _seed_install(plugin._uow, 1, file_path=old_rom, system="n64")
 
         # First call with no strategy returns conflicts
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
         assert result["needs_confirmation"] is True
         assert result["conflict_count"] == 1
         assert "zelda.z64" in result["conflicts"]
@@ -697,7 +697,7 @@ class TestMigrateRetroDeckFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
         _seed_install(plugin._uow, 1, file_path=old_rom, system="n64")
 
-        result = await plugin.migrate_retrodeck_files("overwrite")
+        result = await plugin._migration_service.migrate_retrodeck_files("overwrite")
         assert result["success"] is True
         assert result["roms_moved"] == 1
         with open(new_rom) as f:
@@ -730,7 +730,7 @@ class TestMigrateRetroDeckFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
         _seed_install(plugin._uow, 1, file_path=old_rom, system="n64")
 
-        result = await plugin.migrate_retrodeck_files("skip")
+        result = await plugin._migration_service.migrate_retrodeck_files("skip")
         assert result["success"] is True
         assert result["roms_moved"] == 1
         # Destination file preserved
@@ -756,7 +756,7 @@ class TestMigrateRetroDeckFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
         _seed_install(plugin._uow, 1, file_path=os.path.join(old_home, "roms", "n64", "gone.z64"), system="n64")
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
         assert result["roms_moved"] == 0
         assert result["success"] is True
 
@@ -781,7 +781,7 @@ class TestMigrateRetroDeckFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
         _seed_bios(plugin._uow, platform_slug="dc", file_name="dc_boot.bin", file_path=old_bios, firmware_id=7)
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
         assert result["bios_moved"] == 1
         new_bios = os.path.join(new_home, "bios", "dc", "dc_boot.bin")
         assert os.path.exists(new_bios)
@@ -802,7 +802,7 @@ class TestMigrateRetroDeckFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
         # No files to move — success with 0 moved
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
         assert result["success"] is True
         with plugin._uow as uow:
             assert uow.kv_config.get("retrodeck_home_path_previous") is None
@@ -833,7 +833,7 @@ class TestMigrateSaveFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
 
         plugin._migration_service._retrodeck_paths = FakeRetroDeckPaths(saves=os.path.join(new_home, "saves"))
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
 
         assert result["success"] is True
         assert result["saves_moved"] == 1
@@ -867,7 +867,7 @@ class TestMigrateSaveFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
 
         plugin._migration_service._retrodeck_paths = FakeRetroDeckPaths(saves=os.path.join(new_home, "saves"))
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
 
         assert result["needs_confirmation"] is True
         assert result["conflict_count"] == 1
@@ -898,7 +898,7 @@ class TestMigrateSaveFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
 
         plugin._migration_service._retrodeck_paths = FakeRetroDeckPaths(saves=os.path.join(new_home, "saves"))
-        result = await plugin.migrate_retrodeck_files("overwrite")
+        result = await plugin._migration_service.migrate_retrodeck_files("overwrite")
 
         assert result["success"] is True
         assert result["saves_moved"] == 1
@@ -930,7 +930,7 @@ class TestMigrateSaveFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
 
         plugin._migration_service._retrodeck_paths = FakeRetroDeckPaths(saves=os.path.join(new_home, "saves"))
-        result = await plugin.migrate_retrodeck_files("skip")
+        result = await plugin._migration_service.migrate_retrodeck_files("skip")
 
         assert result["success"] is True
         assert result["saves_moved"] == 1
@@ -962,7 +962,7 @@ class TestMigrateSaveFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
 
         plugin._migration_service._retrodeck_paths = FakeRetroDeckPaths(saves=os.path.join(new_home, "saves"))
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
 
         assert result["saves_moved"] == 1  # only the real save, not the backup
 
@@ -987,7 +987,7 @@ class TestMigrateSaveFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
 
         plugin._migration_service._retrodeck_paths = FakeRetroDeckPaths(saves=os.path.join(new_home, "saves"))
-        status = await plugin.get_migration_status()
+        status = await plugin._migration_service.get_migration_status()
 
         assert status["pending"] is True
         assert status["saves_count"] == 1
@@ -1013,7 +1013,7 @@ class TestMigrateSaveFiles:
             uow.kv_config.set("retrodeck_home_path", new_home)
         _seed_bios(plugin._uow, platform_slug="psx", file_name="scph5501.bin", file_path=old_bios, firmware_id=42)
 
-        status = await plugin.get_migration_status()
+        status = await plugin._migration_service.get_migration_status()
 
         assert status["pending"] is True
         assert status["bios_count"] == 1
@@ -1077,7 +1077,7 @@ class TestMigrationRelaunchOptions:
             uow.kv_config.set("retrodeck_home_path", new_home)
         _seed_install(plugin._uow, 1, file_path=old_rom, system="n64", app_id=4242)
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
         assert result["success"] is True
 
         payload = self._relaunch_emit(plugin)
@@ -1114,7 +1114,7 @@ class TestMigrationRelaunchOptions:
         with plugin._uow as uow:
             uow.roms.set_emulator_override(1, "PCSX ReARMed")
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
         assert result["success"] is True
 
         payload = self._relaunch_emit(plugin)
@@ -1160,7 +1160,7 @@ class TestMigrationRelaunchOptions:
             uow.roms.set_emulator_override(1, "Removed Core")
 
         with caplog.at_level(logging.WARNING):
-            result = await plugin.migrate_retrodeck_files()
+            result = await plugin._migration_service.migrate_retrodeck_files()
         assert result["success"] is True
 
         payload = self._relaunch_emit(plugin)
@@ -1194,7 +1194,7 @@ class TestMigrationRelaunchOptions:
             uow.kv_config.set("retrodeck_home_path", new_home)
         _seed_install(plugin._uow, 1, file_path=old_rom, system="n64", app_id=None)
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
         assert result["success"] is True
 
         # Event still fires (matches sync_stale always-emit convention) but the
@@ -1220,7 +1220,7 @@ class TestMigrationRelaunchOptions:
         # Bound Rom row, but no install — nothing on disk, no rom_installs row.
         self._seed_bound_uninstalled(plugin._uow, 7, app_id=9999)
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
         assert result["success"] is True
 
         payload = self._relaunch_emit(plugin)
@@ -1259,7 +1259,7 @@ class TestMigrationRelaunchOptions:
         # 3) bound + uninstalled → excluded
         self._seed_bound_uninstalled(plugin._uow, 3, app_id=3333)
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
         assert result["success"] is True
 
         payload = self._relaunch_emit(plugin)
@@ -1283,7 +1283,7 @@ class TestMigrationRelaunchOptions:
             uow.kv_config.set("retrodeck_home_path", new_home)
         # No installs, no bound ROMs.
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
         assert result["success"] is True
 
         payload = self._relaunch_emit(plugin)
@@ -1319,7 +1319,7 @@ class TestMigrationRelaunchOptions:
             uow.kv_config.set("retrodeck_home_path", new_home)
         _seed_install(plugin._uow, 1, file_path=old_rom, system="n64", app_id=4242)
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
         assert result["needs_confirmation"] is True
 
         assert self._relaunch_emit(plugin) is None
@@ -1352,7 +1352,7 @@ class TestMigrationRelaunchOptions:
             uow.kv_config.set("retrodeck_home_path", new_home)
         _seed_install(plugin._uow, 1, file_path=old_rom, system="n64", app_id=4242)
 
-        await plugin.migrate_retrodeck_files()
+        await plugin._migration_service.migrate_retrodeck_files()
 
         # The persisted install now points at the new path.
         with plugin._uow as uow:
@@ -1952,7 +1952,7 @@ class TestChainedMigration:
             self._set_pending(uow, previous=a, hops=[b], home=c)
         _seed_install(plugin._uow, 1, file_path=old_rom, system="n64", app_id=4242)
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
 
         assert result["success"] is True
         assert result["roms_moved"] == 1
@@ -1989,7 +1989,7 @@ class TestChainedMigration:
             self._set_pending(uow, previous=a, hops=[b], home=c)
         _seed_install(plugin._uow, 1, file_path=old_rom, system="n64")
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
 
         assert result["success"] is True
         assert result["roms_moved"] == 1
@@ -2017,7 +2017,7 @@ class TestChainedMigration:
             self._set_pending(uow, previous=a, hops=[b], home=c)
         _seed_install(plugin._uow, 1, file_path=recorded_rom, system="n64")
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
 
         assert result["success"] is True
         assert result["roms_moved"] == 1
@@ -2043,7 +2043,7 @@ class TestChainedMigration:
             self._set_pending(uow, previous=a, hops=[b], home=c)
         _seed_install(plugin._uow, 1, file_path=os.path.join(a, "roms", "n64", "gone.z64"), system="n64")
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
 
         assert result["success"] is True
         assert result["roms_moved"] == 0
@@ -2079,7 +2079,7 @@ class TestChainedMigration:
         _seed_install(plugin._uow, 1, file_path=rom_a, system="n64")
         _seed_install(plugin._uow, 2, file_path=rom_b, system="n64")
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
 
         assert result["success"] is True
         assert result["roms_moved"] == 2
@@ -2115,7 +2115,7 @@ class TestChainedMigration:
             self._set_pending(uow, previous=a, hops=[b], home=c)
         plugin._migration_service._retrodeck_paths = FakeRetroDeckPaths(saves=os.path.join(c, "saves"))
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
 
         assert result["success"] is True
         assert result["saves_moved"] == 1
@@ -2144,7 +2144,7 @@ class TestChainedMigration:
         with plugin._uow as uow:
             self._set_pending(uow, previous=a, hops=[b], home=c)
 
-        result = await plugin.migrate_retrodeck_files()
+        result = await plugin._migration_service.migrate_retrodeck_files()
 
         assert result["success"] is True
         assert result["bios_moved"] == 1
@@ -2173,7 +2173,7 @@ class TestChainedMigration:
         _seed_install(plugin._uow, 1, file_path=rom_a, system="n64")
         plugin._migration_service._retrodeck_paths = FakeRetroDeckPaths(saves=os.path.join(c, "saves"))
 
-        status = await plugin.get_migration_status()
+        status = await plugin._migration_service.get_migration_status()
 
         assert status["pending"] is True
         assert status["old_path"] == a
@@ -2213,9 +2213,9 @@ class TestChainedMigration:
             self._set_pending(uow, previous=a, hops=[b], home=c)
         _seed_install(plugin._uow, 1, file_path=old_rom, system="n64")
 
-        first = await plugin.migrate_retrodeck_files()
+        first = await plugin._migration_service.migrate_retrodeck_files()
         assert first["success"] is True
 
-        second = await plugin.migrate_retrodeck_files()
+        second = await plugin._migration_service.migrate_retrodeck_files()
         assert second["success"] is False
         assert second["reason"] == "no_migration_needed"
