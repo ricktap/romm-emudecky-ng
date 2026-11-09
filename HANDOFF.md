@@ -32,7 +32,7 @@ Rewrite steps (GitHub milestone **0.40.0**, issues #8–#14; the Python code + i
 | 3a #11 part 1: removals (`REMOVED_TILL_0_90_0.md`) | merged into `rust` (PR #21); CI and the release dry-run are green |
 | 3a part 2: port library sync, shortcuts, collections | merged into `rust` (PR #22); CI green |
 | 3b part 1: emulator/launch-file choices and relaunch reconciliation | merged into `rust` (PR #23); CI and release dry run green |
-| 3b part 2: game page, metadata, cover refresh and SteamGridDB | implemented on `rust-3b-game-artwork`; PR/validation status below |
+| 3b part 2: game page, metadata, cover refresh and SteamGridDB | [PR #24](https://github.com/ricktap/romm-emudecky-ng/pull/24) into `rust`; see PR state/checks for integration status |
 | 3b remainder: version choice, launch checks, removal, playtime, … | not started |
 | 4 #12 firmware, 5 #13 save sync, 6 #14 delete Python | not started |
 
@@ -81,7 +81,7 @@ Step-3b part-1 implementation in [PR #23](https://github.com/ricktap/romm-emudec
 - Local validation: Rust **377 tests / 96.97% line coverage** (`--fail-under-lines 80`), Python **5275 passed**
   (the two pre-existing unawaited-download-coroutine warnings), frontend **1530 passed**, pinned pnpm build passed.
 
-Step-3b part-2 implementation on `rust-3b-game-artwork`:
+Step-3b part-2 implementation in [PR #24](https://github.com/ricktap/romm-emudecky-ng/pull/24):
 
 - Ported `get_cached_game_detail`, `get_rom_metadata`, `get_all_metadata_cache`, `fetch_cover_base64`,
   `refresh_cover_artwork`, and all six SteamGridDB callables. `get_artwork_base64` now also honors pending-sync
@@ -100,7 +100,7 @@ Step-3b part-2 implementation on `rust-3b-game-artwork`:
   simultaneous cover writers, binding changes and safe startup pruning.
 - Local validation: Rust **399 tests / 97.05% line coverage** (`--fail-under-lines 80`), Python **5275 passed**
   (the two pre-existing unawaited-download-coroutine warnings), frontend **1530 passed**, pinned pnpm build passed.
-  GitHub CI and release dry run pending.
+  GitHub CI and a release dry run are required before merge; see PR checks for current results.
 - No shipping version bump or tag; issue #11 still includes the remaining step-3b scope.
 
 ## How the rewrite works
