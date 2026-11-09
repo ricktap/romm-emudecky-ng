@@ -1,29 +1,9 @@
-import { useState, useEffect, FC, createElement } from "react";
-import {
-  PanelSection,
-  PanelSectionRow,
-  ButtonItem,
-  Field,
-  Focusable,
-  ConfirmModal,
-  showContextMenu,
-  showModal,
-} from "@decky/ui";
-import {
-  getFirmwareStatus,
-  downloadAllFirmware,
-  downloadRequiredFirmware,
-  deletePlatformBios,
-  setSystemCore,
-  debugLog,
-  logError,
-} from "../api/backend";
+import { useState, useEffect, FC } from "react";
+import { PanelSection, PanelSectionRow, ButtonItem, Field, Focusable } from "@decky/ui";
+import { getFirmwareStatus, downloadAllFirmware, downloadRequiredFirmware } from "../api/backend";
 import type { FirmwarePlatformExt } from "../types";
 import { scrollToTop } from "../utils/scrollHelpers";
 import { detach } from "../utils/detach";
-import { getEventTarget } from "../utils/events";
-import { buildEmulatorMenu } from "../utils/emulatorMenu";
-import { setLaunchOptionsConfirmed } from "../utils/steamShortcuts";
 
 /**
  * Build the per-platform summary label/description from the backend BIOS
@@ -72,11 +52,11 @@ interface SystemPageProps {
 }
 
 /**
- * Top-level QAM destination for per-system emulator configuration: the active
- * emulator core and the BIOS files that core needs, per platform. Core data
- * comes from the `get_firmware_status` multi-platform overview, which carries
- * both the active/available cores and the BIOS file state for every platform in
- * one call.
+ * Top-level QAM destination for per-system firmware: the firmware files each
+ * synced platform needs and their download state, from the
+ * `get_firmware_status` multi-platform overview. The active emulator core is
+ * shown read-only (per-system core selection and BIOS deletion were removed
+ * until v0.90 — see REMOVED_TILL_0_90_0.md).
  */
 export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
   const [biosPlatforms, setBiosPlatforms] = useState<FirmwarePlatformExt[]>([]);
@@ -144,107 +124,6 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
     setDownloading(null);
   };
 
-  // Destructive action — deletes the platform's downloaded BIOS files. Mirrors
-  // the DangerZone confirm UX (ConfirmModal via showModal). Kept flat at the
-  // component-body level (like handleDownloadAll) so the modal's onOK is a
-  // single named-handler call rather than a deeply-nested async closure (S2004).
-  const handleDeleteBios = async (platformSlug: string) => {
-    setBiosStatus("");
-    try {
-      const result = await deletePlatformBios(platformSlug);
-      setBiosStatus(result.message);
-      if (result.success) {
-        await refreshSystem();
-        // Notify an open game-detail page so it re-checks BIOS status (#939).
-        // Mirrors the download-path emit in RomMPlaySection.
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_data_changed", { detail: { type: "bios", platform_slug: platformSlug } }),
-        );
-      }
-    } catch (e) {
-      setBiosStatus(`Failed to delete BIOS files: ${e}`);
-    }
-  };
-
-  const confirmDeleteBios = (platformSlug: string) => {
-    showModal(
-      createElement(ConfirmModal, {
-        strTitle: `Delete BIOS files for ${platformSlug}?`,
-        strDescription:
-          "This deletes every downloaded BIOS file for this system from your RetroDECK bios directory. Games that need these files won't launch until you download them again.",
-        strOKButtonText: "Delete BIOS Files",
-        strCancelButtonText: "Cancel",
-        onOK: () => {
-          detach(handleDeleteBios(platformSlug));
-        },
-      }),
-    );
-  };
-
-  const handleSystemCoreChange = async (platform: FirmwarePlatformExt, pickedLabel: string) => {
-    // Picking the default-marked emulator clears the per-platform override
-    // (empty label → follow the es_systems default); any other pins it.
-    const defaultEmulator = platform.emulators?.find((e) => e.is_default);
-    const label = pickedLabel === defaultEmulator?.label ? "" : pickedLabel;
-    detach(debugLog(`setSystemCore: slug=${platform.platform_slug} label=${label} (selected=${pickedLabel})`));
-    try {
-      const result = await setSystemCore(platform.platform_slug, label);
-      detach(debugLog(`setSystemCore: result success=${result.success}`));
-      if (result.success) {
-        // Re-bake launch_options for every affected installed ROM on this
-        // platform. The backend returns the fresh command per bound shortcut;
-        // confirm-set each so existing shortcuts launch with the new core.
-        // Mirrors the migration_relaunch_options fan-out in index.tsx
-        // (bounded-concurrency batches so a platform with many ROMs doesn't
-        // serialize worst-case per-shortcut confirm-poll timeouts).
-        const items = result.rebake_items ?? [];
-        const CONCURRENCY = 10;
-        for (let i = 0; i < items.length; i += CONCURRENCY) {
-          const batch = items.slice(i, i + CONCURRENCY);
-          await Promise.all(
-            batch.map(async (item) => {
-              try {
-                const ok = await setLaunchOptionsConfirmed(item.app_id, item.launch_options);
-                if (!ok) {
-                  logError(`setSystemCore: failed to confirm launch options for appId ${item.app_id}`);
-                }
-              } catch (e) {
-                logError(`setSystemCore: failed to set launch options for appId ${item.app_id}: ${e}`);
-              }
-            }),
-          );
-        }
-        await refreshSystem();
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_data_changed", {
-            detail: { type: "core_changed", platform_slug: platform.platform_slug },
-          }),
-        );
-      }
-    } catch (e) {
-      detach(debugLog(`setSystemCore: error: ${e}`));
-    }
-  };
-
-  // The per-platform emulator picker shares the game-detail menu builder
-  // (utils/emulatorMenu, #1210). No "Use System Override" reset item and no
-  // "(system)" marker here — this page IS the system level, so picking the
-  // default-marked emulator is itself the clear-to-empty-label action.
-  const showSystemCoreMenu = (platform: FirmwarePlatformExt, e: Event) => {
-    showContextMenu(
-      buildEmulatorMenu({
-        emulators: platform.emulators ?? [],
-        emulatorDataAvailable: platform.emulator_data_available ?? true,
-        activeLabel: platform.active_core_label ?? null,
-        platformCoreLabel: null,
-        onPick: (label) => {
-          detach(handleSystemCoreChange(platform, label));
-        },
-      }),
-      getEventTarget(e),
-    );
-  };
-
   // Only currently-synced systems are shown (#956): a platform counts as synced
   // when it has at least one ROM bound to a Steam shortcut (has_games).
   const syncedPlatforms = biosPlatforms.filter((p) => p.has_games);
@@ -284,26 +163,12 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
     const hasRequiredMissing = requiredCount > 0 && !requiredReady;
     const hasOptionalMissing = optionalMissing > 0;
 
-    const hasMultipleCores = !!platform.emulators && platform.emulators.length > 1;
-
     return (
       <PanelSection
         key={platform.platform_slug}
         title={`${platform.platform_slug}${needsAttention ? " — BIOS needed" : ""}`}
       >
-        {/* Emulator core selection is the primary per-system concern (#923),
-            shown above the BIOS file management. The picker opens the shared
-            context menu so libretro AND standalone emulators (and disabled
-            un-bakeable entries with their reason) render identically to the
-            game-detail menu (#1210). */}
-        {hasMultipleCores && (
-          <PanelSectionRow>
-            <ButtonItem layout="below" onClick={(e: Event) => showSystemCoreMenu(platform, e)}>
-              {`Emulator Core: ${platform.active_core_label ?? "Default"}`}
-            </ButtonItem>
-          </PanelSectionRow>
-        )}
-        {platform.active_core_label && !hasMultipleCores && (
+        {platform.active_core_label && (
           <PanelSectionRow>
             <Field label="Emulator Core" description={platform.active_core_label} />
           </PanelSectionRow>
@@ -400,19 +265,6 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
             </ButtonItem>
           </PanelSectionRow>
         )}
-        {/* Delete is local-only (no server needed) and shown only when there is
-            at least one downloaded file to delete. Destructive → ConfirmModal. */}
-        {done > 0 && (
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              onClick={() => confirmDeleteBios(platform.platform_slug)}
-              disabled={isDownloading}
-            >
-              {`Delete BIOS (${done})`}
-            </ButtonItem>
-          </PanelSectionRow>
-        )}
       </PanelSection>
     );
   };
@@ -435,14 +287,7 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
       <PanelSection title="System">
         <PanelSectionRow>
           <div style={{ fontSize: "11px", color: "#8f98a0", padding: "0 16px 4px" }}>
-            Per-system emulator core and BIOS files. The active core determines which BIOS files a system needs.
-          </div>
-        </PanelSectionRow>
-        {/* General note about core switching — shown once at the top, not per
-            platform, since the caveat is the same for every system (#938). */}
-        <PanelSectionRow>
-          <div style={{ fontSize: "11px", color: "#ffb74d", padding: "0 16px 4px" }}>
-            Switching cores may affect save compatibility
+            Per-system firmware files. The active core determines which files a system needs.
           </div>
         </PanelSectionRow>
         {biosLoading && (
@@ -461,14 +306,14 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
           <PanelSectionRow>
             <Field
               label="Server offline"
-              description="RomM server is unreachable. Downloads unavailable, but core switching still works."
+              description="RomM server is unreachable. Firmware downloads are unavailable."
             />
           </PanelSectionRow>
         )}
 
         {!biosLoading && !biosError && syncedPlatforms.length === 0 && (
           <PanelSectionRow>
-            <Field label="No synced systems" description="Sync some games to manage their cores and BIOS files here." />
+            <Field label="No synced systems" description="Sync some games to manage their firmware files here." />
           </PanelSectionRow>
         )}
 

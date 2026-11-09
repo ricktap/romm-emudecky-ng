@@ -284,28 +284,11 @@ class Backend:
     async def apply_steam_input_setting(self):
         return self._settings_service.apply_steam_input_setting()
 
-    async def fix_retroarch_input_driver(self):
-        return self._settings_service.fix_retroarch_input_driver()
-
     async def get_settings(self):
         return self._settings_service.get_settings()
 
     async def check_for_update(self, force):
         return await self._update_service.check_for_update(bool(force))
-
-    async def get_retrodeck_status(self):
-        """Report RetroDECK path-resolution health for the frontend banner.
-
-        Discriminated-status union (Callable response shapes carve-out):
-        ``status`` carries one of ``ok`` / ``absent`` / ``unreadable`` /
-        ``root_missing``. The frontend owns the human-readable copy; the
-        backend returns the discriminant plus the probed paths.
-        """
-        return {
-            "status": self._retrodeck_paths.config_health().value,
-            "config_path": self._retrodeck_paths.config_path(),
-            "resolved_home": self._retrodeck_paths.retrodeck_home(),
-        }
 
     async def get_whitelist_settings(self):
         return self._settings_service.get_whitelist_settings()
@@ -315,10 +298,6 @@ class Backend:
 
     async def get_cached_game_detail(self, app_id):
         return self._game_detail_service.get_cached_game_detail(app_id)
-
-    @migration_blocked
-    async def set_system_core(self, platform_slug, core_label):
-        return await self._core_service.set_system_core(platform_slug, core_label)
 
     @migration_blocked
     async def set_game_core(self, rom_id, label):
@@ -361,18 +340,6 @@ class Backend:
     @migration_blocked
     async def download_required_firmware(self, platform_slug):
         return await self._firmware_service.download_required_firmware(platform_slug)
-
-    async def check_platform_bios(self, platform_slug):
-        # Platform-level BIOS check (the frontend callable sends only the slug);
-        # no per-game core to thread, so the system default drives the filter.
-        return await self._firmware_service.check_platform_bios(platform_slug)
-
-    async def get_bios_status(self, rom_id):
-        return await self._game_detail_service.get_bios_status(rom_id)
-
-    @migration_blocked
-    async def delete_platform_bios(self, platform_slug):
-        return await self._firmware_service.delete_platform_bios(platform_slug)
 
     # ── Sync delegation to LibraryService ─────────────────────
 
@@ -685,37 +652,6 @@ class Backend:
         frontend can re-confirm drifted Steam-shortcut launch commands at startup
         (#1043). Read-only — not migration-gated."""
         return await self.loop.run_in_executor(None, self._startup_healing_service.get_installed_relaunch_options)
-
-    # ── Achievements delegation to AchievementsService ───────
-
-    async def get_achievements(self, rom_id):
-        return await self._achievements_service.get_achievements(rom_id)
-
-    async def get_achievement_progress(self, rom_id):
-        return await self._achievements_service.get_achievement_progress(rom_id)
-
-    # ── Migration delegation to MigrationService ──────────────
-
-    async def migrate_retrodeck_files(self, conflict_strategy=None):
-        return await self._migration_service.migrate_retrodeck_files(conflict_strategy)
-
-    async def get_migration_status(self):
-        return await self._migration_service.get_migration_status()
-
-    async def get_save_sort_migration_status(self):
-        return await self._migration_service.get_save_sort_migration_status()
-
-    async def migrate_save_sort_files(self, conflict_strategy=None):
-        return await self._migration_service.migrate_save_sort_files(conflict_strategy)
-
-    async def dismiss_save_sort_migration(self):
-        return self._migration_service.dismiss_save_sort_migration()
-
-    async def dismiss_retrodeck_migration(self):
-        return self._migration_service.dismiss_retrodeck_migration()
-
-    async def refresh_migration_state(self):
-        return await self._migration_service.refresh_state()
 
     async def get_settings_reset_notice(self):
         """Report whether a corrupt ``settings.json`` was reset at boot.

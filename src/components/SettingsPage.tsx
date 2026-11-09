@@ -1,6 +1,5 @@
 import { useState, useEffect, FC } from "react";
 import { PanelSection, PanelSectionRow, ButtonItem, ConfirmModal, showModal } from "@decky/ui";
-import { toaster } from "@decky/api";
 import {
   getSettings,
   saveServerUrl,
@@ -19,27 +18,16 @@ import {
   saveLogLevel,
   savePreferredRegion,
   getKnownRegions,
-  fixRetroarchInputDriver,
   ensureDeviceRegistered,
   listDevices,
-  getSaveSortMigrationStatus,
-  migrateSaveSortFiles,
-  dismissSaveSortMigration,
   logError,
 } from "../api/backend";
-import type { SaveSortMigrationStatus, RegisteredDevice } from "../types";
-import {
-  getSaveSortMigrationState,
-  setSaveSortMigrationStatus as setStoreSaveSortStatus,
-  clearSaveSortMigration,
-  onSaveSortMigrationChange,
-} from "../utils/saveSortMigrationStore";
+import type { RegisteredDevice } from "../types";
 import { scrollToTop } from "../utils/scrollHelpers";
 import { detach } from "../utils/detach";
 import { trimServerUrl, isValidServerUrl } from "../utils/serverUrl";
-import type { SaveSyncSettings as SaveSyncSettingsType, RetroArchInputCheck } from "../types";
+import type { SaveSyncSettings as SaveSyncSettingsType } from "../types";
 import { pendingEdits } from "./settings/TextInputModal";
-import { SaveSortMigrationSection } from "./settings/SaveSortMigrationSection";
 import { ConnectionSection } from "./settings/ConnectionSection";
 import { SteamGridDBSection } from "./settings/SteamGridDBSection";
 import { SaveSyncSection } from "./settings/SaveSyncSection";
@@ -82,13 +70,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
   // Controller state
   const [steamInputMode, setSteamInputMode] = useState("default");
   const [steamInputStatus, setSteamInputStatus] = useState("");
-  const [retroarchWarning, setRetroarchWarning] = useState<RetroArchInputCheck | null>(null);
-  const [retroarchFixStatus, setRetroarchFixStatus] = useState("");
-
-  // Save sort migration state
-  const [saveSortMigration, setSaveSortMigration] = useState<SaveSortMigrationStatus>(getSaveSortMigrationState());
-  const [saveSortMigrating, setSaveSortMigrating] = useState(false);
-  const [saveSortResult, setSaveSortResult] = useState("");
 
   // Advanced state
   const [logLevel, setLogLevel] = useState("warn");
@@ -108,9 +89,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
         setSteamInputMode(s.steam_input_mode);
         setLogLevel(s.log_level);
         setPreferredRegion(s.preferred_region ?? AUTO_REGION);
-        if (s.retroarch_input_check) {
-          setRetroarchWarning(s.retroarch_input_check);
-        }
       })
       .catch((e) => {
         logError(`Failed to load settings: ${e}`);
@@ -139,20 +117,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
         }
       })
       .catch((e) => logError(`Failed to load save sync settings: ${e}`));
-
-    getSaveSortMigrationStatus()
-      .then((s) => {
-        if (s.pending) {
-          setStoreSaveSortStatus(s);
-          setSaveSortMigration(s);
-        }
-      })
-      .catch(() => {});
-
-    const unsubSaveSort = onSaveSortMigrationChange(() => setSaveSortMigration(getSaveSortMigrationState()));
-    return () => {
-      unsubSaveSort();
-    };
   }, []);
 
   function loadDevices() {
@@ -424,19 +388,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
       setSteamInputStatus("Failed to apply");
     }
   };
-  const handleFixInputDriver = async () => {
-    setRetroarchFixStatus("Applying...");
-    try {
-      const result = await fixRetroarchInputDriver();
-      setRetroarchFixStatus(result.message);
-      if (result.success) {
-        setRetroarchWarning(null);
-      }
-    } catch {
-      setRetroarchFixStatus("Failed to apply fix");
-    }
-  };
-
   // --- Advanced handlers ---
   const handleLogLevelChange = (level: string) => {
     setLogLevel(level);
@@ -462,34 +413,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
     );
   };
 
-  // --- Save sort migration handlers ---
-  const handleMigrateSaveSort = async () => {
-    setSaveSortMigrating(true);
-    setSaveSortResult("");
-    try {
-      const result = await migrateSaveSortFiles(null);
-      setSaveSortResult(result.message);
-      if (result.success) {
-        clearSaveSortMigration();
-        toaster.toast({
-          title: "EmuDecky RomM Manager",
-          body: result.message || "Migration complete.",
-        });
-      }
-    } catch {
-      setSaveSortResult("Migration failed");
-    }
-    setSaveSortMigrating(false);
-  };
-  const handleDismissSaveSort = async () => {
-    try {
-      await dismissSaveSortMigration();
-      clearSaveSortMigration();
-    } catch {
-      /* ignore */
-    }
-  };
-
   return (
     <>
       <PanelSection>
@@ -504,19 +427,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
           </ButtonItem>
         </PanelSectionRow>
       </PanelSection>
-      {saveSortMigration.pending && (
-        <SaveSortMigrationSection
-          migration={saveSortMigration}
-          migrating={saveSortMigrating}
-          result={saveSortResult}
-          onMigrate={() => {
-            detach(handleMigrateSaveSort());
-          }}
-          onDismiss={() => {
-            detach(handleDismissSaveSort());
-          }}
-        />
-      )}
       <ConnectionSection
         url={url}
         hasToken={hasToken}
@@ -580,15 +490,10 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
       <ControllerSection
         steamInputMode={steamInputMode}
         steamInputStatus={steamInputStatus}
-        retroarchWarning={retroarchWarning}
-        retroarchFixStatus={retroarchFixStatus}
         loading={loading}
         onModeChange={handleSteamInputModeChange}
         onApplyMode={() => {
           detach(handleApplySteamInput());
-        }}
-        onFixInputDriver={() => {
-          detach(handleFixInputDriver());
         }}
       />
       <LibrarySection

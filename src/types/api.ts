@@ -48,12 +48,6 @@ export interface InstalledRom {
   installed_at: string;
 }
 
-export interface RetroArchInputCheck {
-  warning: boolean;
-  current?: string;
-  config_path?: string;
-}
-
 export interface PluginSettings {
   romm_url: string;
   has_token: boolean;
@@ -61,7 +55,6 @@ export interface PluginSettings {
   sgdb_api_key_masked: string;
   log_level: "debug" | "info" | "warn" | "error";
   romm_allow_insecure_ssl: boolean;
-  retroarch_input_check?: RetroArchInputCheck;
   collection_create_platform_groups?: boolean;
   // Preferred sibling-group region (ADR-0021 §3). "auto" = the fixed build-time
   // default order (World > USA > Europe > Japan); any other value heads the

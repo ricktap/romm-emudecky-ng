@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::domain::errors::RommError;
 use crate::services::ports::{
-    KvConfigRepo, RetroArchInputConfig, RomRegionsReader, RommConnectionApi, SettingsPersister, SettingsStore,
+    KvConfigRepo, RomRegionsReader, RommConnectionApi, SettingsPersister, SettingsStore,
 };
 
 /// Counts saves; can be told to fail. Optionally records the settings
@@ -53,35 +53,6 @@ impl FakeRegions {
 impl RomRegionsReader for FakeRegions {
     async fn all_rom_regions(&self) -> anyhow::Result<Vec<Vec<String>>> {
         Ok(self.0.lock().unwrap().clone())
-    }
-}
-
-#[derive(Default)]
-pub struct FakeRetroArch {
-    check: Mutex<Option<Value>>,
-    fix: Mutex<Option<Value>>,
-}
-
-impl FakeRetroArch {
-    pub fn set_check(&self, v: Option<Value>) {
-        *self.check.lock().unwrap() = v;
-    }
-    pub fn set_fix(&self, v: Value) {
-        *self.fix.lock().unwrap() = Some(v);
-    }
-}
-
-#[async_trait]
-impl RetroArchInputConfig for FakeRetroArch {
-    async fn check_input_driver(&self) -> Option<Value> {
-        self.check.lock().unwrap().clone()
-    }
-    async fn fix_input_driver(&self) -> Value {
-        self.fix
-            .lock()
-            .unwrap()
-            .clone()
-            .unwrap_or(json!({"success": false, "message": "No fix needed"}))
     }
 }
 

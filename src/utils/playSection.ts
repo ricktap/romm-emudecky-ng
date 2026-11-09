@@ -1,5 +1,5 @@
 /**
- * Pure helpers for the RomM play-section row: label resolution, BIOS-payload
+ * Pure helpers for the RomM play-section row: label resolution, core-info
  * shaping, and the timeout-promise primitive used by connection probing.
  *
  * Anything that takes inputs and returns outputs without touching component
@@ -11,17 +11,8 @@ import type { CoreInfo, EmulatorOption, SaveStatus, SaveSyncDisplay } from "../t
 import { hasAnySaveConflict } from "./saveStatus";
 import { formatTimeAgo } from "./formatters";
 
-/** BIOS-only fields for the play-section row. Core data (active core, available
- *  cores) is sourced independently via `extractCoreInfo` from the dedicated
- *  `get_platform_core_info` path — it no longer rides the BIOS payload (#923). */
-export interface BiosInfoFields {
-  biosNeeded: boolean;
-  biosStatus: "ok" | "partial" | "missing" | null;
-  biosLabel: string;
-}
-
 /** Core-selection fields for the play-section row, derived from the dedicated
- *  `get_platform_core_info` path (#923), decoupled from BIOS status. */
+ *  `get_platform_core_info` path (#923). */
 export interface CoreInfoFields {
   activeCoreLabel: string | null;
   activeCoreIsDefault: boolean;
@@ -61,20 +52,6 @@ export function applySaveSyncDisplay(
   }
   if (hasAnySaveConflict(saveStatus)) return { status: "conflict", label: "Conflict" };
   return { status: "none", label: "No saves" };
-}
-
-/** Project the backend's pre-computed BIOS level/label into the BIOS-only fields
- *  the play-section row needs. `level` and `label` are computed by the backend
- *  so the frontend never re-derives them. Callers only reach this when the
- *  backend reported a BIOS need (a truthy `bios_status`), so `biosNeeded` is
- *  always `true` here. Core data is sourced separately via `extractCoreInfo`
- *  (the BIOS payload no longer carries it, #923). */
-export function extractBiosInfo(level: "ok" | "partial" | "missing" | null, label: string | null): BiosInfoFields {
-  return {
-    biosNeeded: true,
-    biosStatus: level,
-    biosLabel: label ?? "",
-  };
 }
 
 /** Project a CoreInfo response (from the dedicated `get_platform_core_info`

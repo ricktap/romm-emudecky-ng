@@ -25,10 +25,13 @@ What it guarantees (and what it deliberately does not):
     frontend. ``globalThis.addEventListener`` / ``el.addEventListener`` are DOM
     ``CustomEvent`` subscriptions, not backend emits, and are excluded.
 
-``EXEMPT`` holds event names deliberately kept out of the parity check. It is
-empty today; an entry here is a conscious "this event is intentionally declared
-on only one side" decision — never a lever to silence a real drift. A genuine
-drift is a finding to triage, not to exempt.
+``EXEMPT`` holds event names deliberately kept out of the parity check. An
+entry here is a conscious "this event is intentionally declared on only one
+side" decision — never a lever to silence a real drift. A genuine drift is a
+finding to triage, not to exempt. Current entries are backend-only events of the
+legacy Python ``MigrationService`` (RetroDECK / save-sort migration), whose frontend was
+removed until v0.90 (see ``REMOVED_TILL_0_90_0.md``); the Python service stays
+in place as spec while the Rust backend is ported, so it still emits them.
 
 Exit 0 when the two surfaces match, 1 (one line per discrepancy) otherwise.
 """
@@ -45,10 +48,19 @@ VENDOR_DIR = PY_MODULES_DIR / "_vendor"
 SRC_DIR = REPO_ROOT / "src"
 MAIN_PY = REPO_ROOT / "main.py"
 
-# Event names deliberately excluded from the parity check. Empty today; add an
-# entry only as a conscious decision (see the module docstring). Do NOT add a
-# name here to silence a real drift — a drift is a finding to triage.
-EXEMPT: frozenset[str] = frozenset()
+# Event names deliberately excluded from the parity check. Add an entry only as
+# a conscious decision (see the module docstring). Do NOT add a name here to
+# silence a real drift — a drift is a finding to triage.
+EXEMPT: frozenset[str] = frozenset(
+    {
+        # Emitted by the legacy Python MigrationService; the RetroDECK /
+        # save-sort migration UI that listened was removed until v0.90
+        # (REMOVED_TILL_0_90_0.md).
+        "retrodeck_path_changed",
+        "migration_relaunch_options",
+        "save_sort_changed",
+    }
+)
 
 # Attribute names that name an emit call (``self.emit`` / ``self._emit``).
 _EMIT_ATTRS = frozenset({"emit", "_emit"})

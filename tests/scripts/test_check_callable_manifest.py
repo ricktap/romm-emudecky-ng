@@ -2,13 +2,14 @@
 
 Loaded via ``importlib`` because ``scripts/`` is not on ``sys.path`` (and is
 excluded from ruff/basedpyright). Parser edge cases feed synthetic ``.ts`` /
-``backend.py`` files under ``tmp_path``; the happy-path test asserts the real repo
+``backend/callables.json`` files under ``tmp_path``; the happy-path test asserts the real repo
 tree is clean (the regression that protects the live frontend↔backend wire).
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import textwrap
 from pathlib import Path
@@ -42,10 +43,10 @@ def _write_ts(tmp_path: Path, name: str, body: str) -> Path:
     return src
 
 
-def _write_main(tmp_path: Path, body: str) -> Path:
-    """Write a synthetic ``backend.py`` with a ``Backend`` class body and return its path."""
-    path = tmp_path / "backend.py"
-    path.write_text(body, encoding="utf-8")
+def _write_json(tmp_path: Path, names: list[str]) -> Path:
+    """Write a synthetic ``callables.json`` listing *names* and return its path."""
+    path = tmp_path / "callables.json"
+    path.write_text(json.dumps(names), encoding="utf-8")
     return path
 
 
@@ -219,103 +220,29 @@ class TestParserHardening:
 
 
 class TestParseBackendCallables:
-    def test_public_methods_with_arity(self, tmp_path: Path):
-        body = textwrap.dedent(
-            """\
-            class Backend:
-                async def get_settings(self):
-                    ...
-                async def start_download(self, rom_id):
-                    ...
-                async def switch_slot(self, rom_id, new_slot):
-                    ...
-            """
-        )
-        main_py = _write_main(tmp_path, body)
-        assert check.parse_backend_callables(main_py) == {
-            "get_settings": 0,
-            "start_download": 1,
-            "switch_slot": 2,
+    def test_names_map_to_variable_arity(self, tmp_path: Path):
+        path = _write_json(tmp_path, ["get_settings", "start_download", "switch_slot"])
+        assert check.parse_backend_callables(path) == {
+            "get_settings": None,
+            "start_download": None,
+            "switch_slot": None,
         }
 
-    def test_underscore_internal_excluded(self, tmp_path: Path):
-        body = textwrap.dedent(
-            """\
-            class Backend:
-                async def _main(self):
-                    ...
-                async def _unload(self):
-                    ...
-                async def test_connection(self):
-                    ...
-            """
-        )
-        main_py = _write_main(tmp_path, body)
-        assert check.parse_backend_callables(main_py) == {"test_connection": 0}
+    def test_empty_list_returns_empty(self, tmp_path: Path):
+        assert check.parse_backend_callables(_write_json(tmp_path, [])) == {}
 
-    def test_default_param_counts_as_positional_slot(self, tmp_path: Path):
-        body = textwrap.dedent(
-            """\
-            class Backend:
-                async def connect_with_credentials(self, url, user, pw, allow_insecure_ssl=None):
-                    ...
-            """
-        )
-        main_py = _write_main(tmp_path, body)
-        assert check.parse_backend_callables(main_py) == {"connect_with_credentials": 4}
+    def test_missing_file_returns_empty(self, tmp_path: Path):
+        assert check.parse_backend_callables(tmp_path / "nope.json") == {}
 
-    def test_vararg_method_has_none_arity_name_recorded(self, tmp_path: Path):
-        body = textwrap.dedent(
-            """\
-            class Backend:
-                async def flexible(self, *args):
-                    ...
-            """
-        )
-        main_py = _write_main(tmp_path, body)
-        assert check.parse_backend_callables(main_py) == {"flexible": None}
+    def test_non_string_entries_ignored(self, tmp_path: Path):
+        path = tmp_path / "callables.json"
+        path.write_text('["a", 3, null, "b"]', encoding="utf-8")
+        assert check.parse_backend_callables(path) == {"a": None, "b": None}
 
-    def test_sync_methods_ignored(self, tmp_path: Path):
-        body = textwrap.dedent(
-            """\
-            class Backend:
-                def helper(self):
-                    ...
-                async def real_callable(self):
-                    ...
-            """
-        )
-        main_py = _write_main(tmp_path, body)
-        assert check.parse_backend_callables(main_py) == {"real_callable": 0}
-
-    def test_no_plugin_class_returns_empty(self, tmp_path: Path):
-        main_py = _write_main(tmp_path, "class Other:\n    async def foo(self):\n        ...\n")
-        assert check.parse_backend_callables(main_py) == {}
-
-    def test_keyword_only_args_excluded_from_positional_arity(self, tmp_path: Path):
-        # ``*, c`` is keyword-only — a positional frontend tuple can't fill it,
-        # so arity counts only the positional params (a, b) -> 2.
-        body = textwrap.dedent(
-            """\
-            class Backend:
-                async def m(self, a, b, *, c):
-                    ...
-            """
-        )
-        main_py = _write_main(tmp_path, body)
-        assert check.parse_backend_callables(main_py) == {"m": 2}
-
-    def test_kwargs_only_yields_positional_arity(self, tmp_path: Path):
-        # **kwargs is not positional — the two positional params still count as 2.
-        body = textwrap.dedent(
-            """\
-            class Backend:
-                async def m(self, a, b, **kwargs):
-                    ...
-            """
-        )
-        main_py = _write_main(tmp_path, body)
-        assert check.parse_backend_callables(main_py) == {"m": 2}
+    def test_json_names_skip_arity_comparison(self, tmp_path: Path):
+        # callables.json carries no arity, so only names are compared.
+        backend = check.parse_backend_callables(_write_json(tmp_path, ["f"]))
+        assert check.find_discrepancies({"f": 3}, backend, frozenset()) == []
 
 
 class TestFindDiscrepancies:
@@ -328,7 +255,7 @@ class TestFindDiscrepancies:
         findings = check.find_discrepancies({"a": 0, "ghost": 1}, {"a": 0}, frozenset())
         assert len(findings) == 1
         assert "ghost" in findings[0]
-        assert "no public" in findings[0]
+        assert "no entry" in findings[0]
 
     def test_backend_only_name_flagged(self):
         findings = check.find_discrepancies({"a": 0}, {"a": 0, "orphan": 1}, frozenset())
@@ -366,9 +293,9 @@ class TestMainEntryPoint:
         assert check.main(["-h"]) == 0
 
     def test_real_repo_run_is_clean(self, capsys: pytest.CaptureFixture[str]):
-        # Locks the actual src/**/*.ts callable declarations in sync with the
-        # Backend async methods in py_modules/backend.py. If this fails, a callable was
-        # added/renamed/removed on one side only, or an arity drifted.
+        # Locks the actual src/**/*.ts callable declarations in sync with
+        # backend/callables.json. If this fails, a callable was added/renamed/
+        # removed on one side only.
         rc = check.main([])
         assert rc == 0
         assert "OK:" in capsys.readouterr().out
@@ -377,12 +304,9 @@ class TestMainEntryPoint:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ):
         src = _write_ts(tmp_path, "a.ts", 'callable<[], A>("present");\ncallable<[number], B>("frontend_only");')
-        main_py = _write_main(
-            tmp_path,
-            "class Backend:\n    async def present(self):\n        ...\n",
-        )
+        backend_json = _write_json(tmp_path, ["present"])
         monkeypatch.setattr(check, "SRC_DIR", src)
-        monkeypatch.setattr(check, "BACKEND_PY", main_py)
+        monkeypatch.setattr(check, "BACKEND_JSON", backend_json)
         monkeypatch.setattr(check, "EXEMPT", frozenset())
         rc = check.main([])
         assert rc == 1
@@ -392,8 +316,8 @@ class TestMainEntryPoint:
 
     def test_in_sync_fake_repo_returns_zero(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         src = _write_ts(tmp_path, "a.ts", 'callable<[number], A>("match");')
-        main_py = _write_main(tmp_path, "class Backend:\n    async def match(self, rom_id):\n        ...\n")
+        backend_json = _write_json(tmp_path, ["match"])
         monkeypatch.setattr(check, "SRC_DIR", src)
-        monkeypatch.setattr(check, "BACKEND_PY", main_py)
+        monkeypatch.setattr(check, "BACKEND_JSON", backend_json)
         monkeypatch.setattr(check, "EXEMPT", frozenset())
         assert check.main([]) == 0

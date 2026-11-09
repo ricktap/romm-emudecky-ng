@@ -20,12 +20,11 @@ function conflict(overrides: Partial<SyncConflict> = {}): SyncConflict {
   };
 }
 
-// All-pass ops: migration not pending, tracking proceeds, core OK, online,
+// All-pass ops: tracking proceeds, core OK, online,
 // sync succeeds with no conflicts. Each test overrides only the step it drives.
 function makeOps(overrides: Partial<LaunchGateOps> = {}): LaunchGateOps {
   const okSync: PreLaunchSyncOutcome = { success: true, message: "" };
   return {
-    migrationPending: vi.fn(() => false),
     ensureTrackingConfigured: vi.fn(async (): Promise<"proceed" | "abort"> => "proceed"),
     checkCoreChange: vi.fn(async () => true),
     checkReachability: vi.fn(async () => true),
@@ -36,17 +35,6 @@ function makeOps(overrides: Partial<LaunchGateOps> = {}): LaunchGateOps {
 }
 
 describe("runLaunchGate — verdict branches", () => {
-  it("blocks with migration_pending when a migration is pending", async () => {
-    const ops = makeOps({ migrationPending: () => true });
-    await expect(runLaunchGate(100, 42, ops)).resolves.toEqual({
-      decision: "block",
-      reason: "migration_pending",
-    });
-    // Later steps must not run once migration blocks.
-    expect(ops.ensureTrackingConfigured).not.toHaveBeenCalled();
-    expect(ops.checkReachability).not.toHaveBeenCalled();
-  });
-
   it("aborts when tracking setup returns abort", async () => {
     const ops = makeOps({ ensureTrackingConfigured: vi.fn(async (): Promise<"proceed" | "abort"> => "abort") });
     await expect(runLaunchGate(100, 42, ops)).resolves.toEqual({ decision: "abort" });
@@ -121,14 +109,6 @@ describe("runLaunchGate — verdict branches", () => {
     await expect(runLaunchGate(100, 42, ops)).resolves.toEqual({ decision: "allow" });
   });
 
-  it("never throws — a synchronous migrationPending throw resolves to allow", async () => {
-    const ops = makeOps({
-      migrationPending: () => {
-        throw new Error("migration state read blew up");
-      },
-    });
-    await expect(runLaunchGate(100, 42, ops)).resolves.toEqual({ decision: "allow" });
-  });
 });
 
 describe("skip-set — markLaunchSkipped / consumeLaunchSkip", () => {

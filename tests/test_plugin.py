@@ -19,7 +19,6 @@ from fakes.system_time import FakeClock, FakeSleeper, FakeUuidGen
 from adapters.debug_logger import SettingsAwareDebugLogger
 from adapters.persistence import PersistenceAdapter, SettingsPersisterAdapter
 from adapters.steam_config import SteamConfigAdapter
-from lib.retrodeck_health import RetroDeckConfigHealth
 
 # conftest.py patches decky before this import
 from backend import Backend
@@ -679,41 +678,7 @@ class TestWhitelistSettings:
         assert plugin.settings["whitelist_custom_names"] == ["Custom Game"]
 
 
-class TestRefreshMigrationState:
-    @pytest.mark.asyncio
-    async def test_delegates_to_migration_service_refresh_state(self, plugin):
-        """Plugin callable forwards to MigrationService.refresh_state."""
-        from unittest.mock import AsyncMock
-
-        sentinel = {
-            "retrodeck": {"pending": True, "old_path": "/a", "new_path": "/b"},
-            "save_sort": {"pending": True, "saves_count": 3},
-        }
-        plugin._migration_service = MagicMock()
-        plugin._migration_service.refresh_state = AsyncMock(return_value=sentinel)
-        result = await plugin.refresh_migration_state()
-        plugin._migration_service.refresh_state.assert_awaited_once_with()
-        assert result is sentinel
-
-    @pytest.mark.asyncio
-    async def test_propagates_exceptions(self, plugin):
-        from unittest.mock import AsyncMock
-
-        plugin._migration_service = MagicMock()
-        plugin._migration_service.refresh_state = AsyncMock(side_effect=RuntimeError("boom"))
-        with pytest.raises(RuntimeError, match="boom"):
-            await plugin.refresh_migration_state()
-
-
 _MIGRATION_BLOCKED_WHITELIST: set[str] = {
-    # Migration management itself (the unblock pathway must work while pending).
-    "migrate_retrodeck_files",
-    "get_migration_status",
-    "get_save_sort_migration_status",
-    "migrate_save_sort_files",
-    "dismiss_save_sort_migration",
-    "dismiss_retrodeck_migration",
-    "refresh_migration_state",
     # Connection / settings (read-only or non-retrodeck).
     "test_connection",
     "get_romm_version",
@@ -738,8 +703,6 @@ _MIGRATION_BLOCKED_WHITELIST: set[str] = {
     # user's explicit QAM ack must both work regardless of a pending migration.
     "get_settings_reset_notice",
     "dismiss_settings_reset_notice",
-    # Read-only RetroDECK path-resolution health probe (for the frontend banner).
-    "get_retrodeck_status",
     # Cancel / pause operations — must remain callable mid-operation when
     # migration marker fires so the user can stop in-flight work. (Resume,
     # which re-begins a filesystem transfer, IS migration-blocked.)
@@ -753,7 +716,6 @@ _MIGRATION_BLOCKED_WHITELIST: set[str] = {
     "save_log_level",
     "save_steam_input_setting",
     "apply_steam_input_setting",
-    "fix_retroarch_input_driver",
     # Read-only library / sync state queries.
     "get_cached_game_detail",
     "get_platform_core_info",
@@ -799,10 +761,8 @@ _MIGRATION_BLOCKED_WHITELIST: set[str] = {
     # refresh ran regardless of pending migration; only the save sync was
     # gated, and the lifecycle service preserves that gate inline.
     "finalize_game_session",
-    # Firmware / BIOS read-only checks.
+    # Firmware read-only checks.
     "get_firmware_status",
-    "check_platform_bios",
-    "get_bios_status",
     # Save sync read-only / device queries.
     "ensure_device_registered",
     "list_devices",
@@ -836,9 +796,7 @@ _MIGRATION_BLOCKED_WHITELIST: set[str] = {
     # Read-only startup launch-options reconcile pull (#1043) — heals drifted
     # shortcut launch commands; pure read, never gated.
     "get_installed_relaunch_options",
-    # Achievements queries (server-side).
-    "get_achievements",
-    "get_achievement_progress",
+    # Achievements refresh helper (server-side).
     "sync_achievements_after_session",
 }
 
@@ -1088,46 +1046,6 @@ class TestCancelCallablesNotBlockedByMigration:
         result = await plugin.cancel_download(42)
         assert result.get("blocked_by_migration") is not True
         plugin._download_service.cancel_download.assert_called_once_with(42)
-
-
-class TestRetroDeckStatus:
-    @pytest.mark.asyncio
-    async def test_ok_status_carries_paths(self, plugin):
-        plugin._retrodeck_paths = FakeRetroDeckPaths(
-            home="/retrodeck",
-            config_path="/cfg/retrodeck.json",
-            health=RetroDeckConfigHealth.OK,
-        )
-        result = await plugin.get_retrodeck_status()
-        assert result == {
-            "status": "ok",
-            "config_path": "/cfg/retrodeck.json",
-            "resolved_home": "/retrodeck",
-        }
-
-    @pytest.mark.asyncio
-    async def test_status_is_plain_string_not_enum(self, plugin):
-        """The discriminant must serialize as a plain str for the WebSocket bridge."""
-        plugin._retrodeck_paths = FakeRetroDeckPaths(health=RetroDeckConfigHealth.UNREADABLE)
-        result = await plugin.get_retrodeck_status()
-        assert result["status"] == "unreadable"
-        assert type(result["status"]) is str
-
-    @pytest.mark.asyncio
-    async def test_root_missing_status(self, plugin):
-        plugin._retrodeck_paths = FakeRetroDeckPaths(
-            home="/missing",
-            health=RetroDeckConfigHealth.ROOT_MISSING,
-        )
-        result = await plugin.get_retrodeck_status()
-        assert result["status"] == "root_missing"
-        assert result["resolved_home"] == "/missing"
-
-    @pytest.mark.asyncio
-    async def test_absent_status(self, plugin):
-        plugin._retrodeck_paths = FakeRetroDeckPaths(health=RetroDeckConfigHealth.ABSENT)
-        result = await plugin.get_retrodeck_status()
-        assert result["status"] == "absent"
 
 
 class TestPlaytimeFlushTaskLifecycle:

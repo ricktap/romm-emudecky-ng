@@ -1,3 +1,5 @@
+> **Removed in the Rust rewrite until v0.90** — see REMOVED_TILL_0_90_0.md.
+
 # BIOS and Emulator Core Management
 
 Some emulated systems require BIOS files to run games. Without the correct BIOS files, games for those systems will fail

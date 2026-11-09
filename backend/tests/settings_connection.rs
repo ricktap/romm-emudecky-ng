@@ -61,7 +61,7 @@ async fn fresh_install_defaults_and_settings_file() {
         s,
         json!({
             "romm_url": "", "has_token": false, "steam_input_mode": "default", "sgdb_api_key_masked": "",
-            "retroarch_input_check": null, "log_level": "warn", "romm_allow_insecure_ssl": false,
+            "log_level": "warn", "romm_allow_insecure_ssl": false,
             "collection_create_platform_groups": false, "preferred_region": "auto"
         })
     );
@@ -123,10 +123,6 @@ async fn settings_writers_persist_to_disk() {
         Value::Null
     );
     assert_eq!(b.call("debug_log", json!(["debug line"])).await, Value::Null);
-    assert_eq!(
-        b.call("fix_retroarch_input_driver", json!([])).await,
-        json!({"success": false, "message": "No fix needed"})
-    );
     let s = b.call("get_settings", json!([])).await;
     assert_eq!(s["romm_url"], "https://romm.local/");
     assert_eq!(s["romm_allow_insecure_ssl"], true);

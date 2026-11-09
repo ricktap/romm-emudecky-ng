@@ -1,7 +1,6 @@
 """Contract tests for the core-selection callables over the real nesting.
 
-``CoreService.clear_game_core`` (Reset / Follow default) and
-``set_system_core`` (per-platform core change fan-out) both re-bake a ROM's
+``CoreService.clear_game_core`` (Reset / Follow default) re-bakes a ROM's
 Steam ``launch_options`` from its active core, resolved through the real
 :class:`ActiveCoreResolver` — which opens its **own** Unit of Work.
 
@@ -88,30 +87,6 @@ async def test_clear_game_core_unknown_rom_returns_canonical_failure(harness):
     assert result["reason"] == "not_found"
     assert isinstance(result["message"], str)
     assert result["message"]
-
-
-async def test_set_system_core_rebakes_only_unpinned_rom(harness):
-    """The per-platform fan-out re-bakes each unpinned ROM through the real resolver.
-
-    Two installed+bound ``gba`` ROMs: one plain, one with a per-game pin. Setting
-    the platform core to VBA Next must re-bake only the unpinned ROM (the pin
-    wins over the platform default for the other), with the VBA Next core baked.
-    """
-    seed_es_systems(harness)
-    seed_install(harness, 1, system="gba", platform_slug="gba", file_name="a.gba")
-    seed_install(harness, 2, system="gba", platform_slug="gba", file_name="b.gba")
-    with harness.uow_factory() as uow:
-        uow.roms.set_emulator_override(2, "mGBA")
-
-    result = await harness.plugin.set_system_core("gba", "VBA Next")
-
-    assert result["success"] is True
-    items = result["rebake_items"]
-    # Exactly the unpinned ROM (app_id 1) is re-baked; the pinned ROM is absent.
-    assert len(items) == 1
-    assert items[0]["app_id"] == 1
-    assert "vba_next_libretro.so" in items[0]["launch_options"]
-    assert all(item["app_id"] != 2 for item in items)
 
 
 async def test_set_game_core_unbakeable_label_returns_canonical_failure(harness):

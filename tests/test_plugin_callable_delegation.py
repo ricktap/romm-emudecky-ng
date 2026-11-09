@@ -97,12 +97,6 @@ class TestSettingsCallableDelegation:
         plugin._settings_service.apply_steam_input_setting.assert_called_once_with()
         assert result == {"ok": True}
 
-    @pytest.mark.asyncio
-    async def test_fix_retroarch_input_driver_delegates(self, plugin):
-        plugin._settings_service.fix_retroarch_input_driver.return_value = {"ok": True}
-        result = await plugin.fix_retroarch_input_driver()
-        plugin._settings_service.fix_retroarch_input_driver.assert_called_once_with()
-        assert result == {"ok": True}
 
     @pytest.mark.asyncio
     async def test_get_settings_delegates(self, plugin):
@@ -154,63 +148,10 @@ class TestConnectionCallableDelegation:
         assert result == {"success": True}
 
 
-# ── Migration callables ────────────────────────────────────────────────
-
-
-class TestMigrationCallableDelegation:
-    @pytest.mark.asyncio
-    async def test_migrate_retrodeck_files_delegates(self, plugin):
-        plugin._migration_service.migrate_retrodeck_files = AsyncMock(return_value={"ok": True})
-        result = await plugin.migrate_retrodeck_files("overwrite")
-        plugin._migration_service.migrate_retrodeck_files.assert_awaited_once_with("overwrite")
-        assert result == {"ok": True}
-
-    @pytest.mark.asyncio
-    async def test_get_migration_status_delegates(self, plugin):
-        plugin._migration_service.get_migration_status = AsyncMock(return_value={"pending": False})
-        result = await plugin.get_migration_status()
-        plugin._migration_service.get_migration_status.assert_awaited_once_with()
-        assert result == {"pending": False}
-
-    @pytest.mark.asyncio
-    async def test_get_save_sort_migration_status_delegates(self, plugin):
-        plugin._migration_service.get_save_sort_migration_status = AsyncMock(return_value={"pending": False})
-        result = await plugin.get_save_sort_migration_status()
-        plugin._migration_service.get_save_sort_migration_status.assert_awaited_once_with()
-        assert result == {"pending": False}
-
-    @pytest.mark.asyncio
-    async def test_migrate_save_sort_files_delegates(self, plugin):
-        plugin._migration_service.migrate_save_sort_files = AsyncMock(return_value={"ok": True})
-        result = await plugin.migrate_save_sort_files("skip")
-        plugin._migration_service.migrate_save_sort_files.assert_awaited_once_with("skip")
-        assert result == {"ok": True}
-
-    @pytest.mark.asyncio
-    async def test_dismiss_save_sort_migration_delegates(self, plugin):
-        plugin._migration_service.dismiss_save_sort_migration.return_value = {"ok": True}
-        result = await plugin.dismiss_save_sort_migration()
-        plugin._migration_service.dismiss_save_sort_migration.assert_called_once_with()
-        assert result == {"ok": True}
-
-    @pytest.mark.asyncio
-    async def test_dismiss_retrodeck_migration_delegates(self, plugin):
-        plugin._migration_service.dismiss_retrodeck_migration.return_value = {"ok": True}
-        result = await plugin.dismiss_retrodeck_migration()
-        plugin._migration_service.dismiss_retrodeck_migration.assert_called_once_with()
-        assert result == {"ok": True}
-
-
 # ── Core / firmware / BIOS callables ───────────────────────────────────
 
 
 class TestCoreCallableDelegation:
-    @pytest.mark.asyncio
-    async def test_set_system_core_delegates(self, plugin):
-        plugin._core_service.set_system_core = AsyncMock(return_value={"success": True})
-        result = await plugin.set_system_core("snes", "core_a")
-        plugin._core_service.set_system_core.assert_awaited_once_with("snes", "core_a")
-        assert result == {"success": True}
 
     @pytest.mark.asyncio
     async def test_set_game_core_delegates(self, plugin):
@@ -268,29 +209,6 @@ class TestFirmwareCallableDelegation:
         result = await plugin.download_required_firmware("snes")
         plugin._firmware_service.download_required_firmware.assert_awaited_once_with("snes")
         assert result == {"success": True}
-
-    @pytest.mark.asyncio
-    async def test_check_platform_bios_delegates(self, plugin):
-        plugin._firmware_service.check_platform_bios = AsyncMock(return_value={"present": []})
-        # The frontend callable sends only the slug; main.py threads no per-game
-        # core, so the system default drives the BIOS filter (active_core_so=None).
-        result = await plugin.check_platform_bios("snes")
-        plugin._firmware_service.check_platform_bios.assert_awaited_once_with("snes")
-        assert result == {"present": []}
-
-    @pytest.mark.asyncio
-    async def test_get_bios_status_delegates(self, plugin):
-        plugin._game_detail_service.get_bios_status = AsyncMock(return_value={"present": True})
-        result = await plugin.get_bios_status(7)
-        plugin._game_detail_service.get_bios_status.assert_awaited_once_with(7)
-        assert result == {"present": True}
-
-    @pytest.mark.asyncio
-    async def test_delete_platform_bios_delegates(self, plugin):
-        plugin._firmware_service.delete_platform_bios = AsyncMock(return_value={"removed": 0})
-        result = await plugin.delete_platform_bios("snes")
-        plugin._firmware_service.delete_platform_bios.assert_awaited_once_with("snes")
-        assert result == {"removed": 0}
 
 
 # ── Sync / library callables ───────────────────────────────────────────
@@ -687,22 +605,6 @@ class TestMetadataCallableDelegation:
         assert result == {"100": 42}
 
 
-class TestAchievementsCallableDelegation:
-    @pytest.mark.asyncio
-    async def test_get_achievements_delegates(self, plugin):
-        plugin._achievements_service.get_achievements = AsyncMock(return_value=[])
-        result = await plugin.get_achievements(42)
-        plugin._achievements_service.get_achievements.assert_awaited_once_with(42)
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_get_achievement_progress_delegates(self, plugin):
-        plugin._achievements_service.get_achievement_progress = AsyncMock(return_value={"completed": 0})
-        result = await plugin.get_achievement_progress(42)
-        plugin._achievements_service.get_achievement_progress.assert_awaited_once_with(42)
-        assert result == {"completed": 0}
-
-
 class TestGameDetailCallableDelegation:
     @pytest.mark.asyncio
     async def test_get_cached_game_detail_delegates(self, plugin):
@@ -733,11 +635,6 @@ class TestCallableErrorPropagation:
         with pytest.raises(RuntimeError, match="down"):
             await plugin.test_connection()
 
-    @pytest.mark.asyncio
-    async def test_migrate_retrodeck_files_propagates(self, plugin):
-        plugin._migration_service.migrate_retrodeck_files = AsyncMock(side_effect=OSError("io"))
-        with pytest.raises(OSError, match="io"):
-            await plugin.migrate_retrodeck_files()
 
     @pytest.mark.asyncio
     async def test_get_firmware_status_propagates(self, plugin):
@@ -775,11 +672,6 @@ class TestCallableErrorPropagation:
         with pytest.raises(RuntimeError, match="sgdb"):
             await plugin.get_sgdb_artwork_base64(42, 1)
 
-    @pytest.mark.asyncio
-    async def test_get_achievements_propagates(self, plugin):
-        plugin._achievements_service.get_achievements = AsyncMock(side_effect=RuntimeError("ach"))
-        with pytest.raises(RuntimeError, match="ach"):
-            await plugin.get_achievements(42)
 
     @pytest.mark.asyncio
     async def test_get_artwork_base64_propagates(self, plugin):

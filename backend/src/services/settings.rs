@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use crate::domain::errors::failure;
 use crate::domain::settings::{RESET_NOTICE_KEY, truthy};
 use crate::domain::url_host::is_valid_server_url;
-use crate::services::ports::{RetroArchInputConfig, RomRegionsReader, SettingsPersister, SettingsStore};
+use crate::services::ports::{RomRegionsReader, SettingsPersister, SettingsStore};
 
 const MASK_PLACEHOLDER: &str = "\u{2022}\u{2022}\u{2022}\u{2022}";
 const VALID_LOG_LEVELS: [&str; 4] = ["debug", "info", "warn", "error"];
@@ -24,14 +24,12 @@ pub struct SettingsServiceConfig {
     pub settings: SettingsStore,
     pub persister: Arc<dyn SettingsPersister>,
     pub regions: Arc<dyn RomRegionsReader>,
-    pub retroarch: Arc<dyn RetroArchInputConfig>,
 }
 
 pub struct SettingsService {
     settings: SettingsStore,
     persister: Arc<dyn SettingsPersister>,
     regions: Arc<dyn RomRegionsReader>,
-    retroarch: Arc<dyn RetroArchInputConfig>,
 }
 
 fn level_rank(level: &str) -> Option<u8> {
@@ -44,7 +42,6 @@ impl SettingsService {
             settings: config.settings,
             persister: config.persister,
             regions: config.regions,
-            retroarch: config.retroarch,
         }
     }
 
@@ -74,7 +71,6 @@ impl SettingsService {
     /// The read-shape settings for the frontend. The token itself is never
     /// returned (only `has_token`); the SteamGridDB key is masked.
     pub async fn get_settings(&self) -> Value {
-        let retroarch_input_check = self.retroarch.check_input_driver().await.unwrap_or(Value::Null);
         let s = self.settings.snapshot();
         let get = |key: &str, default: Value| s.get(key).cloned().unwrap_or(default);
         json!({
@@ -82,7 +78,6 @@ impl SettingsService {
             "has_token": s.get("romm_api_token").is_some_and(truthy),
             "steam_input_mode": get("steam_input_mode", json!("default")),
             "sgdb_api_key_masked": if s.get("steamgriddb_api_key").is_some_and(truthy) { MASK_PLACEHOLDER } else { "" },
-            "retroarch_input_check": retroarch_input_check,
             "log_level": get("log_level", json!("warn")),
             "romm_allow_insecure_ssl": get("romm_allow_insecure_ssl", json!(false)),
             "collection_create_platform_groups": get("collection_create_platform_groups", json!(false)),
@@ -138,10 +133,6 @@ impl SettingsService {
         };
         self.settings.set("steam_input_mode", json!(mode_str));
         self.persist_ok().await
-    }
-
-    pub async fn fix_retroarch_input_driver(&self) -> Value {
-        self.retroarch.fix_input_driver().await
     }
 
     pub fn get_whitelist_settings(&self) -> Value {
@@ -208,14 +199,13 @@ impl SettingsService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::testing::{FakePersister, FakeRegions, FakeRetroArch};
+    use crate::services::testing::{FakePersister, FakeRegions};
     use serde_json::Map;
 
     struct Fixture {
         settings: SettingsStore,
         persister: Arc<FakePersister>,
         regions: Arc<FakeRegions>,
-        retroarch: Arc<FakeRetroArch>,
         service: SettingsService,
     }
 
@@ -223,18 +213,15 @@ mod tests {
         let settings = SettingsStore::new(Map::new());
         let persister = Arc::new(FakePersister::default());
         let regions = Arc::new(FakeRegions::default());
-        let retroarch = Arc::new(FakeRetroArch::default());
         let service = SettingsService::new(SettingsServiceConfig {
             settings: settings.clone(),
             persister: persister.clone(),
             regions: regions.clone(),
-            retroarch: retroarch.clone(),
         });
         Fixture {
             settings,
             persister,
             regions,
-            retroarch,
             service,
         }
     }
@@ -300,8 +287,6 @@ mod tests {
         ] {
             f.settings.set(k, v);
         }
-        f.retroarch
-            .set_check(Some(json!({"warning": true, "current": "x", "config_path": "/cfg"})));
         let r = f.service.get_settings().await;
         assert_eq!(
             r,
@@ -310,7 +295,6 @@ mod tests {
                 "has_token": true,
                 "steam_input_mode": "force_on",
                 "sgdb_api_key_masked": "\u{2022}\u{2022}\u{2022}\u{2022}",
-                "retroarch_input_check": {"warning": true, "current": "x", "config_path": "/cfg"},
                 "log_level": "info",
                 "romm_allow_insecure_ssl": true,
                 "collection_create_platform_groups": true,
@@ -333,7 +317,6 @@ mod tests {
         assert_eq!(r["romm_allow_insecure_ssl"], false);
         assert_eq!(r["collection_create_platform_groups"], false);
         assert_eq!(r["preferred_region"], "auto");
-        assert_eq!(r["retroarch_input_check"], Value::Null);
         for empty in [Value::Null, json!("")] {
             f.settings.set("romm_api_token", empty);
             assert_eq!(f.service.get_settings().await["has_token"], false);
@@ -442,17 +425,6 @@ mod tests {
         let r = f.service.save_steam_input_setting(&json!("")).await.unwrap();
         assert_eq!(r["reason"], "invalid_mode");
         assert_eq!(f.persister.saves(), 3);
-    }
-
-    #[tokio::test]
-    async fn fix_retroarch_delegates() {
-        let f = fixture();
-        f.retroarch
-            .set_fix(json!({"success": true, "message": "Changed input_driver to sdl2"}));
-        assert_eq!(
-            f.service.fix_retroarch_input_driver().await,
-            json!({"success": true, "message": "Changed input_driver to sdl2"})
-        );
     }
 
     #[tokio::test]

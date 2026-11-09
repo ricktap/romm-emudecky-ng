@@ -52,12 +52,6 @@ vi.mock("../utils/launchGate", async (importActual) => {
   return { ...actual, markLaunchSkipped: vi.fn(actual.markLaunchSkipped) };
 });
 
-// Migration store is a real module defaulting to { pending: false }; mock it so
-// the migration-block verdict test can flip `pending` true.
-vi.mock("../utils/migrationStore", () => ({
-  getMigrationState: vi.fn(() => ({ pending: false })),
-}));
-
 // Already-running guard deps (#1148 round 2). Default: no live session and nothing
 // running, so the guard is inert and the existing Play-funnel tests run unchanged.
 // CustomPlayButton is the only in-graph importer of either module, so a full mock
@@ -85,7 +79,6 @@ import { getCachedGameDetail } from "../utils/cachedGameDetailStore";
 import { setRommConnectionState, reportServerReachable } from "../utils/connectionState";
 import { setLaunchOptionsConfirmed } from "../utils/steamShortcuts";
 import { markLaunchSkipped, consumeLaunchSkip } from "../utils/launchGate";
-import { getMigrationState } from "../utils/migrationStore";
 import { getActiveSessionRomId } from "../utils/sessionManager";
 import { isAppRunning } from "../utils/runningApps";
 import { showOfflineDriftModal } from "../components/OfflineDriftModal";
@@ -977,11 +970,6 @@ describe("CustomPlayButton — pre-launch failure shapes without an errors array
       reason: "device_not_registered",
       message: "Device is not registered with RomM. Open the Saves tab to set it up.",
     },
-    { reason: "save_sort_changed", message: "RetroArch save sorting changed — migrate saves in Settings first" },
-    {
-      reason: "blocked_by_migration",
-      message: "Pending RetroDECK migration. Open the plugin QAM to migrate or dismiss.",
-    },
   ];
 
   it.each(FAILURE_SHAPES)(
@@ -1314,9 +1302,8 @@ describe("CustomPlayButton — shared launch gate (ADR-0015)", () => {
     // module-level state) so a mark in one test never silently affects the next.
     consumeLaunchSkip(100);
 
-    // Gate predecessors default to "pass": no migration, tracking configured,
+    // Gate predecessors default to "pass": tracking configured,
     // no core change. Each test overrides the branch it exercises.
-    vi.mocked(getMigrationState).mockReturnValue({ pending: false });
     vi.mocked(backend.isSaveTrackingConfigured).mockResolvedValue({ configured: true, active_slot: "default" });
     vi.mocked(backend.checkCoreChange).mockResolvedValue({ changed: false });
     vi.mocked(backend.preLaunchSync).mockResolvedValue({ success: true, message: "", synced: 0, conflicts: [] });
@@ -1334,7 +1321,7 @@ describe("CustomPlayButton — shared launch gate (ADR-0015)", () => {
     const playBtn = await findByText("Play");
     await act(async () => {
       playBtn.click();
-      // Drain the gate chain (migration → tracking → core → reachability →
+      // Drain the gate chain (tracking → core → reachability →
       // sync/drift → verdict → modal → dispatch).
       await Promise.resolve();
       await Promise.resolve();
@@ -1540,19 +1527,6 @@ describe("CustomPlayButton — shared launch gate (ADR-0015)", () => {
     expect(vi.mocked(SteamClient.Apps.RunGame)).not.toHaveBeenCalled();
   });
 
-  it("migration pending → blocks: no sync, no modal, no launch", async () => {
-    vi.mocked(getMigrationState).mockReturnValue({ pending: true });
-    vi.mocked(backend.probeReachability).mockResolvedValue({ online: true });
-
-    await clickPlay();
-
-    // The migration block short-circuits the funnel before any network step.
-    expect(vi.mocked(backend.probeReachability)).not.toHaveBeenCalled();
-    expect(vi.mocked(backend.preLaunchSync)).not.toHaveBeenCalled();
-    expect(vi.mocked(SteamClient.Apps.RunGame)).not.toHaveBeenCalled();
-    expect(vi.mocked(markLaunchSkipped)).not.toHaveBeenCalled();
-  });
-
   it("tracking-setup abort → silent bail back to play, no launch", async () => {
     vi.mocked(backend.probeReachability).mockResolvedValue({ online: true });
     // Unconfigured tracking whose setup needs a user choice (server has saves)
@@ -1748,7 +1722,6 @@ describe("CustomPlayButton — pre-launch relaunch re-confirm (#1150)", () => {
     consumeLaunchSkip(100);
     // Allow-path gate predecessors: online, tracking configured, no core change,
     // clean pre-launch sync → the gate returns "allow" → dispatchLaunch runs.
-    vi.mocked(getMigrationState).mockReturnValue({ pending: false });
     vi.mocked(backend.isSaveTrackingConfigured).mockResolvedValue({ configured: true, active_slot: "default" });
     vi.mocked(backend.checkCoreChange).mockResolvedValue({ changed: false });
     vi.mocked(backend.probeReachability).mockResolvedValue({ online: true });

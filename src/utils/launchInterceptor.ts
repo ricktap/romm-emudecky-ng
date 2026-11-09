@@ -18,7 +18,6 @@
 import { toaster } from "@decky/api";
 import { isRomMAppId } from "../patches/gameDetailPatch";
 import {
-  refreshMigrationState,
   getInstalledRom,
   getCachedGameDetail,
   isSaveTrackingConfigured,
@@ -31,9 +30,7 @@ import {
   logInfo,
   logError,
 } from "../api/backend";
-import { getMigrationState, setMigrationStatus } from "./migrationStore";
 import { reportServerReachable } from "./connectionState";
-import { setSaveSortMigrationStatus } from "./saveSortMigrationStore";
 import { getAppIdRomIdMapSnapshot, getActiveSessionRomId } from "./sessionManager";
 import { isAppRunning } from "./runningApps";
 import { runLaunchGate, markLaunchSkipped, consumeLaunchSkip } from "./launchGate";
@@ -49,8 +46,6 @@ import { detach } from "./detach";
 
 let gameActionHook: { unregister: () => void } | null = null;
 
-/** Migration block copy — surfaced as a toast (no relaunch). */
-const MIGRATION_TOAST_BODY = "Pending RetroDECK migration. Open the plugin QAM to migrate or dismiss.";
 
 /**
  * Watcher variant of the tracking-setup gate. On a cold grid launch there is no
@@ -147,7 +142,6 @@ async function preLaunchSyncWatcher(romId: number): Promise<PreLaunchSyncOutcome
 /** Build the funnel callbacks for a given romId. */
 function makeWatcherOps(romId: number): LaunchGateOps {
   return {
-    migrationPending: () => getMigrationState().pending,
     ensureTrackingConfigured: async (): Promise<"proceed"> => {
       await ensureTrackingConfiguredWatcher(romId);
       return "proceed";
@@ -216,9 +210,6 @@ async function handleWatcherVerdict(verdict: GateVerdict, appId: number, romId: 
       // The user saw setup/core UI and declined — already cancelled, nothing to do.
       return "done";
     case "block":
-      if (verdict.reason === "migration_pending") {
-        toaster.toast({ title: "EmuDecky RomM Manager", body: MIGRATION_TOAST_BODY });
-      }
       return "done";
     case "conflict": {
       const resolution = await handleConflicts(verdict.conflicts);
@@ -318,15 +309,6 @@ export function registerLaunchInterceptor(): void {
       detach(
         (async () => {
           try {
-            // Fire-and-forget migration refresh — picks up RetroArch sort
-            // changes made via the in-game Quick Menu before the prior session.
-            refreshMigrationState()
-              .then(({ retrodeck, save_sort }) => {
-                setMigrationStatus(retrodeck);
-                setSaveSortMigrationStatus(save_sort);
-              })
-              .catch((e) => logError(`Pre-launch migration refresh failed: ${e}`));
-
             // Resolve romId synchronously from the session map snapshot. An
             // unknown appId is not ours to gate — relaunch and bail.
             const romId = getAppIdRomIdMapSnapshot()[String(appId)];

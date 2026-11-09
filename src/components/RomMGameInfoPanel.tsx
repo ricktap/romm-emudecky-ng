@@ -5,7 +5,6 @@
  * Layout:
  *   Game Info:    Platform, Description, Developer/Publisher, Genre tags, Release date
  *   ROM File:     Filename (only when installed)
- *   BIOS:         Status (only when platform needs BIOS)
  *   Save Sync:    Status (only when save sync enabled)
  *   Purely informational — all actions live in RomMPlaySection gear menu.
  *
@@ -24,48 +23,28 @@ import {
   invalidateCachedGameDetail,
   getRomMetadata,
   getInstalledRom,
-  checkPlatformBios,
-  getPlatformCoreInfo,
   getSaveStatus,
   getArtworkBase64,
-  getAchievements,
-  getAchievementProgress,
   getSaveSlots,
   isSaveTrackingConfigured,
   debugLog,
-  refreshMigrationState,
-  logError,
 } from "../api/backend";
 import { SlotSetupWizard } from "./SlotSetupWizard";
 import { SavesTab } from "./SavesTab";
-import { ConnectingIndicator } from "./saves/ConnectingIndicator";
 import type {
   RomMetadata,
   InstalledRom,
-  BiosStatus,
-  CoreInfo,
   SaveStatus,
   SyncConflict,
-  Achievement,
-  AchievementProgress,
-  EarnedAchievement,
   SaveSlotSummary,
   DownloadCompleteEvent,
 } from "../types";
 import type { RommDataChangedDetail } from "../types/events";
-import { biosColorForLevel } from "../utils/biosColor";
-import { getMigrationState, onMigrationChange, setMigrationStatus } from "../utils/migrationStore";
 import { getSettingsResetState, onSettingsResetChange } from "../utils/settingsResetStore";
-import {
-  getSaveSortMigrationState,
-  onSaveSortMigrationChange,
-  setSaveSortMigrationStatus,
-} from "../utils/saveSortMigrationStore";
 import { scrollFocusedToCenter } from "../utils/scrollHelpers";
 import { reportServerReachable, setServerRetryProgress, useRommConnectionState } from "../utils/connectionState";
 import { applyLoadSlotsResult, applyRefreshSlotResult } from "../utils/slotState";
 import { VersionErrorCard, useVersionError } from "./VersionErrorCard";
-import { MigrationBlockedCard } from "./MigrationBlockedCard";
 import { SettingsResetCard } from "./SettingsResetCard";
 import { detach } from "../utils/detach";
 
@@ -83,25 +62,11 @@ interface PanelState {
   installedRom: InstalledRom | null;
   metadata: RomMetadata | null;
   coverBase64: string | null;
-  biosStatus: BiosStatus | null;
-  // ok/partial/missing classification — single source of truth is the backend
-  // (`compute_bios_level`); both the cache path and the bios-change refresh path
-  // thread `bios_level` straight off their respective payloads, never re-deriving
-  // it. Drives the BIOS status-dot color via `biosColorForLevel`. null when no
-  // BIOS need.
-  biosLevel: "ok" | "partial" | "missing" | null;
-  // Core info comes from the dedicated get_platform_core_info path (#923), not
-  // from biosStatus — the two concerns are decoupled.
-  coreInfo: CoreInfo | null;
   saveSyncEnabled: boolean;
   saveStatus: SaveStatus | null;
   conflicts: SyncConflict[];
   error: boolean;
   activeTab: string;
-  achievements: Achievement[];
-  achievementProgress: AchievementProgress | null;
-  achievementsLoading: boolean;
-  raId: number | null;
   slotConfirmed: boolean;
   activeSlot: string | null;
   availableSlots: SaveSlotSummary[];
@@ -175,43 +140,6 @@ function refreshMetadataInBackground(
     .catch(() => {});
 }
 
-/** Build a `BiosStatus` from a cached game detail's `bios_status` field. */
-function biosStatusFromCache(cachedBios: Record<string, unknown> | null | undefined): BiosStatus | null {
-  if (!cachedBios) return null;
-  return {
-    needs_bios: true,
-    ...cachedBios,
-  };
-}
-
-/** Render the per-core lines under a BIOS file — one row per core that uses it. */
-function buildBiosCoreLines(
-  cores: Record<string, { required: boolean }>,
-  coreLabelMap: Record<string, string>,
-  activeCore: string | null | undefined,
-): ReturnType<typeof createElement>[] {
-  return Object.entries(cores).map(([coreSo, coreData]) => {
-    const label = coreLabelMap[coreSo] || coreSo.replace(/_libretro$/, "");
-    const suffix = coreData.required ? " (required)" : " (optional)";
-    // Highlight the resolved active core's line (#955). active_core is the
-    // core's `.so`, same identifier space as the cores keys; a null/undefined
-    // active core matches nothing.
-    const isActiveCore = coreSo === activeCore;
-    return createElement(
-      "div",
-      {
-        key: `core-${coreSo}`,
-        style: {
-          color: isActiveCore ? "#d4a72c" : "rgba(255, 255, 255, 0.5)",
-          fontSize: "12px",
-          fontWeight: isActiveCore ? "bold" : "normal",
-        },
-      },
-      `${label}${suffix}`,
-    );
-  });
-}
-
 /** Build a `SaveStatus` from a cached game detail's `save_status` field. */
 function saveStatusFromCache(
   romId: number,
@@ -267,30 +195,7 @@ function startBackgroundRefreshes(
     bgPromises.push(refreshMetadataInBackground(romId, cancelled, setter));
   }
 
-  // Core info from its own path (#923), decoupled from BIOS status.
-  if (romId) {
-    bgPromises.push(refreshCoreInfoInBackground(romId, cancelled, setter));
-  }
-
   return Promise.all(bgPromises);
-}
-
-/** Fetch active-core + available-cores for a ROM from the dedicated
- *  `get_platform_core_info` path (#923) and merge into panel state. Keyed on
- *  rom_id so the active core reflects a per-game DB override (epic #945) when
- *  one is pinned. */
-function refreshCoreInfoInBackground(
-  romId: number,
-  cancelled: () => boolean,
-  setter: React.Dispatch<React.SetStateAction<PanelState>>,
-): Promise<void> {
-  return getPlatformCoreInfo(romId)
-    .then((coreInfo) => {
-      if (!cancelled()) {
-        setter((prev) => ({ ...prev, coreInfo }));
-      }
-    })
-    .catch(() => {});
 }
 
 /** Cache-first initial render. Resolves the cached game detail for this appId,
@@ -301,7 +206,6 @@ async function loadData(
   appId: number,
   cancelled: () => boolean,
   romIdRef: React.MutableRefObject<number | null>,
-  platformSlugRef: React.MutableRefObject<string>,
   setter: React.Dispatch<React.SetStateAction<PanelState>>,
 ): Promise<void> {
   try {
@@ -319,15 +223,9 @@ async function loadData(
     const platformSlug = cached.platform_slug || "";
 
     romIdRef.current = romId;
-    platformSlugRef.current = platformSlug;
 
-    const biosStatus = biosStatusFromCache(cached.bios_status);
-    // bios_level is computed by the backend (`compute_bios_level`) and shipped on
-    // the cached payload — thread it straight through, never re-derive here.
-    const biosLevel = biosStatus ? (cached.bios_level ?? null) : null;
     const saveStatus = saveStatusFromCache(romId, cached.save_status);
     const conflicts: SyncConflict[] = cached.save_status?.conflicts ?? [];
-    const raId = cached.ra_id ?? null;
 
     // Render immediately with cached data (metadata may be null — that's OK)
     setter({
@@ -340,18 +238,11 @@ async function loadData(
       installedRom: null, // Will be filled by background fetch if installed
       metadata: cached.metadata as RomMetadata | null,
       coverBase64: null, // Will be filled by background fetch
-      biosStatus,
-      biosLevel,
-      coreInfo: null, // Will be filled by background fetch (get_platform_core_info)
       saveSyncEnabled: cached.save_sync_enabled ?? false,
       saveStatus,
       conflicts,
       error: false,
       activeTab: "info",
-      achievements: [],
-      achievementProgress: null,
-      achievementsLoading: false,
-      raId,
       slotConfirmed: false,
       activeSlot: "default",
       availableSlots: [],
@@ -392,18 +283,11 @@ export const RomMGameInfoPanel: FC<RomMGameInfoPanelProps> = ({ appId }) => { //
     installedRom: null,
     metadata: null,
     coverBase64: null,
-    biosStatus: null,
-    biosLevel: null,
-    coreInfo: null,
     saveSyncEnabled: false,
     saveStatus: null,
     conflicts: [],
     error: false,
     activeTab: "info",
-    achievements: [],
-    achievementProgress: null,
-    achievementsLoading: false,
-    raId: null,
     slotConfirmed: false,
     activeSlot: "default",
     availableSlots: [],
@@ -412,49 +296,28 @@ export const RomMGameInfoPanel: FC<RomMGameInfoPanelProps> = ({ appId }) => { //
     languages: [],
   });
   const romIdRef = useRef<number | null>(null);
-  // Tracks the panel's own platform so the broadcast `bios` data-changed
-  // handler can reject events for other platforms without a stale closure
-  // (mirrors romIdRef). bios events fan out to every mounted panel (#1082).
-  const platformSlugRef = useRef<string>("");
-  // Load-once gates for the lazy-loaded ACHIEVEMENTS / SAVES tab data. A version
-  // switch resets both (in handleVersionSwitched) so the tab data re-fetches for
-  // the newly-bound rom_id instead of lingering from the previous version.
-  const achievementsLoadedRef = useRef(false);
+  // Load-once gate for the lazy-loaded SAVES tab data. A version switch resets
+  // it (in handleVersionSwitched) so the tab data re-fetches for the
+  // newly-bound rom_id instead of lingering from the previous version.
   const slotsLoadedRef = useRef(false);
-  // Single monotonic load counter SHARED across both lazy lanes (#1345 F2). The
-  // slots and achievements loads feed one serverRetryProgress store, so a load
-  // only clears it on settle if it is still the latest load of EITHER lane —
-  // a stale torn-down slot fetch resolving late must not wipe the achievements
-  // load's live "(attempt N/M)" frame (and vice versa).
+  // Monotonic load counter (#1345 F2): a load only clears the shared
+  // serverRetryProgress store on settle if it is still the latest load — a
+  // stale torn-down slot fetch resolving late must not wipe a newer load's
+  // live "(attempt N/M)" frame.
   const loadGenRef = useRef(0);
-  const [migration, setMigration] = useState(getMigrationState());
   const [settingsReset, setSettingsReset] = useState(getSettingsResetState());
-  const [saveSortPending, setSaveSortPending] = useState(getSaveSortMigrationState().pending);
 
   useEffect(() => {
-    const unsub = onMigrationChange(() => setMigration(getMigrationState()));
     const unsubSettingsReset = onSettingsResetChange(() => setSettingsReset(getSettingsResetState()));
-    const unsubSaveSort = onSaveSortMigrationChange(() => setSaveSortPending(getSaveSortMigrationState().pending));
     return () => {
-      unsub();
       unsubSettingsReset();
-      unsubSaveSort();
     };
   }, []);
 
   useEffect(() => {
-    refreshMigrationState()
-      .then(({ retrodeck, save_sort }) => {
-        setMigrationStatus(retrodeck);
-        setSaveSortMigrationStatus(save_sort);
-      })
-      .catch((e) => logError(`Failed to refresh migration state: ${e}`));
-  }, [appId]);
-
-  useEffect(() => {
     let cancelled = false;
 
-    detach(loadData(appId, () => cancelled, romIdRef, platformSlugRef, setState));
+    detach(loadData(appId, () => cancelled, romIdRef, setState));
 
     // Listen for uninstall events to update state (uses ref to avoid stale closure)
     const onUninstall = (e: Event) => {
@@ -520,45 +383,6 @@ export const RomMGameInfoPanel: FC<RomMGameInfoPanelProps> = ({ appId }) => { //
       refreshSlotState(romId, setState);
     };
 
-    const handleBiosChange = async (detail: Extract<RommDataChangedDetail, { type: "bios" }>) => {
-      // bios events fan out to every mounted panel — ignore platforms other
-      // than this panel's own, both to avoid cross-platform BIOS-list bleed
-      // and to skip the wasted checkPlatformBios fetch (#1082). Read via ref
-      // to avoid a stale closure.
-      if (!detail.platform_slug || detail.platform_slug !== platformSlugRef.current) return;
-      const updated = await checkPlatformBios(detail.platform_slug).catch((): BiosStatus => ({ needs_bios: false }));
-      if (cancelled) return;
-      const biosLevel = updated.needs_bios ? (updated.bios_level ?? null) : null;
-      setState((prev) => ({ ...prev, biosStatus: updated.needs_bios ? updated : null, biosLevel }));
-    };
-
-    const handleCoreChange = async (_detail: Extract<RommDataChangedDetail, { type: "core_changed" }>) => {
-      // Re-fetch cached game detail to pick up the new core-aware BIOS status.
-      invalidateCachedGameDetail(appId);
-      const rid = romIdRef.current;
-      if (!rid) return;
-      // Core info comes from its own path (#923), keyed on the rom_id from a ref
-      // to avoid a stale `state` closure. The active core reflects the per-game
-      // DB override (epic #945). BIOS status is re-read from the (now core-free)
-      // cache.
-      const [coreInfo, cached] = await Promise.all([
-        getPlatformCoreInfo(rid).catch((): CoreInfo | null => null),
-        getCachedGameDetail(appId),
-      ]);
-      if (cancelled || !cached.found) return;
-      let biosStatus: BiosStatus | null = null;
-      if (cached.bios_status) {
-        biosStatus = {
-          needs_bios: true,
-          ...cached.bios_status,
-        };
-      }
-      // bios_level comes from the backend cache (compute_bios_level) — thread it
-      // through, never re-derive. null when there's no BIOS need.
-      const biosLevel = biosStatus ? (cached.bios_level ?? null) : null;
-      setState((prev) => ({ ...prev, biosStatus, biosLevel, coreInfo: coreInfo ?? prev.coreInfo }));
-    };
-
     const handleVersionSwitched = async (detail: Extract<RommDataChangedDetail, { type: "version_switched" }>) => {
       // A version switch moved the group's binding to a new rom_id. Re-read the
       // cached detail (invalidated by the picker) so the panel reflects the new
@@ -566,9 +390,9 @@ export const RomMGameInfoPanel: FC<RomMGameInfoPanelProps> = ({ appId }) => { //
       // Languages rows, and cover — while the Steam hero title stays sticky.
       //
       // The per-rom TAB data must follow the new active version too. The SAVES
-      // and ACHIEVEMENTS tabs load once behind slotsLoadedRef / achievementsLoadedRef
-      // and hold per-rom state; without re-keying, they keep showing the previous
-      // version's data. Reset both load-once gates and re-key the tab state off
+      // tab loads once behind slotsLoadedRef and holds per-rom state; without
+      // re-keying, it keeps showing the previous version's data. Reset the
+      // load-once gate and re-key the tab state off
       // the fresh cache (mirroring a fresh mount) so the tab-activation effects
       // re-fetch for the new rom_id — covering both the sitting-on-a-tab case
       // (romId changes → the effect re-runs) and the open-a-tab-later case.
@@ -577,7 +401,6 @@ export const RomMGameInfoPanel: FC<RomMGameInfoPanelProps> = ({ appId }) => { //
       if (cancelled || !cached.found) return;
       const newRomId = cached.rom_id ?? romIdRef.current;
       romIdRef.current = newRomId;
-      achievementsLoadedRef.current = false;
       slotsLoadedRef.current = false;
       const saveStatus = newRomId != null ? saveStatusFromCache(newRomId, cached.save_status) : null;
       setState((prev) => ({
@@ -591,13 +414,9 @@ export const RomMGameInfoPanel: FC<RomMGameInfoPanelProps> = ({ appId }) => { //
         saveSyncEnabled: cached.save_sync_enabled ?? false,
         saveStatus,
         conflicts: cached.save_status?.conflicts ?? [],
-        raId: cached.ra_id ?? null,
         activeSlot: "default",
         availableSlots: [],
         slotsLoading: false,
-        achievements: [],
-        achievementProgress: null,
-        achievementsLoading: false,
       }));
       // Re-fetch slot configuration (slotConfirmed) + slots for the new rom_id,
       // mirroring loadData's save-sync branch — this is the authority that keeps
@@ -640,12 +459,6 @@ export const RomMGameInfoPanel: FC<RomMGameInfoPanelProps> = ({ appId }) => { //
               case "save_sync":
                 await handleSaveSyncChange(detail);
                 break;
-              case "bios":
-                await handleBiosChange(detail);
-                break;
-              case "core_changed":
-                await handleCoreChange(detail);
-                break;
               case "metadata":
                 await handleMetadataChange(detail);
                 break;
@@ -678,87 +491,6 @@ export const RomMGameInfoPanel: FC<RomMGameInfoPanelProps> = ({ appId }) => { //
       globalThis.removeEventListener("romm_tab_switch", onTabSwitch);
     };
   }, [appId]);
-
-  // Lazy-load achievements when the achievements tab becomes active. Mirrors the
-  // saves-slot load's offline handling (#1345 F1): a known-offline fast path (no
-  // ladder hang), a reachability feed, auto-reload on reconnect, and a
-  // mid-flight-teardown guard so a store flip can't wedge the spinner.
-  useEffect(() => {
-    if (state.activeTab !== "achievements" || !state.raId || !state.romId) return;
-    if (achievementsLoadedRef.current) return;
-
-    // Known-offline fast path: the server fetch runs the retry ladder, so on a
-    // known-unreachable server it would hang "Loading achievements…" for tens of
-    // seconds. Skip it — the render shows a short degraded line while any
-    // last-known list stays visible. The ref stays false, so a flip back to
-    // connected re-runs this effect (isOffline dep) and loads.
-    if (isOffline) return;
-    achievementsLoadedRef.current = true;
-
-    const gen = ++loadGenRef.current;
-    const romId: number = state.romId;
-    let cancelled = false;
-    let settled = false;
-
-    async function loadAchievements() {
-      setServerRetryProgress(null);
-      setState((prev) => ({ ...prev, achievementsLoading: true }));
-      try {
-        const [listResult, progressResult] = await Promise.all([getAchievements(romId), getAchievementProgress(romId)]);
-        if (cancelled) return;
-        settled = true;
-        // Conservative reachability feed (#1345): report offline only on a
-        // genuine unreachable verdict from either call. Treat a resolved
-        // non-stale success as a connected signal — this can be cache-served
-        // (get_achievements / get_achievement_progress answer from a warm cache
-        // without touching the server), so it is not a hard reachability proof,
-        // but that is acceptable: the 30s heartbeat is the reachability authority
-        // and self-corrects a wrong "connected". A "no_ra_username" config gap and
-        // a stale-cache fallback are neither verdict — leave the store untouched.
-        const unreachable =
-          listResult.reason === "server_unreachable" || progressResult.reason === "server_unreachable";
-        if (unreachable) {
-          reportServerReachable(false);
-          // Mirror the slot lane's failure reset: release the gate so a reconnect
-          // (or a later re-activation) retries instead of caching the failure.
-          achievementsLoadedRef.current = false;
-        } else if ((listResult.success && !listResult.stale) || (progressResult.success && !progressResult.stale)) {
-          reportServerReachable(true);
-        }
-        setState((prev) => ({
-          ...prev,
-          // Keep the last-known values on a failed load — never clobber an
-          // already-shown list / progress count to empty on a transient blip.
-          achievements: listResult.success ? listResult.achievements : prev.achievements,
-          achievementProgress: progressResult.success ? progressResult : prev.achievementProgress,
-          achievementsLoading: false,
-        }));
-      } catch (e) {
-        detach(debugLog(`Failed to load achievements: ${e}`));
-        if (!cancelled) {
-          settled = true;
-          achievementsLoadedRef.current = false;
-          setState((prev) => ({ ...prev, achievementsLoading: false }));
-        }
-      } finally {
-        // Clear the shared retry frame only if this is still the latest load of
-        // EITHER lane (#1345 F2) — a newer slots/achievements load may own it.
-        if (loadGenRef.current === gen) setServerRetryProgress(null);
-      }
-    }
-
-    detach(loadAchievements());
-    return () => {
-      cancelled = true;
-      // Torn down mid-flight (e.g. a concurrent call flipped the store offline) —
-      // release the gate and drop the spinner so the re-run / reconnect isn't
-      // wedged behind a stuck achievementsLoading (#1345 F1, mirrors the slots lane).
-      if (!settled) {
-        achievementsLoadedRef.current = false;
-        setState((prev) => (prev.achievementsLoading ? { ...prev, achievementsLoading: false } : prev));
-      }
-    };
-  }, [state.activeTab, state.raId, state.romId, isOffline]);
 
   useEffect(() => {
     if (state.activeTab !== "saves" || !state.saveSyncEnabled || !state.romId) return;
@@ -811,8 +543,8 @@ export const RomMGameInfoPanel: FC<RomMGameInfoPanelProps> = ({ appId }) => { //
         }
       } finally {
         // Clear-on-settle in addition to clear-on-start (#1345 F2), but only if
-        // this is still the latest load of EITHER lane — a newer load (slots or
-        // achievements) may already own the shared frame.
+        // this is still the latest load — a newer load may already own the
+        // shared frame.
         if (loadGenRef.current === gen) setServerRetryProgress(null);
       }
     }
@@ -881,11 +613,6 @@ export const RomMGameInfoPanel: FC<RomMGameInfoPanelProps> = ({ appId }) => { //
       { "data-romm": "true" },
       createElement(SettingsResetCard, { backedUpTo: settingsReset.backedUpTo, compact: true }),
     );
-  }
-
-  // --- Pending RetroDECK migration — block the page until resolved ---
-  if (migration.pending) {
-    return createElement("div", { "data-romm": "true" }, createElement(MigrationBlockedCard, {}));
   }
 
   // --- Loading state ---
@@ -1012,178 +739,10 @@ export const RomMGameInfoPanel: FC<RomMGameInfoPanelProps> = ({ appId }) => { //
       ? section("rom-file", "ROM File", infoRow("filename", "Filename", state.installedRom.file_name))
       : null;
 
-  // --- BIOS & Core section (two-column layout when platform needs BIOS) ---
-  let biosSection: ReturnType<typeof createElement> | null = null;
-  if (state.biosStatus) {
-    const bios = state.biosStatus;
-    const localCount = bios.local_count ?? 0;
-    const serverCount = bios.server_count ?? 0;
-    const reqCount = bios.required_count;
-    const reqDone = bios.required_downloaded;
-
-    // Color is sourced from the backend ok/partial/missing classification via the
-    // shared helper — the panel no longer re-derives it. The verbose phrasing
-    // below stays the panel's own concern (per-surface wording).
-    const biosColor = biosColorForLevel(state.biosLevel);
-    let biosLabel: string;
-    if (reqCount != null && reqDone != null) {
-      biosLabel =
-        reqDone >= reqCount
-          ? `All required ready (${localCount}/${serverCount})`
-          : `${reqDone}/${reqCount} required files ready`;
-    } else {
-      biosLabel = bios.all_downloaded
-        ? `All ready (${localCount}/${serverCount})`
-        : `${localCount}/${serverCount} files ready`;
-    }
-
-    // Left column: BIOS status + file list
-    const biosColumn: (ReturnType<typeof createElement> | null)[] = [];
-
-    biosColumn.push(
-      createElement(
-        "div",
-        { key: "bios-title", className: "romm-panel-section-title", style: { marginBottom: "8px" } },
-        "BIOS",
-      ),
-      createElement(
-        "div",
-        {
-          key: "bios-row",
-          className: "romm-panel-status-inline",
-        },
-        createElement("span", {
-          className: "romm-status-dot",
-          style: { backgroundColor: biosColor },
-        }),
-        createElement("span", { className: "romm-panel-value" }, biosLabel),
-      ),
-    );
-
-    // Build core_so -> label lookup from the dedicated core-info path (#923).
-    // Only libretro emulators carry a core_so (a standalone emulator has none),
-    // so filter those in for the per-core BIOS lines.
-    const coreLabelMap: Record<string, string> = {};
-    for (const e of state.coreInfo?.emulators ?? []) {
-      if (e.core_so) coreLabelMap[e.core_so] = e.label;
-    }
-
-    // Filter out unknown files (not in registry) — they're noise from the server
-    const knownFiles = (bios.files ?? []).filter((f) => f.classification !== "unknown");
-    const unknownCount = (bios.files ?? []).length - knownFiles.length;
-
-    if (knownFiles.length > 0) {
-      const fileElements = knownFiles.map((f) => {
-        // Dot color logic:
-        // Green: downloaded
-        // Red: missing + required by current core
-        // Orange: missing + required by another core (not current)
-        // Grey: optional for current core or not used by any known core
-        let dotColor: string;
-        if (f.downloaded) {
-          dotColor = "#5ba32b";
-        } else if (f.used_by_active !== false && f.classification === "required") {
-          dotColor = "#d94126";
-        } else if (!f.used_by_active && f.cores) {
-          const requiredByOther = Object.values(f.cores).some((c) => c.required);
-          dotColor = requiredByOther ? "#d4a72c" : "#8f98a0";
-        } else {
-          dotColor = "#8f98a0";
-        }
-
-        // Build per-core lines
-        const coreLines = f.cores ? buildBiosCoreLines(f.cores, coreLabelMap, state.coreInfo?.active_core) : [];
-
-        return createElement(
-          "div",
-          { key: f.file_name, className: "romm-panel-file-row" },
-          createElement("span", {
-            key: "dot",
-            className: "romm-status-dot",
-            style: { backgroundColor: dotColor },
-          }),
-          createElement("span", { key: "name", className: "romm-panel-file-name" }, f.description || f.file_name),
-          coreLines.length > 0
-            ? createElement(
-                "div",
-                {
-                  key: "cores",
-                  style: {
-                    flexBasis: "100%",
-                    display: "flex",
-                    flexDirection: "column" as const,
-                    gap: "2px",
-                    marginLeft: "18px",
-                  },
-                },
-                ...coreLines,
-              )
-            : null,
-        );
-      });
-
-      // Add unknown count note if any
-      if (unknownCount > 0) {
-        fileElements.push(
-          createElement(
-            "div",
-            {
-              key: "unknown-note",
-              className: "romm-panel-file-row",
-              style: { color: "rgba(255, 255, 255, 0.4)", fontSize: "12px", marginTop: "8px" },
-            },
-            `+ ${unknownCount} other file${unknownCount === 1 ? "" : "s"} on server (not required by any known core)`,
-          ),
-        );
-      }
-
-      biosColumn.push(
-        createElement("div", { key: "bios-file-list", className: "romm-panel-file-list" }, ...fileElements),
-      );
-    }
-
-    // Right column: Core info
-    const coreColumn: (ReturnType<typeof createElement> | null)[] = [];
-
-    coreColumn.push(
-      createElement(
-        "div",
-        { key: "core-title", className: "romm-panel-section-title", style: { marginBottom: "8px" } },
-        "Emulator",
-      ),
-    );
-
-    if (state.coreInfo?.active_core_label) {
-      coreColumn.push(infoRow("core", "Active Core", state.coreInfo.active_core_label));
-    } else {
-      coreColumn.push(infoRow("core", "Active Core", "Default"));
-    }
-
-    biosSection = section(
-      "bios-core",
-      null,
-      createElement(
-        "div",
-        {
-          key: "bios-core-columns",
-          style: { display: "flex", gap: "24px" },
-        },
-        createElement("div", { key: "bios-col", style: { flex: 1, minWidth: 0 } }, ...biosColumn.filter(Boolean)),
-        createElement(
-          "div",
-          { key: "core-col", style: { flexShrink: 0, minWidth: "120px" } },
-          ...coreColumn.filter(Boolean),
-        ),
-      ),
-    );
-  }
-
   // --- Tab bar ---
   const tabs: { id: string; label: string; visible: boolean }[] = [
     { id: "info", label: "GAME INFO", visible: true },
-    { id: "achievements", label: "ACHIEVEMENTS", visible: !!state.raId },
     { id: "saves", label: "SAVES", visible: state.saveSyncEnabled },
-    { id: "bios", label: "BIOS", visible: !!state.biosStatus },
   ];
 
   const tabBar = createElement(
@@ -1217,261 +776,10 @@ export const RomMGameInfoPanel: FC<RomMGameInfoPanelProps> = ({ appId }) => { //
       ),
   );
 
-  // --- Achievements tab content ---
-  let achievementsContent: ReturnType<typeof createElement> | null = null;
-  if (state.activeTab === "achievements") {
-    if (state.achievementsLoading) {
-      // The load pays the backend retry ladder — surface the shared
-      // ConnectingIndicator (with live "(attempt N/M)" progress) instead of
-      // frozen "Loading…" text (#1345).
-      achievementsContent = createElement(ConnectingIndicator, { key: "connecting", label: "Loading achievements" });
-    } else if (state.achievements.length === 0) {
-      // No cached list to fall back on. When the server is known-offline this is
-      // the degraded state for the fast path (no ladder hang); otherwise it's the
-      // genuine "this game has none" case (#1345).
-      achievementsContent = createElement(
-        "div",
-        { className: "romm-panel-muted" },
-        isOffline ? "RomM offline — achievements unavailable." : "No achievements found for this game",
-      );
-    } else {
-      const progress = state.achievementProgress;
-      const earned = progress?.earned ?? 0;
-      const total = progress?.total ?? state.achievements.length;
-
-      // Build map from badge_id -> earned data (id in earned_achievements is badge_id)
-      const earnedMap = new Map<string, EarnedAchievement>();
-      for (const ea of progress?.earned_achievements ?? []) {
-        earnedMap.set(ea.id, ea);
-      }
-
-      // Sort: earned first, then by display_order
-      const sorted = [...state.achievements].sort((a, b) => {
-        const aEarned = earnedMap.has(a.badge_id) ? 0 : 1;
-        const bEarned = earnedMap.has(b.badge_id) ? 0 : 1;
-        if (aEarned !== bEarned) return aEarned - bEarned;
-        return (a.display_order || 0) - (b.display_order || 0);
-      });
-
-      const earnedList = sorted.filter((a) => earnedMap.has(a.badge_id));
-      const lockedList = sorted.filter((a) => !earnedMap.has(a.badge_id));
-
-      const formatCheevoDate = (dateStr: string) => {
-        // "2025-02-14 15:45:38" -> "2025-02-14 15:45"
-        return dateStr.replace(/:\d{2}$/, "");
-      };
-
-      // Generate unique sparkle positions per achievement using a simple seed hash
-      const makeHcSparkles = (seed: number) => {
-        // Simple deterministic pseudo-random from seed
-        const rng = (i: number) => {
-          const x = Math.sin(seed * 9301 + i * 4973) * 49297;
-          return x - Math.floor(x);
-        };
-        // 4 sparkles, positions along edges/corners with some spread outside
-        return Array.from({ length: 4 }, (_, i) => ({
-          top: `${Math.round(rng(i * 3) * 100)}%`,
-          left: `${Math.round(rng(i * 3 + 1) * 100)}%`,
-          dur: 2.2 + rng(i * 3 + 2) * 1.8, // 2.2–4.0s
-          delay: rng(i * 7 + 5) * 2, // 0–2.0s
-        }));
-      };
-
-      const renderCheevoRow = (a: Achievement) => {
-        const earnedData = earnedMap.get(a.badge_id);
-        const isEarned = !!earnedData;
-        const isHardcore = !!earnedData?.date_hardcore;
-
-        const rowClasses = ["romm-cheevo-row", isEarned ? "romm-cheevo-row-earned" : ""].filter(Boolean).join(" ");
-
-        const imgClasses = ["romm-cheevo-badge-img", isHardcore ? "romm-cheevo-badge-img-hc" : ""]
-          .filter(Boolean)
-          .join(" ");
-
-        // Date column for earned achievements — show both normal and HC dates
-        const dateChildren: ReturnType<typeof createElement>[] = [];
-        if (earnedData?.date) {
-          dateChildren.push(
-            createElement("span", { key: "date", className: "romm-cheevo-date" }, formatCheevoDate(earnedData.date)),
-          );
-        }
-        if (isHardcore && earnedData.date_hardcore) {
-          dateChildren.push(
-            createElement(
-              "span",
-              {
-                key: "hc-row",
-                style: { display: "inline-flex", alignItems: "center", gap: "4px" },
-              },
-              createElement("span", { className: "romm-cheevo-hc-badge" }, "HC"),
-              createElement("span", { className: "romm-cheevo-date" }, formatCheevoDate(earnedData.date_hardcore)),
-            ),
-          );
-        }
-
-        // Badge image — wrapped with sparkle container for HC achievements
-        const imgEl = createElement("img", {
-          className: imgClasses,
-          src: isEarned ? a.badge_url : a.badge_url_lock || a.badge_url,
-          style: isEarned ? {} : { filter: "grayscale(0.7) opacity(0.6)" },
-        });
-
-        const badgeElement = isHardcore
-          ? createElement(
-              "div",
-              { className: "romm-cheevo-img-wrap" },
-              imgEl,
-              createElement(
-                "span",
-                { className: "romm-cheevo-img-sparkles" },
-                ...makeHcSparkles(a.ra_id).map((sp) =>
-                  createElement("span", {
-                    key: `hc-sp-${sp.top}-${sp.left}`,
-                    className: "romm-cheevo-img-sparkle-dot",
-                    style: {
-                      "--romm-sparkle-top": sp.top,
-                      "--romm-sparkle-left": sp.left,
-                      "--romm-sparkle-delay": `${sp.delay.toFixed(1)}s`,
-                      "--romm-sparkle-dur": `${sp.dur.toFixed(1)}s`,
-                    } satisfies CSSPropertiesWithVars,
-                  }),
-                ),
-              ),
-            )
-          : imgEl;
-
-        return createElement(
-          DialogButton,
-          {
-            key: `cheevo-${a.ra_id}`,
-            className: rowClasses,
-            noFocusRing: false,
-            onFocus: scrollFocusedToCenter,
-            style: {
-              background: "transparent",
-              border: "none",
-              padding: 0,
-              textAlign: "left" as const,
-              cursor: "default",
-              display: "flex",
-              alignItems: "center",
-              gap: "12px",
-            },
-          },
-          badgeElement,
-          createElement(
-            "div",
-            { className: "romm-cheevo-details" },
-            createElement("div", { className: "romm-cheevo-title" }, a.title),
-            createElement("div", { className: "romm-cheevo-desc" }, a.description),
-            a.num_awarded > 0
-              ? createElement("div", { className: "romm-cheevo-rarity" }, `${a.num_awarded} players earned this`)
-              : null,
-          ),
-          dateChildren.length > 0 ? createElement("div", { className: "romm-cheevo-dates" }, ...dateChildren) : null,
-          createElement(
-            "div",
-            {
-              className: `romm-cheevo-points ${isEarned ? "" : "romm-cheevo-points-locked"}`,
-            },
-            `${a.points} pts`,
-          ),
-        );
-      };
-
-      const cheevoChildren: ReturnType<typeof createElement>[] = [];
-
-      // Summary bar
-      cheevoChildren.push(
-        createElement(
-          "div",
-          { key: "summary", className: "romm-cheevo-summary" },
-          createElement("span", { className: "romm-cheevo-summary-text" }, `${earned} / ${total} Achievements`),
-          progress?.earned_hardcore
-            ? createElement("span", { className: "romm-cheevo-summary-sub" }, `${progress.earned_hardcore} hardcore`)
-            : null,
-        ),
-      );
-
-      // Progress bar
-      const pct = total > 0 ? (earned / total) * 100 : 0;
-      cheevoChildren.push(
-        createElement(
-          "div",
-          { key: "progress-bar", className: "romm-cheevo-progress-bar" },
-          createElement("div", {
-            className: "romm-cheevo-progress-fill",
-            style: { width: `${pct}%` },
-          }),
-        ),
-      );
-
-      // Earned section
-      if (earnedList.length > 0) {
-        cheevoChildren.push(
-          createElement(
-            "div",
-            { key: "earned-title", className: "romm-cheevo-section-title" },
-            `Earned (${earnedList.length})`,
-          ),
-        );
-        earnedList.forEach((a) => cheevoChildren.push(renderCheevoRow(a)));
-      }
-
-      // Locked section
-      if (lockedList.length > 0) {
-        cheevoChildren.push(
-          createElement(
-            "div",
-            { key: "locked-title", className: "romm-cheevo-section-title" },
-            `Locked (${lockedList.length})`,
-          ),
-        );
-        lockedList.forEach((a) => cheevoChildren.push(renderCheevoRow(a)));
-      }
-
-      achievementsContent = createElement("div", { className: "romm-cheevo-list" }, ...cheevoChildren);
-    }
-  }
-
-  const saveSortWarning = saveSortPending
-    ? createElement(
-        "div",
-        {
-          key: "save-sort-warning",
-          style: {
-            padding: "8px 12px",
-            marginBottom: "12px",
-            backgroundColor: "rgba(212, 167, 44, 0.15)",
-            borderLeft: "3px solid #d4a72c",
-            borderRadius: "4px",
-          },
-        },
-        createElement(
-          "div",
-          {
-            style: { fontSize: "13px", fontWeight: "bold", color: "#d4a72c", marginBottom: "4px" },
-          },
-          "\u26A0\uFE0F RetroArch save sorting changed",
-        ),
-        createElement(
-          "div",
-          {
-            style: { fontSize: "12px", color: "rgba(255, 255, 255, 0.7)" },
-          },
-          "Save file paths may be incorrect. Go to Settings to migrate.",
-        ),
-      )
-    : null;
-
   // --- Determine active tab content ---
   let activeTabContent: ReturnType<typeof createElement> | null = null;
   if (state.activeTab === "info") {
     activeTabContent = createElement("div", { key: "tab-info" }, gameInfoSection, romFileSection);
-  } else if (state.activeTab === "achievements") {
-    // Don't wrap in section() — that creates ONE giant focusable element.
-    // Individual rows are now DialogButtons, enabling focus-driven scrolling.
-    activeTabContent = achievementsContent;
   } else if (state.activeTab === "saves") {
     if (state.saveSyncEnabled && !state.slotConfirmed) {
       activeTabContent = createElement(SlotSetupWizard, {
@@ -1510,14 +818,11 @@ export const RomMGameInfoPanel: FC<RomMGameInfoPanelProps> = ({ appId }) => { //
         },
       });
     }
-  } else if (state.activeTab === "bios") {
-    activeTabContent = biosSection;
   }
 
   return createElement(
     "div",
     { "data-romm": "true" },
-    saveSortWarning,
     tabBar,
     createElement(
       Focusable,
