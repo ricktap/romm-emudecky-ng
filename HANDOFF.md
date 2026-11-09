@@ -29,8 +29,8 @@ Rewrite steps (GitHub milestone **0.40.0**, issues #8–#14; the Python code + i
 | 1a #8 shim + socket protocol (`main.py`, `docs/architecture/backend-protocol.md`) | done, released in v0.33.0 (on `main`) |
 | 1b #9 Rust foundation (protocol server, DB actor, settings + connection) | merged into `rust` |
 | 2 #10 download queue, adoption, Switch launch | merged into `rust` |
-| 3a #11 part 1: removals (`REMOVED_TILL_0_90_0.md`) | **PR #21 open** into `rust` (branch `rust-3a-sync`); CI tests green; release dry-run was running |
-| 3a part 2: port library sync, shortcuts, collections | **not started** (scope below) |
+| 3a #11 part 1: removals (`REMOVED_TILL_0_90_0.md`) | merged into `rust` (PR #21); CI and the release dry-run are green |
+| 3a part 2: port library sync, shortcuts, collections | **next up — not started** (scope below). Work on the `rust` branch: create `rust-3a-sync-port` from it, one PR back into `rust` |
 | 3b: remaining callables (game page, SGDB, playtime, …) | not started |
 | 4 #12 firmware, 5 #13 save sync, 6 #14 delete Python | not started |
 
