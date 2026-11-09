@@ -10,11 +10,11 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use crate::domain::disc_selection::{enumerate_size_ranked, resolve_size_ranked_path};
-use crate::domain::emulator_table::{EmulatorInvocation, StaleLayer, TABLE_KIND, resolve_by_precedence, table_options};
+use crate::domain::disc_selection::{Disc, enumerate_size_ranked, resolve_size_ranked_path};
+use crate::domain::emulator_table::{EmulatorInvocation, EmulatorOption, StaleLayer, TABLE_KIND, resolve_by_precedence, table_options};
 use crate::domain::launch::{LaunchResolution, build_launch_options, resolve_invocation};
 use crate::domain::rom_install::RomInstall;
-use crate::services::ports::{DownloadFiles, EmulatorLocator, LibraryRepo, SettingsStore, SystemResolver};
+use crate::services::ports::{DownloadFiles, EmulatorLocator, LaunchSnapshot, LibraryRepo, RomRow, SettingsStore, SystemResolver};
 use crate::util::path_safety::basename;
 
 /// Everything [`LaunchService`] depends on.
@@ -65,12 +65,27 @@ impl LaunchService {
                 return None;
             }
         };
-        let system = self.systems.resolve_system(&slug, None);
-        let options = table_options(&system, &self.locator.installed(&system));
-        let platform_label = self
-            .settings
-            .get("platform_cores")
-            .and_then(|m| m.get(&slug).and_then(Value::as_str).map(str::to_string));
+        self.active_emulator(&slug, game_override.as_deref(), rom_id)
+    }
+
+    pub fn emulator_options(&self, slug: &str) -> Vec<EmulatorOption> {
+        let system = self.systems.resolve_system(slug, None);
+        table_options(&system, &self.locator.installed(&system))
+    }
+
+    pub fn platform_label(&self, slug: &str) -> Option<String> {
+        self.settings.get("platform_cores").and_then(|m| m.get(slug).and_then(Value::as_str).map(str::to_string))
+    }
+
+    /// Resolve from a snapshot so a re-bake uses the same pins as its read/write.
+    pub fn active_emulator_for_row(&self, rom: &RomRow) -> Option<EmulatorInvocation> {
+        self.active_emulator(&rom.platform_slug, rom.emulator_override.as_deref(), rom.rom_id)
+    }
+
+    fn active_emulator(&self, slug: &str, game_override: Option<&str>, rom_id: i64) -> Option<EmulatorInvocation> {
+        let system = self.systems.resolve_system(slug, None);
+        let options = self.emulator_options(slug);
+        let platform_label = self.platform_label(slug);
         let (invocation, stale) = resolve_by_precedence(&options, game_override.as_deref(), platform_label.as_deref());
         for (layer, label) in stale {
             match layer {
@@ -90,14 +105,7 @@ impl LaunchService {
     /// The path to bake for `install`: for a table system's folder install,
     /// the persisted pick or the largest launch file; otherwise `file_path`.
     pub async fn resolve_bake_path(&self, install: &RomInstall, selected_disc: Option<&str>) -> String {
-        let Some(extensions) = crate::domain::emulator_table::launch_file_extensions(Some(&install.system)) else {
-            return install.file_path.clone();
-        };
-        let Some(folder) = install.rom_dir.as_deref() else {
-            return install.file_path.clone();
-        };
-        let files = self.files.scan_files_with_sizes(folder).await;
-        let candidates = enumerate_size_ranked(&files, extensions);
+        let candidates = self.enumerate_launch_files(install).await;
         let (path, stale) = resolve_size_ranked_path(&install.file_path, &candidates, selected_disc);
         if stale {
             tracing::warn!(
@@ -108,6 +116,18 @@ impl LaunchService {
             );
         }
         path
+    }
+
+    /// The picker and every re-bake share exactly the same enumeration.
+    pub async fn enumerate_launch_files(&self, install: &RomInstall) -> Vec<Disc> {
+        let Some(extensions) = crate::domain::emulator_table::launch_file_extensions(Some(&install.system)) else {
+            return Vec::new();
+        };
+        let Some(folder) = install.rom_dir.as_deref() else {
+            return Vec::new();
+        };
+        let files = self.files.scan_files_with_sizes(folder).await;
+        enumerate_size_ranked(&files, extensions)
     }
 
     /// Resolve `emulator` into a launch-command prefix, re-probing a table
@@ -124,7 +144,11 @@ impl LaunchService {
 
     /// The full `launch_options` for `emulator` launching `bake_path`.
     pub fn launch_options(&self, emulator: Option<&EmulatorInvocation>, bake_path: &str) -> String {
-        build_launch_options(&self.resolve_launch(emulator).launch_options, bake_path)
+        let resolution = self.resolve_launch(emulator);
+        if resolution.status != crate::domain::launch::RESOLUTION_OK {
+            return String::new();
+        }
+        build_launch_options(&resolution.launch_options, bake_path)
     }
 
     /// `{app_id, launch_options}` of one installed and shortcut-bound ROM,
@@ -132,9 +156,15 @@ impl LaunchService {
     pub async fn relaunch_item_for_rom(&self, rom_id: i64) -> Option<Value> {
         let install = self.library.install(rom_id).await.ok().flatten()?;
         let rom = self.library.rom(rom_id).await.ok().flatten()?;
-        let app_id = rom.shortcut_app_id?;
-        let emulator = self.active_emulator_for_rom(rom_id, None).await;
-        let bake = self.resolve_bake_path(&install, rom.selected_disc.as_deref()).await;
+        self.relaunch_item_for_snapshot(&LaunchSnapshot { rom, install: Some(install) }).await
+    }
+
+    /// Shared by preference changes, startup reconciliation and download/adoption.
+    pub async fn relaunch_item_for_snapshot(&self, snapshot: &LaunchSnapshot) -> Option<Value> {
+        let install = snapshot.install.as_ref()?;
+        let app_id = snapshot.rom.shortcut_app_id?;
+        let emulator = self.active_emulator_for_row(&snapshot.rom);
+        let bake = self.resolve_bake_path(install, snapshot.rom.selected_disc.as_deref()).await;
         Some(json!({"app_id": app_id, "launch_options": self.launch_options(emulator.as_ref(), &bake)}))
     }
 }

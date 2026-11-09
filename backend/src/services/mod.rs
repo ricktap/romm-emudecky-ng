@@ -4,6 +4,7 @@ pub mod adoption;
 pub mod connection;
 pub mod downloads;
 pub mod launch;
+pub mod launch_choices;
 pub mod library;
 pub mod library_state;
 pub mod ports;

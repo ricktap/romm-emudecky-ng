@@ -36,6 +36,8 @@ const CALLABLE_NAMES_JSON: &str = include_str!("../callables.json");
 /// Callables this backend implements; every other listed name answers
 /// "not implemented in the Rust backend yet".
 pub const PORTED_CALLABLES: &[&str] = &[
+    "get_platform_core_info", "set_game_core", "clear_game_core", "get_disc_selection", "select_disc",
+    "get_rom_relaunch_options", "get_installed_relaunch_options",
     "get_artwork_base64",
     "remove_all_shortcuts", "remove_platform_shortcuts", "report_removal_results", "reconcile_shortcuts", "save_shortcut_icon",
     "sync_preview", "sync_apply_delta", "sync_cancel_preview", "start_sync", "cancel_sync", "get_sync_status", "sync_heartbeat", "report_unit_results",
@@ -109,6 +111,7 @@ pub struct Backend {
     pub settings_service: Arc<SettingsService>,
     pub connection_service: Arc<ConnectionService>,
     pub launch: Arc<LaunchService>,
+    pub launch_choices: Arc<crate::services::launch_choices::LaunchChoicesService>,
     pub downloads: Arc<DownloadService>,
     pub library: Arc<LibraryService>,
     pub sync: Arc<crate::services::sync_orchestrator::SyncOrchestrator>,
@@ -195,6 +198,9 @@ impl Backend {
             files: files.clone(),
             paths: paths.clone(),
         }));
+        let launch_choices = Arc::new(crate::services::launch_choices::LaunchChoicesService::new(
+            crate::services::launch_choices::LaunchChoicesServiceConfig { preferences: library.clone(), launch: launch.clone() }
+        ));
         let downloads = DownloadService::new(DownloadServiceConfig {
             romm: romm_api.clone(),
             files: files.clone(),
@@ -246,6 +252,7 @@ impl Backend {
             settings_service,
             connection_service,
             launch,
+            launch_choices,
             downloads,
             library: library_service,
             sync,
@@ -272,7 +279,18 @@ impl Backend {
         let l = self.library.clone();
         let sync = self.sync.clone();
         let shortcuts = self.shortcuts.clone();
+        let choices = self.launch_choices.clone();
         let h: Handler = match name {
+            "get_platform_core_info" => bind(name,1,1,choices,|s,a|async move {s.get_platform_core_info(rom_id_arg(&a[0])?).await.map_err(err)}),
+            "set_game_core" => bind(name,2,2,choices,|s,a|async move {Ok(s.set_game_core(rom_id_arg(&a[0])?, &req_str(&a,1,"label")?).await.unwrap_or_else(|e|unknown_failure(&e)))}),
+            "clear_game_core" => bind(name,1,1,choices,|s,a|async move {Ok(s.clear_game_core(rom_id_arg(&a[0])?).await.unwrap_or_else(|e|unknown_failure(&e)))}),
+            "get_disc_selection" => bind(name,1,1,choices,|s,a|async move {s.get_disc_selection(rom_id_arg(&a[0])?).await.map_err(err)}),
+            "select_disc" => bind(name,2,2,choices,|s,a|async move {
+                let filename = if a[1].is_null() { None } else { Some(req_str(&a,1,"filename")?) };
+                Ok(s.select_disc(rom_id_arg(&a[0])?, filename.as_deref()).await.unwrap_or_else(|e|unknown_failure(&e)))
+            }),
+            "get_rom_relaunch_options" => bind(name,1,1,choices,|s,a|async move {s.get_rom_relaunch_options(rom_id_arg(&a[0])?).await.map_err(err)}),
+            "get_installed_relaunch_options" => bind(name,0,0,choices,|s,_|async move {s.get_installed_relaunch_options().await.map_err(err)}),
             "remove_all_shortcuts" => bind(name,0,0,shortcuts,|s,_|async move {Ok(s.removal_set(None).await.unwrap_or_else(|e|unknown_failure(&e)))}),
             "remove_platform_shortcuts" => bind(name,1,1,shortcuts,|s,a|async move {Ok(s.removal_set(Some(a[0].as_str().ok_or_else(||"platform_slug must be a string".to_string())?)).await.unwrap_or_else(|e|unknown_failure(&e)))}),
             "report_removal_results" => bind(name,1,1,shortcuts,|s,a|async move {Ok(s.report(&a[0]).await.unwrap_or_else(|e|unknown_failure(&e)))}),

@@ -173,6 +173,16 @@ pub fn label_to_invocation(options: &[EmulatorOption], label: &str) -> Option<Em
         .and_then(|o| option_to_invocation(Some(o)))
 }
 
+/// Existing frontend picker contract: table emulators appear as standalone;
+/// unavailable entries remain visible but disabled with their reason.
+pub fn options_to_payload(options: &[EmulatorOption]) -> serde_json::Value {
+    let default = options.iter().position(|o| o.status == "bakeable");
+    serde_json::Value::Array(options.iter().enumerate().map(|(i, o)| serde_json::json!({
+        "label": o.label, "kind": "standalone", "core_so": null,
+        "is_default": Some(i) == default, "bakeable": o.status == "bakeable", "reason": o.reason,
+    })).collect())
+}
+
 /// Which precedence layer a pin came from (for the stale-label warning).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StaleLayer {
