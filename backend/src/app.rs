@@ -16,6 +16,7 @@ use crate::adapters::plugin_metadata::read_plugin_version;
 use crate::adapters::repositories::{SqliteDownloadJobs, SqliteKvConfig, SqliteLibrary, SqliteRomRegions};
 use crate::adapters::romm::api::RommApi;
 use crate::adapters::romm::http::{RetryListener, RetryPolicy, RommHttp};
+use crate::domain::errors::unknown_failure;
 use crate::domain::settings::{RESET_NOTICE_KEY, fold_legacy_save_sync_settings, migrate_settings, stored_version};
 use crate::domain::version::MIN_REQUIRED_VERSION;
 use crate::rpc::server::{EventHub, Handler, Registry};
@@ -23,6 +24,7 @@ use crate::services::adoption::{InstallAdoptionService, InstallAdoptionServiceCo
 use crate::services::connection::{ConnectionService, ConnectionServiceConfig};
 use crate::services::downloads::{DownloadService, DownloadServiceConfig};
 use crate::services::launch::{LaunchService, LaunchServiceConfig};
+use crate::services::library::{LibraryService, LibraryServiceConfig};
 use crate::services::ports::{EventSink, SettingsPersister, SettingsStore};
 use crate::services::rom_removal::{RomRemovalService, RomRemovalServiceConfig};
 use crate::services::settings::{SettingsService, SettingsServiceConfig};
@@ -34,6 +36,9 @@ const CALLABLE_NAMES_JSON: &str = include_str!("../callables.json");
 /// Callables this backend implements; every other listed name answers
 /// "not implemented in the Rust backend yet".
 pub const PORTED_CALLABLES: &[&str] = &[
+    "get_artwork_base64",
+    "remove_all_shortcuts", "remove_platform_shortcuts", "report_removal_results", "reconcile_shortcuts", "save_shortcut_icon",
+    "sync_preview", "sync_apply_delta", "sync_cancel_preview", "start_sync", "cancel_sync", "get_sync_status", "sync_heartbeat", "report_unit_results",
     "cancel_download",
     "connect_with_credentials",
     "connect_with_pairing_code",
@@ -42,19 +47,29 @@ pub const PORTED_CALLABLES: &[&str] = &[
     "dismiss_settings_reset_notice",
     "frontend_log",
     "get_download_queue",
+    "get_app_id_rom_id_map",
+    "get_collections",
     "get_installed_rom",
     "get_known_regions",
+    "get_platforms",
+    "get_registry_platforms",
     "get_settings",
     "get_settings_reset_notice",
+    "get_sync_stats",
     "get_whitelist_settings",
     "pause_download",
     "probe_reachability",
+    "clear_sync_cache",
     "resume_download",
     "save_collection_platform_groups",
+    "save_collection_sync",
     "save_log_level",
+    "save_platform_sync",
     "save_preferred_region",
     "save_server_url",
     "save_steam_input_setting",
+    "set_all_collections_sync",
+    "set_all_platforms_sync",
     "sign_out",
     "start_download",
     "test_connection",
@@ -95,6 +110,9 @@ pub struct Backend {
     pub connection_service: Arc<ConnectionService>,
     pub launch: Arc<LaunchService>,
     pub downloads: Arc<DownloadService>,
+    pub library: Arc<LibraryService>,
+    pub sync: Arc<crate::services::sync_orchestrator::SyncOrchestrator>,
+    pub shortcuts: Arc<crate::services::shortcut_removal::ShortcutRemovalService>,
     /// Adoption of ROM files already on disk. Library sync and the game page
     /// (rewrite step 3) call it; no callable reaches it yet.
     pub adoption: Arc<InstallAdoptionService>,
@@ -105,6 +123,13 @@ impl Backend {
     /// plugin stays inert) when the database cannot be opened or migrated or
     /// the settings file cannot be read or written.
     pub async fn start(env: BackendEnv, hub: Arc<EventHub>) -> anyhow::Result<Self> {
+        let runtime=Arc::new(crate::adapters::emudeck::SyncRuntime::default());
+        Self::start_with_sync_runtime(env,hub,Arc::new(SystemClock::default()),runtime.clone(),runtime).await
+    }
+
+    /// Alternate runtime ports let lifecycle tests advance time without sleeping
+    /// through production heartbeat/preview TTLs. All persistence and HTTP are real.
+    pub async fn start_with_sync_runtime(env:BackendEnv,hub:Arc<EventHub>,clock:Arc<dyn crate::services::ports::Clock>,ids:Arc<dyn crate::services::ports::SyncIds>,sleeper:Arc<dyn crate::services::ports::SyncSleeper>)->anyhow::Result<Self> {
         let (db, version) = Db::open(&env.runtime_dir.join(DB_FILENAME))
             .await
             .context("SQLite schema migration failed; plugin cannot start")?;
@@ -131,6 +156,7 @@ impl Backend {
         let romm_api = Arc::new(RommApi::new(http));
         let events: Arc<dyn EventSink> = Arc::new(HubEvents(hub.clone()));
 
+        let kv_config = Arc::new(SqliteKvConfig::new(db.clone()));
         let settings_service = Arc::new(SettingsService::new(SettingsServiceConfig {
             settings: settings.clone(),
             persister: persister.clone(),
@@ -139,17 +165,24 @@ impl Backend {
         let connection_service = Arc::new(ConnectionService::new(ConnectionServiceConfig {
             settings: settings.clone(),
             romm_api: romm_api.clone(),
-            persister,
-            kv_config: Arc::new(SqliteKvConfig::new(db.clone())),
+            persister: persister.clone(),
+            kv_config: kv_config.clone(),
             min_required_version: MIN_REQUIRED_VERSION,
         }));
 
-        let clock = Arc::new(SystemClock::default());
         let files = Arc::new(LocalFiles);
         let paths = Arc::new(EmuDeckSettingsPaths::new(&env.user_home));
         let systems = Arc::new(PlatformMap::load(&env.plugin_dir));
         let library = Arc::new(SqliteLibrary::new(db.clone()));
-        let jobs = Arc::new(SqliteDownloadJobs::new(db));
+        let library_service = Arc::new(LibraryService::new(LibraryServiceConfig {
+            romm: romm_api.clone(),
+            settings: settings.clone(),
+            persister: persister.clone(),
+            library: library.clone(),
+            kv_config: kv_config.clone(),
+            clock: clock.clone(),
+        }));
+        let jobs = Arc::new(SqliteDownloadJobs::new(db.clone()));
         let launch = Arc::new(LaunchService::new(LaunchServiceConfig {
             library: library.clone(),
             locator: Arc::new(HomeEmulatorLocator::new(&env.user_home)),
@@ -176,19 +209,35 @@ impl Backend {
         });
         let active = downloads.clone();
         let adoption = InstallAdoptionService::new(InstallAdoptionServiceConfig {
-            romm: romm_api,
+            romm: romm_api.clone(),
             files,
             systems,
             paths,
             launch: launch.clone(),
-            library,
+            library: library.clone(),
             jobs,
             active_downloads: Arc::new(move || active.active_download_rom_ids()),
-            events,
-            clock,
+            events: events.clone(),
+            clock: clock.clone(),
+        });
+
+        let sync_state = Arc::new(crate::services::library_state::LibraryRunState::default());
+        let sync_repo = Arc::new(crate::adapters::sync_library::SqliteSyncLibrary::new(db.clone()));
+        let assets = Arc::new(crate::adapters::steam_assets::LocalSteamAssets::new(env.user_home.clone(),env.runtime_dir.join("covers")));
+        let artwork = Arc::new(crate::services::artwork::ArtworkService {api:romm_api.clone(),assets:assets.clone(),registry:sync_repo.clone()});
+        if let Err(error)=artwork.prune().await {tracing::warn!("Artwork startup cleanup failed: {error}");}
+        let shortcuts = Arc::new(crate::services::shortcut_removal::ShortcutRemovalService {registry:sync_repo.clone(),bindings:sync_repo.clone(),assets:assets.clone(),kv:kv_config});
+        let reporter = Arc::new(crate::services::sync_reporter::SyncReporter::with_assets(sync_repo.clone(),assets,settings.clone()));
+        let sync = crate::services::sync_orchestrator::SyncOrchestrator::new(crate::services::sync_orchestrator::SyncOrchestratorConfig {
+            fetcher: Arc::new(crate::services::library_fetcher::LibraryFetcher {metadata:romm_api.clone(),pages:romm_api.clone(),settings:settings.clone(),state:sync_state.clone()}),
+            state:sync_state,reporter,library:library.clone(),registry:sync_repo.clone(),baseline:library,
+            delta:romm_api,finalizer:sync_repo,runs:Arc::new(crate::adapters::sync_runs::SqliteSyncRuns::new(db)),
+            launch:launch.clone(),adoption:adoption.clone(),events,clock,ids,sleeper,
+            settings:settings.clone(),plugin_dir:env.plugin_dir.to_string_lossy().into_owned(),artwork,
         });
 
         connection_service.migrate_legacy_credentials().await;
+        library_service.heal_interrupted_runs().await?;
         // Restore the durable download queue: keep job partials, drop orphan
         // tmp files, and auto-resume interrupted jobs in the background.
         downloads.reconcile_persisted_downloads().await;
@@ -198,6 +247,9 @@ impl Backend {
             connection_service,
             launch,
             downloads,
+            library: library_service,
+            sync,
+            shortcuts,
             adoption,
         })
     }
@@ -217,7 +269,30 @@ impl Backend {
         let s = self.settings_service.clone();
         let c = self.connection_service.clone();
         let d = self.downloads.clone();
+        let l = self.library.clone();
+        let sync = self.sync.clone();
+        let shortcuts = self.shortcuts.clone();
         let h: Handler = match name {
+            "remove_all_shortcuts" => bind(name,0,0,shortcuts,|s,_|async move {Ok(s.removal_set(None).await.unwrap_or_else(|e|unknown_failure(&e)))}),
+            "remove_platform_shortcuts" => bind(name,1,1,shortcuts,|s,a|async move {Ok(s.removal_set(Some(a[0].as_str().ok_or_else(||"platform_slug must be a string".to_string())?)).await.unwrap_or_else(|e|unknown_failure(&e)))}),
+            "report_removal_results" => bind(name,1,1,shortcuts,|s,a|async move {Ok(s.report(&a[0]).await.unwrap_or_else(|e|unknown_failure(&e)))}),
+            "reconcile_shortcuts" => bind(name,1,1,shortcuts,|s,a|async move {Ok(s.reconcile(&a[0]).await.unwrap_or_else(|e|unknown_failure(&e)))}),
+            "save_shortcut_icon" => bind(name,2,2,shortcuts,|s,a|async move {Ok(s.save_icon(rom_id_arg(&a[0])?,a[1].as_str().ok_or_else(||"icon_base64 must be a string".to_string())?).await)}),
+            "get_artwork_base64" => bind(name,1,1,sync,|s,a|async move{Ok(s.artwork_base64(rom_id_arg(&a[0])?).await)}),
+            "sync_preview" => bind(name,0,0,sync,|s,_|async move{Ok(s.preview().await)}),
+            "sync_apply_delta" => bind(name,1,1,sync,|s,a|async move{Ok(s.apply_preview(a[0].as_str().unwrap_or("")).await)}),
+            "sync_cancel_preview" => bind(name,0,0,sync,|s,_|async move{Ok(s.cancel_preview().await)}),
+            "start_sync" => bind(name,0,0,sync,|s,_|async move {Ok(s.start().await)}),
+            "cancel_sync" => bind(name,0,1,sync,|s,a|async move {
+                let id=a.first().filter(|v|crate::domain::settings::truthy(v)).map(|v|v.as_str().map(str::to_string).unwrap_or_else(||v.to_string()));
+                Ok(s.cancel(id.as_deref()))
+            }),
+            "get_sync_status" => bind(name,0,0,sync,|s,_|async move {Ok(s.get_sync_status())}),
+            "sync_heartbeat" => bind(name,0,0,sync,|s,_|async move {Ok(s.heartbeat())}),
+            "report_unit_results" => bind(name,3,3,sync,|s,a|async move {
+                let run=a[1].as_str().unwrap_or("");let id=a[2].as_str().map(str::to_string).unwrap_or_else(||a[2].to_string());
+                Ok(s.report(&a[0],run,&id).await.unwrap_or_else(|e|unknown_failure(&e)))
+            }),
             "start_download" => bind(name, 1, 1, d, |d, a| async move {
                 let id = rom_id_arg(&a[0])?;
                 Ok(d.start_download(id).await)
@@ -226,13 +301,55 @@ impl Backend {
                 let id = rom_id_arg(&a[0])?;
                 Ok(d.resume_download(id).await)
             }),
-            "cancel_download" => bind(name, 1, 1, d, |d, a| async move { Ok(d.cancel_download(rom_id_arg(&a[0])?)) }),
-            "pause_download" => bind(name, 1, 1, d, |d, a| async move { Ok(d.pause_download(rom_id_arg(&a[0])?)) }),
+            "cancel_download" => bind(name, 1, 1, d, |d, a| async move {
+                Ok(d.cancel_download(rom_id_arg(&a[0])?))
+            }),
+            "pause_download" => bind(
+                name,
+                1,
+                1,
+                d,
+                |d, a| async move { Ok(d.pause_download(rom_id_arg(&a[0])?)) },
+            ),
             "get_download_queue" => bind(name, 0, 0, d, |d, _| async move { Ok(d.get_download_queue()) }),
             "get_installed_rom" => bind(name, 1, 1, d, |d, a| async move {
                 let id = rom_id_arg(&a[0])?;
                 d.get_installed_rom(id).await.map_err(err)
             }),
+            "get_platforms" => bind(name, 0, 0, l, |l, _| async move { Ok(l.get_platforms().await) }),
+            "save_platform_sync" => bind(name, 2, 2, l, |l, a| async move {
+                Ok(l.save_platform_sync(&a[0], &a[1]).await.unwrap_or_else(|e| unknown_failure(&e)))
+            }),
+            "set_all_platforms_sync" => bind(name, 1, 1, l, |l, a| async move {
+                Ok(l.set_all_platforms_sync(&a[0]).await)
+            }),
+            "get_collections" => bind(name, 0, 0, l, |l, _| async move { Ok(l.get_collections().await) }),
+            "save_collection_sync" => bind(name, 3, 3, l, |l, a| async move {
+                Ok(l.save_collection_sync(&a[0], &a[1], &a[2]).await.unwrap_or_else(|e| unknown_failure(&e)))
+            }),
+            "set_all_collections_sync" => bind(name, 1, 2, l, |l, a| async move {
+                Ok(l.set_all_collections_sync(&a[0], a.get(1)).await)
+            }),
+            "get_registry_platforms" => bind(name, 0, 0, l, |l, _| async move {
+                Ok(l.get_registry_platforms().await.unwrap_or_else(|e| unknown_failure(&e)))
+            }),
+            "get_sync_stats" => bind(
+                name,
+                0,
+                0,
+                l,
+                |l, _| async move { Ok(l.get_sync_stats().await.unwrap_or_else(|e| unknown_failure(&e))) },
+            ),
+            "get_app_id_rom_id_map" => bind(name, 0, 0, l, |l, _| async move {
+                Ok(l.get_app_id_rom_id_map().await.unwrap_or_else(|e| unknown_failure(&e)))
+            }),
+            "clear_sync_cache" => bind(
+                name,
+                0,
+                0,
+                l,
+                |l, _| async move { Ok(l.clear_sync_cache().await.unwrap_or_else(|e| unknown_failure(&e))) },
+            ),
             "test_connection" => bind(name, 0, 0, c, |c, _| async move { Ok(c.test_connection().await) }),
             "probe_reachability" => bind(name, 0, 0, c, |c, _| async move { Ok(c.probe_reachability().await) }),
             "connect_with_credentials" => bind(name, 3, 4, c, |c, a| async move {
@@ -358,7 +475,9 @@ where
 /// A ROM id argument: an integer, or a string holding one (Python `int()`).
 fn rom_id_arg(v: &Value) -> Result<i64, String> {
     let parsed = match v {
-        Value::Number(n) => n.as_i64().or_else(|| n.as_f64().filter(|f| f.fract() == 0.0).map(|f| f as i64)),
+        Value::Number(n) => n
+            .as_i64()
+            .or_else(|| n.as_f64().filter(|f| f.fract() == 0.0).map(|f| f as i64)),
         Value::String(s) => s.trim().parse().ok(),
         _ => None,
     };

@@ -95,10 +95,13 @@ async fn serve(socket_path: PathBuf) -> anyhow::Result<()> {
     let hub = Arc::new(EventHub::default());
     let backend = Backend::start(env, hub.clone()).await?;
     let downloads = backend.downloads.clone();
+    let sync = backend.sync.clone();
     let hook: ShutdownHook = Arc::new(move || {
         let downloads = downloads.clone();
+        let sync = sync.clone();
         Box::pin(async move {
             // Keep job rows and partials: the next start resumes them.
+            sync.shutdown().await;
             downloads.shutdown().await;
             tracing::info!("EmuDecky RomM Manager backend stopped");
             Ok(())
@@ -122,6 +125,7 @@ async fn serve(socket_path: PathBuf) -> anyhow::Result<()> {
         stopper.stop();
     });
     server.serve(listener, socket_path).await;
+    backend.sync.shutdown().await;
     backend.downloads.shutdown().await;
     Ok(())
 }

@@ -8,6 +8,7 @@ describe("applyArtwork", () => {
     vi.stubGlobal("SteamClient", {
       Apps: {
         SetCustomArtworkForApp: vi.fn().mockResolvedValue(undefined),
+        SetShortcutIcon: vi.fn(),
       },
     });
     vi.mocked(backend.saveShortcutIcon).mockResolvedValue({ success: true });
@@ -45,6 +46,30 @@ describe("applyArtwork", () => {
     expect(vi.mocked(SteamClient.Apps.SetCustomArtworkForApp)).toHaveBeenCalledWith(5000, "BB==", "png", 2);
     expect(vi.mocked(SteamClient.Apps.SetCustomArtworkForApp)).toHaveBeenCalledWith(5000, "CC==", "png", 3);
     expect(vi.mocked(backend.saveShortcutIcon)).toHaveBeenCalledWith(5000, "DD==");
+  });
+
+  it("applies the saved icon path through SteamClient and does not count failed saves", async () => {
+    vi.mocked(backend.getSgdbArtworkBase64).mockImplementation(async (_id, type) => ({ base64: type === 4 ? "AA==" : null }));
+    vi.mocked(backend.saveShortcutIcon).mockResolvedValue({ success: true, icon_path: "/grid/5000_icon.png" });
+    await expect(applyArtwork(42, 5000)).resolves.toBe(1);
+    expect(SteamClient.Apps.SetShortcutIcon).toHaveBeenCalledWith(5000, "/grid/5000_icon.png");
+    vi.mocked(backend.saveShortcutIcon).mockResolvedValue({ success: false });
+    vi.mocked(SteamClient.Apps.SetShortcutIcon).mockClear();
+    await expect(applyArtwork(42, 5000)).resolves.toBe(0);
+    expect(SteamClient.Apps.SetShortcutIcon).not.toHaveBeenCalled();
+  });
+
+  it("a newer apply supersedes an icon while the backend save is pending", async () => {
+    const slow = deferred<{ success: boolean; icon_path?: string }>();
+    vi.mocked(backend.getSgdbArtworkBase64).mockImplementation(async (_id, type) => ({ base64: type === 4 ? "AA==" : null }));
+    vi.mocked(backend.saveShortcutIcon).mockReturnValueOnce(slow.promise).mockResolvedValue({ success: true, icon_path: "/grid/new.png" });
+    const old = applyArtwork(42, 6000);
+    await vi.waitFor(() => expect(backend.saveShortcutIcon).toHaveBeenCalledTimes(1));
+    await applyArtwork(43, 6000);
+    slow.resolve({ success: true, icon_path: "/grid/old.png" });
+    await expect(old).resolves.toBe(0);
+    expect(SteamClient.Apps.SetShortcutIcon).toHaveBeenCalledTimes(1);
+    expect(SteamClient.Apps.SetShortcutIcon).toHaveBeenCalledWith(6000, "/grid/new.png");
   });
 
   it("returns 0 and writes nothing when all assets are null", async () => {
@@ -88,6 +113,7 @@ describe("applyArtwork — newest-apply-wins race guard", () => {
     vi.stubGlobal("SteamClient", {
       Apps: {
         SetCustomArtworkForApp: vi.fn().mockResolvedValue(undefined),
+        SetShortcutIcon: vi.fn(),
       },
     });
     vi.mocked(backend.saveShortcutIcon).mockResolvedValue({ success: true });

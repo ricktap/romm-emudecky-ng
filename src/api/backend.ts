@@ -427,8 +427,8 @@ export const getInstalledRelaunchOptions = callable<[], { app_id: number; launch
   "get_installed_relaunch_options",
 );
 
-// Icon support (VDF-based)
-export const saveShortcutIcon = callable<[number, string], { success: boolean }>("save_shortcut_icon");
+// Icon files are saved by the backend and applied through SteamClient.
+export const saveShortcutIcon = callable<[number, string], { success: boolean; icon_path?: string }>("save_shortcut_icon");
 
 // Save sync callables
 export const ensureDeviceRegistered = callable<[], { success: boolean; device_id: string; device_name: string }>(

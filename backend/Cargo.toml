@@ -16,6 +16,8 @@ name = "romm_backend"
 path = "src/lib.rs"
 
 [dependencies]
+base64 = "0.22.1"
+ring = "0.17"
 anyhow = "1"
 async-trait = "0.1"
 indexmap = "2"

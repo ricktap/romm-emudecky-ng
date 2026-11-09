@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::domain::errors::RommError;
 use crate::services::ports::{
-    KvConfigRepo, RomRegionsReader, RommConnectionApi, SettingsPersister, SettingsStore,
+    KvConfigRepo, RomRegionsReader, RommConnectionApi, RommLibraryApi, SettingsPersister, SettingsStore,
 };
 
 /// Counts saves; can be told to fail. Optionally records the settings
@@ -116,6 +116,9 @@ pub struct FakeRomm {
     pub heartbeat: Mutex<Result<Value, RommError>>,
     pub heartbeat_once: Mutex<Result<Value, RommError>>,
     pub list_platforms: Mutex<Result<Value, RommError>>,
+    pub list_collections: Mutex<Result<Value, RommError>>,
+    pub list_smart_collections: Mutex<Result<Value, RommError>>,
+    pub list_virtual_collections: Mutex<Result<Value, RommError>>,
     pub current_user: Mutex<Result<Value, RommError>>,
     pub mint: Mutex<Result<Value, RommError>>,
     pub delete: Mutex<Result<(), RommError>>,
@@ -131,6 +134,9 @@ impl FakeRomm {
             heartbeat: Mutex::new(Ok(json!({"SYSTEM": {"VERSION": "4.9.0"}}))),
             heartbeat_once: Mutex::new(Ok(json!({"SYSTEM": {"VERSION": "4.9.0"}}))),
             list_platforms: Mutex::new(Ok(json!([{"id": 1, "slug": "n64"}]))),
+            list_collections: Mutex::new(Ok(json!([]))),
+            list_smart_collections: Mutex::new(Ok(json!([]))),
+            list_virtual_collections: Mutex::new(Ok(json!([]))),
             current_user: Mutex::new(Ok(json!({"id": 1, "username": "tester"}))),
             mint: Mutex::new(Ok(json!({"id": 42, "raw_token": "rmm_minted"}))),
             delete: Mutex::new(Ok(())),
@@ -194,6 +200,29 @@ impl RommConnectionApi for FakeRomm {
     async fn exchange_pairing_code(&self, code: &str) -> Result<Value, RommError> {
         self.record("exchange_pairing_code", &[code]);
         self.exchange.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl RommLibraryApi for FakeRomm {
+    async fn list_platforms(&self) -> Result<Value, RommError> {
+        self.record("list_platforms", &[]);
+        self.list_platforms.lock().unwrap().clone()
+    }
+
+    async fn list_collections(&self) -> Result<Value, RommError> {
+        self.record("list_collections", &[]);
+        self.list_collections.lock().unwrap().clone()
+    }
+
+    async fn list_smart_collections(&self) -> Result<Value, RommError> {
+        self.record("list_smart_collections", &[]);
+        self.list_smart_collections.lock().unwrap().clone()
+    }
+
+    async fn list_virtual_collections(&self, collection_type: &str) -> Result<Value, RommError> {
+        self.record("list_virtual_collections", &[collection_type]);
+        self.list_virtual_collections.lock().unwrap().clone()
     }
 }
 
@@ -264,6 +293,7 @@ impl Default for FakeClock {
 }
 
 impl Clock for FakeClock {
+    fn epoch_seconds(&self)->f64 {1767225600.0}
     fn now_iso(&self) -> String {
         "2026-01-01T00:00:00+00:00".into()
     }
