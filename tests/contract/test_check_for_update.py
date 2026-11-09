@@ -17,7 +17,7 @@ from fakes.fake_release_feed_api import VALID_SHA256, make_release
 from lib.errors import ReleaseFeedError
 
 
-def _write_plugin_metadata(harness, *, version="0.32.0", name="EmuDecky RomM+"):
+def _write_plugin_metadata(harness, *, version="0.32.0", name="EmuDecky RomM NG"):
     plugin_dir = harness.tmp_path / "plugin"
     plugin_dir.mkdir(parents=True, exist_ok=True)
     (plugin_dir / "package.json").write_text(json.dumps({"name": "romm-emudecky-ng", "version": version}))

@@ -144,9 +144,12 @@ Local dev note: this Mac has no `mise` and no `.venv`, so the test baseline stil
     `/bin/rom-launcher-ng`, which never matches upstream's `/bin/rom-launcher` and vice versa, so neither plugin sees
     or touches the other's shortcuts. A frontend test pins this.
   - **Short name in Decky (2026-11-08):** the Decky plugin list and QAM entry (`plugin.json` `name`, `definePlugin`
-    in `src/index.tsx`) say "EmuDecky RomM+", because the full name was too long there. This name is **permanent**: self-update (Phase 1.6) finds
+    in `src/index.tsx`) say "EmuDecky RomM NG", because the full name was too long there. This name is **permanent**: self-update (Phase 1.6) finds
     the installed plugin by it. Everything else keeps
     "EmuDecky RomM Manager".
+    Renamed from "EmuDecky RomM+" on 2026-11-09: the Decky CLI turns the name into a Docker image tag when it builds a
+    native backend, and `+` is invalid there. The name must stay Docker-safe (letters, digits, spaces, `.`, `-`,
+    `_`); a test enforces this.
   - The release workflow fails the build if the zip's top folder (the install folder) is not `romm-emudecky-ng`.
 
 ---
@@ -268,7 +271,7 @@ pattern (decky-nexus, deckyemu, Decky-Metadata) is an in-plugin check plus Decky
   - Decky downloads, verifies the sha256, and shows **its own confirmation modal**, which a plugin cannot skip.
   - Decky then replaces the folder and reloads the plugin. Settings and database survive, because they live outside
     the plugin folder.
-- **Constraint:** Decky matches the installed plugin by `plugin.json` `"name"`, so **"EmuDecky RomM+" must never change
+- **Constraint:** Decky matches the installed plugin by `plugin.json` `"name"`, so **"EmuDecky RomM NG" must never change
   again**; a rename breaks updating. A test pins that the name used for installing is read from `plugin.json`.
 - **Risk:** `utilities/install_plugin` is internal and undocumented, but it has been stable through Decky v3.x and many
   plugins use it. If the call fails, the UI falls back to "Download vX.Y.Z" with the release link.
