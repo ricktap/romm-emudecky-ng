@@ -13,7 +13,7 @@ function updateInfo(overrides: Partial<UpdateCheckSuccess> = {}): UpdateCheckSuc
     asset_url: "https://github.com/ricktap/romm-emudecky-ng/releases/download/v0.33.0/romm-emudecky-ng.zip",
     sha256: "ab".repeat(32),
     html_url: "https://github.com/ricktap/romm-emudecky-ng/releases/tag/v0.33.0",
-    plugin_name: "EmuDecky RomM+",
+    plugin_name: "EmuDecky RomM NG",
     checked_at: "2026-01-01T00:00:00+00:00",
     ...overrides,
   };

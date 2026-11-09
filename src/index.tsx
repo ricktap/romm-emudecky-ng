@@ -619,7 +619,7 @@ export default definePlugin(() => {
   );
 
   return {
-    name: "EmuDecky RomM+",
+    name: "EmuDecky RomM NG",
     icon: <FaGamepad />,
     content: <QAMPanel />,
     alwaysRender: true,

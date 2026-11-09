@@ -27,7 +27,7 @@ _SUCCESS_KEYS = {
 }
 
 
-def _make(release=None, *, version="0.32.0", plugin_name="EmuDecky RomM+"):
+def _make(release=None, *, version="0.32.0", plugin_name="EmuDecky RomM NG"):
     feed = FakeReleaseFeedApi(release)
     metadata = FakePluginMetadataReader(version=version, plugin_name=plugin_name)
     clock = FakeClock()
@@ -58,7 +58,7 @@ class TestCheckForUpdateHappyPath:
             "asset_url": "https://github.com/ricktap/romm-emudecky-ng/releases/download/v0.33.0/romm-emudecky-ng.zip",
             "sha256": VALID_SHA256,
             "html_url": "https://github.com/ricktap/romm-emudecky-ng/releases/tag/v0.33.0",
-            "plugin_name": "EmuDecky RomM+",
+            "plugin_name": "EmuDecky RomM NG",
             "checked_at": "2026-01-01T00:00:00+00:00",
         }
         assert metadata.last_plugin_dir == "/plugin"
