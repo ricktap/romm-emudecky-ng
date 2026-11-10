@@ -172,11 +172,11 @@ fn free_backup_name(dir: &Path, hex: &str) -> PathBuf {
 }
 
 fn replace_dir(profile_dir: &Path, hex: &str, files: &[(&str, &[u8])]) -> io::Result<Option<PathBuf>> {
-    replace_dir_with(profile_dir, hex, files, &|from, to| fs::rename(from, to))
+    replace_dir_with(profile_dir, profile_dir, hex, files, &|from, to| fs::rename(from, to))
 }
 
 /// `replace_dir` with the rename injected, so the rollback of a failed final rename can be tested.
-fn replace_dir_with(profile_dir: &Path, hex: &str, files: &[(&str, &[u8])], rename: &dyn Fn(&Path, &Path) -> io::Result<()>) -> io::Result<Option<PathBuf>> {
+fn replace_dir_with(profile_dir: &Path, backup_dir: &Path, hex: &str, files: &[(&str, &[u8])], rename: &dyn Fn(&Path, &Path) -> io::Result<()>) -> io::Result<Option<PathBuf>> {
     fs::create_dir_all(profile_dir)?;
     let staging = profile_dir.join(format!(".{hex}.romm-tmp-{}", std::process::id()));
     if staging.exists() {
@@ -201,7 +201,8 @@ fn replace_dir_with(profile_dir: &Path, hex: &str, files: &[(&str, &[u8])], rena
     }
     let target = profile_dir.join(hex);
     let backup = if target.exists() {
-        let backup = free_backup_name(profile_dir, hex);
+        fs::create_dir_all(backup_dir)?;
+        let backup = free_backup_name(backup_dir, hex);
         rename(&target, &backup)?;
         Some(backup)
     } else {
@@ -244,6 +245,219 @@ pub fn restore(save_dir: &Path, title: TitleId, user_profile: Option<&str>, entr
         backups.extend(replace_dir(&save_dir.join(profile), &hex, &user)?);
     }
     Ok(backups)
+}
+
+/// Newest modification time (seconds since the epoch) of the title's files in the zero profile and the chosen user profile.
+pub fn newest_mtime(save_dir: &Path, title: TitleId, user_profile: Option<&str>) -> f64 {
+    let hex = title.to_hex();
+    let mut dirs = vec![save_dir.join(ZERO_PROFILE).join(&hex)];
+    if let Some(p) = user_profile {
+        dirs.push(save_dir.join(p).join(&hex));
+    }
+    dirs.iter().filter(|d| d.is_dir()).map(|d| stamp_of(d).newest).max().unwrap_or(0) as f64
+}
+
+fn move_aside(profile_dir: &Path, hex: &str) -> io::Result<Option<PathBuf>> {
+    let target = profile_dir.join(hex);
+    if !target.exists() {
+        return Ok(None);
+    }
+    let backup = free_backup_name(profile_dir, hex);
+    fs::rename(&target, &backup)?;
+    Ok(Some(backup))
+}
+
+/// Move the title's folders (zero profile and the chosen user profile) aside as `<TITLE>.romm-backup[-n]`; never deletes.
+pub fn quarantine(save_dir: &Path, title: TitleId, user_profile: Option<&str>) -> io::Result<Vec<PathBuf>> {
+    let hex = title.to_hex();
+    let mut out = Vec::new();
+    out.extend(move_aside(&save_dir.join(ZERO_PROFILE), &hex)?);
+    if let Some(p) = user_profile.filter(|p| is_profile(p)) {
+        out.extend(move_aside(&save_dir.join(p), &hex)?);
+    }
+    Ok(out)
+}
+
+// ── Ryujinx: a save is an index directory, found through its own metadata ──
+
+use crate::domain::switch_save::{parse_ryujinx_extra_data, RYUJINX_ACCOUNT_SAVE};
+
+/// `<config>/bis/user/save` of Ryujinx, when it exists.
+pub fn ryujinx_save_root(home: &Path) -> Option<PathBuf> {
+    let dir = home.join(".config/Ryujinx/bis/user/save");
+    dir.is_dir().then(|| fs::canonicalize(&dir).ok()).flatten()
+}
+
+/// Every account-save index directory with the title it belongs to (read from `ExtraData0`; unreadable ones are skipped).
+pub fn ryujinx_indices(root: &Path) -> Vec<(TitleId, PathBuf)> {
+    let Ok(read) = fs::read_dir(root) else { return vec![] };
+    let mut out: Vec<(TitleId, PathBuf)> = read
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        // Only real save indices (16 hex digits); a backup or stray folder is never mistaken for one.
+        .filter(|e| e.file_name().to_str().is_some_and(|n| n.len() == 16 && n.bytes().all(|b| b.is_ascii_hexdigit())))
+        .filter_map(|e| {
+            let bytes = fs::read(e.path().join("ExtraData0")).ok()?;
+            let save = parse_ryujinx_extra_data(&bytes)?;
+            (save.save_type == RYUJINX_ACCOUNT_SAVE).then_some((save.title_id.base(), e.path()))
+        })
+        .collect();
+    out.sort_by(|a, b| a.1.cmp(&b.1));
+    out
+}
+
+/// The index directory of `title`, only when exactly one account save exists for it (several are ambiguous: no guess).
+pub fn ryujinx_index_of(root: &Path, title: TitleId) -> Result<Option<PathBuf>, String> {
+    let mut found: Vec<PathBuf> = ryujinx_indices(root).into_iter().filter(|(t, _)| *t == title).map(|(_, p)| p).collect();
+    match found.len() {
+        0 => Ok(None),
+        1 => Ok(found.pop()),
+        _ => Err("Ryujinx has several saves for this game".into()),
+    }
+}
+
+/// The whole index directory as `index/...` entries (everything but the `.lock` file); symlinks fail the read.
+pub fn ryujinx_collect(index: &Path) -> io::Result<Vec<ArchiveEntry>> {
+    let mut out = Vec::new();
+    let mut stack = vec![index.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            if kind.is_symlink() {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, format!("symbolic link in a save: {}", entry.path().display())));
+            }
+            if kind.is_dir() {
+                stack.push(entry.path());
+            } else if kind.is_file() && entry.file_name() != ".lock" {
+                let rel = entry.path().strip_prefix(index).map_err(io::Error::other)?.to_str().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "non-UTF-8 file name"))?.replace('\\', "/");
+                out.push(ArchiveEntry { path: format!("index/{rel}"), data: fs::read(entry.path())? });
+            }
+        }
+    }
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(out)
+}
+
+/// Replace an existing index directory's content with `entries` (the old one is kept as `<index>.romm-backup[-n]`, the
+/// `.lock` file is carried over). Never creates an index: that is Ryujinx's own bookkeeping.
+pub fn ryujinx_restore(index: &Path, entries: &[ArchiveEntry]) -> io::Result<Option<PathBuf>> {
+    let parent = index.parent().ok_or_else(|| io::Error::other("no parent"))?;
+    let name = index.file_name().and_then(|n| n.to_str()).ok_or_else(|| io::Error::other("bad index name"))?.to_string();
+    let mut files: Vec<(&str, &[u8])> = Vec::new();
+    for entry in entries {
+        let rel = entry.path.strip_prefix("index/").ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("entry is not part of an index: {}", entry.path)))?;
+        if rel.is_empty() || rel.split('/').any(|c| c.is_empty() || c == "." || c == "..") || rel.contains('\\') || rel.contains('\0') || rel == ".lock" {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("unsafe path in a save: {}", entry.path)));
+        }
+        files.push((rel, &entry.data));
+    }
+    let had_lock = index.join(".lock").exists();
+    let backup = replace_dir_with_lock(parent, &name, &files, had_lock)?;
+    Ok(backup)
+}
+
+/// Ryujinx's backups live beside the `save` directory (`bis/user/save.romm-backups`), never inside it.
+fn replace_dir_with_lock(parent: &Path, name: &str, files: &[(&str, &[u8])], lock: bool) -> io::Result<Option<PathBuf>> {
+    let mut with_lock: Vec<(&str, &[u8])> = files.to_vec();
+    if lock {
+        with_lock.push((".lock", &[]));
+    }
+    let backups = parent.parent().unwrap_or(parent).join("save.romm-backups");
+    replace_dir_with(parent, &backups, name, &with_lock, &|from, to| fs::rename(from, to))
+}
+
+fn ryujinx_snapshot(root: &Path) -> BTreeMap<TitleId, FolderStamp> {
+    ryujinx_indices(root).into_iter().map(|(t, dir)| (t, stamp_of(&dir))).collect()
+}
+
+/// The save root and the files of one emulator, for the service (all blocking).
+#[derive(Clone)]
+pub struct SwitchFiles {
+    home: PathBuf,
+}
+
+impl SwitchFiles {
+    pub fn new(home: PathBuf) -> Self {
+        Self { home }
+    }
+
+    fn nand_emulator(emulator: &str) -> Option<NandEmulator> {
+        match emulator {
+            "eden" => Some(NandEmulator::Eden),
+            "yuzu" => Some(NandEmulator::Yuzu),
+            _ => None,
+        }
+    }
+
+    /// `<nand>/system/save/8000000000000010/su/avators/profiles.dat` from the save dir (`<nand>/user/save/<zero>`).
+    fn profiles_dat(save_dir: &Path) -> Option<PathBuf> {
+        Some(save_dir.parent()?.parent()?.parent()?.join("system/save/8000000000000010/su/avators/profiles.dat"))
+    }
+
+    pub fn profiles(&self, emulator: &str) -> Result<Vec<crate::domain::switch_save::ProfileInfo>, String> {
+        use crate::domain::switch_save::{parse_profiles_dat, ProfileInfo};
+        let Some(kind) = Self::nand_emulator(emulator) else { return Ok(vec![]) };
+        let dir = locate_save_dir(&self.home, kind).ok_or_else(|| format!("{emulator}: save folder not found"))?;
+        let known = Self::profiles_dat(&dir).and_then(|p| fs::read(p).ok()).and_then(|b| parse_profiles_dat(&b)).unwrap_or_default();
+        Ok(list_profiles(&dir)
+            .into_iter()
+            .map(|id| ProfileInfo { name: known.iter().find(|p| p.id.eq_ignore_ascii_case(&id)).map(|p| p.name.clone()).unwrap_or_default(), id })
+            .collect())
+    }
+
+    pub fn read(&self, emulator: &str, title: TitleId, profile: Option<&str>) -> Result<(Vec<ArchiveEntry>, f64, String), String> {
+        if let Some(kind) = Self::nand_emulator(emulator) {
+            let dir = locate_save_dir(&self.home, kind).ok_or_else(|| format!("{emulator}: save folder not found"))?;
+            let entries = collect(&dir, title, profile).map_err(|e| e.to_string())?;
+            return Ok((entries, newest_mtime(&dir, title, profile), dir.join("..").to_string_lossy().into_owned()));
+        }
+        if emulator == "ryujinx" {
+            let root = ryujinx_save_root(&self.home).ok_or("Ryujinx: save folder not found")?;
+            return match ryujinx_index_of(&root, title)? {
+                None => Ok((vec![], 0.0, root.to_string_lossy().into_owned())),
+                Some(index) => {
+                    let entries = ryujinx_collect(&index).map_err(|e| e.to_string())?;
+                    Ok((entries, stamp_of(&index).newest as f64, index.to_string_lossy().into_owned()))
+                }
+            };
+        }
+        Err(format!("{emulator}: saves not supported"))
+    }
+
+    pub fn write(&self, emulator: &str, title: TitleId, profile: Option<&str>, entries: &[ArchiveEntry]) -> Result<Vec<String>, String> {
+        if let Some(kind) = Self::nand_emulator(emulator) {
+            let dir = locate_save_dir(&self.home, kind).ok_or_else(|| format!("{emulator}: save folder not found"))?;
+            let backups = restore(&dir, title, profile, entries).map_err(|e| e.to_string())?;
+            return Ok(backups.iter().map(|p| p.to_string_lossy().into_owned()).collect());
+        }
+        if emulator == "ryujinx" {
+            let root = ryujinx_save_root(&self.home).ok_or("Ryujinx: save folder not found")?;
+            let index = ryujinx_index_of(&root, title)?.ok_or("Start the game once in Ryujinx on this machine, then sync again: Ryujinx has no save for it yet")?;
+            return Ok(ryujinx_restore(&index, entries).map_err(|e| e.to_string())?.iter().map(|p| p.to_string_lossy().into_owned()).collect());
+        }
+        Err(format!("{emulator}: saves not supported"))
+    }
+
+    pub fn quarantine(&self, emulator: &str, title: TitleId, profile: Option<&str>) -> Result<Vec<String>, String> {
+        if let Some(kind) = Self::nand_emulator(emulator) {
+            let dir = locate_save_dir(&self.home, kind).ok_or_else(|| format!("{emulator}: save folder not found"))?;
+            return Ok(quarantine(&dir, title, profile).map_err(|e| e.to_string())?.iter().map(|p| p.to_string_lossy().into_owned()).collect());
+        }
+        Err("Ryujinx saves cannot be moved aside safely: remove the save in Ryujinx itself".into())
+    }
+
+    pub fn snapshot(&self, emulator: &str) -> Result<BTreeMap<TitleId, FolderStamp>, String> {
+        if let Some(kind) = Self::nand_emulator(emulator) {
+            let dir = locate_save_dir(&self.home, kind).ok_or_else(|| format!("{emulator}: save folder not found"))?;
+            return Ok(snapshot(&dir));
+        }
+        if emulator == "ryujinx" {
+            let root = ryujinx_save_root(&self.home).ok_or("Ryujinx: save folder not found")?;
+            return Ok(ryujinx_snapshot(&root));
+        }
+        Err(format!("{emulator}: saves not supported"))
+    }
 }
 
 #[cfg(test)]
@@ -393,7 +607,7 @@ mod tests {
             calls.set(calls.get() + 1);
             if calls.get() == 2 { Err(io::Error::other("injected")) } else { fs::rename(from, to) }
         };
-        let result = replace_dir_with(&profile, TITLE, &[("f", b"new")], &flaky);
+        let result = replace_dir_with(&profile, &profile, TITLE, &[("f", b"new")], &flaky);
         assert!(result.is_err());
         assert_eq!(fs::read_to_string(profile.join(TITLE).join("0/data.bin")).unwrap(), "user save", "the old save is back in place");
         assert!(fs::read_dir(&profile).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().contains("romm-")), "no backup or staging left");
@@ -410,5 +624,170 @@ mod tests {
         assert!(restore(&dir, tid(TITLE), Some(USER), &entries).is_err());
         assert_eq!(fs::read_to_string(dir.join(USER).join(TITLE).join("0/data.bin")).unwrap(), "user save");
         assert!(fs::read_dir(dir.join(USER)).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().contains("romm-")), "no backup or staging left");
+    }
+
+    // ── Ryujinx ──
+
+    fn extra_data(title: &str, save_type: u8) -> Vec<u8> {
+        let id = u64::from_str_radix(title, 16).unwrap();
+        let mut bytes = vec![0u8; 512];
+        bytes[..8].copy_from_slice(&id.to_le_bytes());
+        bytes[8] = 1;
+        bytes[0x20] = save_type;
+        bytes
+    }
+
+    /// `bis/user/save` with one account save index for `TITLE` and a device-save index.
+    fn ryujinx_root() -> (tempfile::TempDir, PathBuf) {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join(".config/Ryujinx/bis/user/save");
+        let idx = root.join("0000000000000001");
+        fs::create_dir_all(&idx).unwrap();
+        fs::write(idx.join("ExtraData0"), extra_data(TITLE, 1)).unwrap();
+        fs::write(idx.join("ExtraData1"), extra_data(TITLE, 1)).unwrap();
+        fs::write(idx.join(".lock"), b"").unwrap();
+        write(&idx.join("0/save.meta"), "meta");
+        write(&idx.join("0/slot00/data"), "progress");
+        write(&idx.join("1/save.meta"), "meta1");
+        let device = root.join("0000000000000002");
+        fs::create_dir_all(&device).unwrap();
+        fs::write(device.join("ExtraData0"), extra_data(TITLE, 3)).unwrap();
+        (t, root)
+    }
+
+    #[test]
+    fn ryujinx_finds_account_saves_by_the_title_in_their_own_metadata() {
+        let (_t, root) = ryujinx_root();
+        let all = ryujinx_indices(&root);
+        assert_eq!(all.len(), 1, "the device save (type 3) is not synced");
+        assert_eq!(ryujinx_index_of(&root, tid(TITLE)).unwrap(), Some(root.join("0000000000000001")));
+        assert_eq!(ryujinx_index_of(&root, tid(OTHER)).unwrap(), None);
+        // the title of an update still names its base game
+        fs::write(root.join("0000000000000001/ExtraData0"), extra_data("01008CF01BAAC800", 1)).unwrap();
+        assert_eq!(ryujinx_index_of(&root, tid(TITLE)).unwrap(), Some(root.join("0000000000000001")));
+    }
+
+    #[test]
+    fn two_account_saves_for_one_title_are_ambiguous_and_not_guessed() {
+        let (_t, root) = ryujinx_root();
+        let second = root.join("0000000000000003");
+        fs::create_dir_all(&second).unwrap();
+        fs::write(second.join("ExtraData0"), extra_data(TITLE, 1)).unwrap();
+        assert!(ryujinx_index_of(&root, tid(TITLE)).is_err());
+    }
+
+    #[test]
+    fn a_folder_that_is_not_a_save_index_is_never_mistaken_for_one() {
+        let (_t, root) = ryujinx_root();
+        let stray = root.join("0000000000000001.romm-backup");
+        fs::create_dir_all(&stray).unwrap();
+        fs::write(stray.join("ExtraData0"), extra_data(TITLE, 1)).unwrap();
+        assert_eq!(ryujinx_indices(&root).len(), 1);
+        assert!(ryujinx_index_of(&root, tid(TITLE)).is_ok());
+    }
+
+    #[test]
+    fn an_unreadable_extra_data_is_skipped() {
+        let (_t, root) = ryujinx_root();
+        let broken = root.join("0000000000000009");
+        fs::create_dir_all(&broken).unwrap();
+        fs::write(broken.join("ExtraData0"), b"short").unwrap();
+        assert_eq!(ryujinx_indices(&root).len(), 1);
+    }
+
+    #[test]
+    fn ryujinx_collects_the_whole_index_but_not_the_lock_and_restores_it_with_a_backup() {
+        let (_t, root) = ryujinx_root();
+        let index = root.join("0000000000000001");
+        let entries = ryujinx_collect(&index).unwrap();
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, vec!["index/0/save.meta", "index/0/slot00/data", "index/1/save.meta", "index/ExtraData0", "index/ExtraData1"]);
+        let new = vec![
+            ArchiveEntry { path: "index/ExtraData0".into(), data: extra_data(TITLE, 1) },
+            ArchiveEntry { path: "index/0/slot00/data".into(), data: b"restored".to_vec() },
+        ];
+        let backup = ryujinx_restore(&index, &new).unwrap().unwrap();
+        assert_eq!(fs::read_to_string(index.join("0/slot00/data")).unwrap(), "restored");
+        assert!(!index.join("1/save.meta").exists(), "replaced, not merged");
+        assert!(index.join(".lock").exists(), "Ryujinx's lock file is carried over");
+        assert_eq!(fs::read_to_string(backup.join("0/slot00/data")).unwrap(), "progress", "the old index is kept");
+        assert_eq!(ryujinx_index_of(&root, tid(TITLE)).unwrap(), Some(index), "the restored index is still found");
+        assert!(backup.starts_with(root.parent().unwrap().join("save.romm-backups")), "the backup is kept outside Ryujinx's save directory");
+        assert!(fs::read_dir(&root).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().contains("romm-")));
+    }
+
+    #[test]
+    fn ryujinx_restore_refuses_unsafe_or_foreign_entries_before_touching_anything() {
+        let (_t, root) = ryujinx_root();
+        let index = root.join("0000000000000001");
+        for bad in ["user/x", "index/", "index/../x", "index/.lock", "index//x", "zero/T/x"] {
+            let e = vec![ArchiveEntry { path: bad.into(), data: vec![1] }];
+            assert!(ryujinx_restore(&index, &e).is_err(), "{bad}");
+        }
+        assert_eq!(fs::read_to_string(index.join("0/slot00/data")).unwrap(), "progress");
+        assert!(fs::read_dir(&root).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().contains("romm-")));
+    }
+
+    // ── SwitchFiles end to end ──
+
+    fn eden_home() -> (tempfile::TempDir, PathBuf) {
+        let t = tempfile::tempdir().unwrap();
+        let nand = t.path().join("storage/eden/nand");
+        write(&t.path().join(".config/eden/qt-config.ini"), &format!("nand_directory\\default=false\nnand_directory={}\n", nand.display()));
+        let dir = nand.join("user/save/0000000000000000");
+        write(&dir.join(USER).join(TITLE).join("0/data.bin"), "user");
+        write(&dir.join(ZERO_PROFILE).join(TITLE).join("dev"), "device");
+        // profiles.dat with one named profile (the Deck's record)
+        let mut dat = vec![0u8; 0x10 + 8 * 0xC8];
+        let uuid: Vec<u8> = (0..16).map(|i| u8::from_str_radix(&USER[30 - i * 2..32 - i * 2], 16).unwrap()).collect();
+        dat[0x10..0x20].copy_from_slice(&uuid);
+        dat[0x10 + 0x28..0x10 + 0x28 + 4].copy_from_slice(b"Eden");
+        let dat_path = nand.join("system/save/8000000000000010/su/avators/profiles.dat");
+        fs::create_dir_all(dat_path.parent().unwrap()).unwrap();
+        fs::write(dat_path, dat).unwrap();
+        (t, dir)
+    }
+
+    #[test]
+    fn eden_files_round_trip_through_the_service_adapter_with_names_from_profiles_dat() {
+        let (t, _dir) = eden_home();
+        let files = SwitchFiles::new(t.path().to_path_buf());
+        let profiles = files.profiles("eden").unwrap();
+        assert_eq!(profiles.iter().map(|p| (p.id.as_str(), p.name.as_str())).collect::<Vec<_>>(), vec![(ZERO_PROFILE, ""), (USER, "Eden")]);
+        let (entries, mtime, _path) = files.read("eden", tid(TITLE), Some(USER)).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(mtime > 0.0);
+        let changed = vec![ArchiveEntry { path: format!("user/{TITLE}/0/data.bin"), data: b"new".to_vec() }, ArchiveEntry { path: format!("zero/{TITLE}/dev"), data: b"dev2".to_vec() }];
+        let backups = files.write("eden", tid(TITLE), Some(USER), &changed).unwrap();
+        assert_eq!(backups.len(), 2, "both the user and the zero folder were kept as backups");
+        assert_eq!(files.read("eden", tid(TITLE), Some(USER)).unwrap().0.iter().find(|e| e.path.ends_with("data.bin")).unwrap().data, b"new");
+        let aside = files.quarantine("eden", tid(TITLE), Some(USER)).unwrap();
+        assert_eq!(aside.len(), 2);
+        assert!(files.read("eden", tid(TITLE), Some(USER)).unwrap().0.is_empty());
+        assert!(files.snapshot("eden").unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_unconfigured_emulator_is_not_found_and_an_unknown_one_not_supported() {
+        let t = tempfile::tempdir().unwrap();
+        let files = SwitchFiles::new(t.path().to_path_buf());
+        assert!(files.read("eden", tid(TITLE), None).unwrap_err().contains("not found"));
+        assert!(files.read("ryujinx", tid(TITLE), None).unwrap_err().contains("not found"));
+        assert!(files.read("dolphin", tid(TITLE), None).unwrap_err().contains("not supported"));
+        assert_eq!(files.profiles("ryujinx").unwrap(), vec![], "Ryujinx has no profile folders");
+        assert!(files.quarantine("ryujinx", tid(TITLE), None).is_err(), "Ryujinx saves are never moved aside");
+    }
+
+    #[test]
+    fn ryujinx_through_the_service_adapter_never_creates_a_save_that_does_not_exist() {
+        let (t, root) = ryujinx_root();
+        let files = SwitchFiles::new(t.path().to_path_buf());
+        let (entries, _, path) = files.read("ryujinx", tid(TITLE), None).unwrap();
+        assert_eq!(entries.len(), 5);
+        assert!(path.ends_with("0000000000000001"));
+        assert!(files.write("ryujinx", tid(OTHER), None, &[]).unwrap_err().contains("Start the game once"));
+        assert!(files.read("ryujinx", tid(OTHER), None).unwrap().0.is_empty());
+        assert_eq!(files.snapshot("ryujinx").unwrap().keys().copied().collect::<Vec<_>>(), vec![tid(TITLE)]);
+        let _ = root;
     }
 }

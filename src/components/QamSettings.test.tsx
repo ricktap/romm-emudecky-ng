@@ -39,10 +39,10 @@ describe("QamSettings", () => {
     expect(onBack).toHaveBeenCalled();
   });
 
-  it("says save sync is not implemented yet when its settings cannot be read", async () => {
-    vi.mocked(getSaveSyncSettings).mockRejectedValue(new Error("not implemented yet"));
+  it("says the settings are unavailable when they cannot be read", async () => {
+    vi.mocked(getSaveSyncSettings).mockRejectedValue(new Error("backend down"));
     const { findByText, queryByText } = render(<QamSettings onBack={vi.fn()} />);
-    expect(await findByText("Save sync is not implemented yet")).toBeTruthy();
+    expect(await findByText("Save sync settings unavailable")).toBeTruthy();
     expect(queryByText("Enable save sync")).toBeNull();
   });
 

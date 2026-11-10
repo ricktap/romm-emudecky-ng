@@ -29,6 +29,9 @@ pub enum RommError {
     /// 404 — `detail` carries the FastAPI `detail` string when the request read it.
     #[error("{message}")]
     NotFound { message: String, detail: Option<String> },
+    /// 409 — RomM refused the write (for a save upload: the slot has a newer save since this device last synced).
+    #[error("{0}")]
+    Conflict(String),
     /// 5xx, or 429 rate limiting.
     #[error("{message}")]
     Server { status: u16, message: String },

@@ -6,9 +6,10 @@
 import type { DownloadItem, FirmwareStatus } from "../types";
 import { interruptedLabel } from "./downloadStatus";
 import { missingRequiredKeys } from "./missingKeys";
+import { CHOOSE_PROFILE_LABEL, CHOOSE_SAVE_LABEL } from "../types/saves";
 
 export type ChipTone = "ok" | "warn" | "neutral";
-export type ChipFix = "get_bios" | "resolve_conflict";
+export type ChipFix = "get_bios" | "resolve_conflict" | "choose_save";
 
 export interface ReadinessChip {
   id: "rom" | "bios" | "saves";
@@ -78,6 +79,10 @@ export function savesChip({ saveSyncEnabled, status, label }: SavesChipInput): R
   if (!saveSyncEnabled) return { id: "saves", title: "Saves", detail: "Save sync off", tone: "neutral" };
   if (status === "conflict") {
     return { id: "saves", title: "Saves", detail: "Conflict between this device and RomM", tone: "warn", fix: "resolve_conflict", fixLabel: "Resolve" };
+  }
+  // The backend cannot locate this game's save yet: one tap opens the chooser.
+  if (label === CHOOSE_SAVE_LABEL || label === CHOOSE_PROFILE_LABEL) {
+    return { id: "saves", title: "Saves", detail: label, tone: "warn", fix: "choose_save", fixLabel: "Choose" };
   }
   if (status === "synced") return { id: "saves", title: "Saves", detail: label ? `Synced · ${label}` : "Synced", tone: "ok" };
   return { id: "saves", title: "Saves", detail: label ? `On · ${label}` : "On, nothing uploaded yet", tone: "neutral" };

@@ -87,6 +87,31 @@ pub const PORTED_CALLABLES: &[&str] = &[
     "start_download",
     "test_connection",
     "update_whitelist_settings",
+    "ensure_device_registered",
+    "list_devices",
+    "get_save_status",
+    "refresh_save_status",
+    "pre_launch_sync",
+    "sync_rom_saves",
+    "sync_all_saves",
+    "resolve_sync_conflict",
+    "get_save_sync_settings",
+    "update_save_sync_settings",
+    "is_save_tracking_configured",
+    "get_save_setup_info",
+    "confirm_slot_choice",
+    "get_save_slots",
+    "get_slot_saves",
+    "switch_slot",
+    "get_slot_delete_info",
+    "delete_slot",
+    "delete_local_saves",
+    "delete_platform_saves",
+    "saves_list_file_versions",
+    "saves_rollback_to_version",
+    "get_save_title_info",
+    "set_save_title_id",
+    "set_save_profile",
 ];
 
 /// The full callable surface, sorted.
@@ -105,6 +130,16 @@ pub struct BackendEnv {
     pub user_home: PathBuf,
     pub retry: RetryPolicy,
     pub clock: EpochClock,
+}
+
+/// The emulator a ROM launches with, for save sync: the resolved one including the per-game override.
+struct LaunchEmulator(Arc<LaunchService>);
+
+#[async_trait::async_trait]
+impl crate::services::saves::RomEmulator for LaunchEmulator {
+    async fn emulator_id(&self, rom_id: i64) -> Option<String> {
+        self.0.active_emulator_for_rom(rom_id, None).await.and_then(|e| e.command)
+    }
 }
 
 /// Backend events reach the shim through the protocol's event hub.
@@ -139,6 +174,7 @@ pub struct Backend {
     /// (rewrite step 3) call it; no callable reaches it yet.
     pub adoption: Arc<InstallAdoptionService>,
     pub firmware: Arc<crate::services::firmware::FirmwareService>,
+    pub saves: Arc<crate::services::saves::SaveService>,
 }
 
 impl Backend {
@@ -281,7 +317,14 @@ impl Backend {
         }));
         if let Err(error)=steamgrid.prune().await{tracing::warn!("SteamGridDB cache cleanup failed: {error}");}
 
-        let save_safety=Arc::new(crate::adapters::switch_save_safety::SwitchSaveSafety::new(db.clone(),settings.clone()));
+        let save_service=Arc::new(crate::services::saves::SaveService::new(crate::services::saves::SaveServiceConfig {
+            settings:settings.clone(),persister:persister.clone(),api:romm_api.clone(),connection:romm_api.clone(),
+            state:Arc::new(crate::adapters::repositories::SqliteSaveState::new(db.clone())),titles:Arc::new(crate::adapters::repositories::SqliteTitleIds::new(db.clone())),
+            library:library.clone(),kv:kv_config.clone(),emulators:Arc::new(LaunchEmulator(launch.clone())),
+            local:Arc::new(crate::adapters::switch_saves::SwitchSaves::new(env.user_home.clone())),clock:clock.clone(),
+            host:Arc::new(crate::adapters::switch_saves::LinuxHost),plugin_version:read_plugin_version(&env.plugin_dir).await,events:events.clone(),
+        }));
+        let save_safety=save_service.clone();
         let version_repo=Arc::new(crate::adapters::versions::SqliteVersions::new(db.clone()));
         let active=downloads.clone();
         let versions=Arc::new(crate::services::versions::VersionService::new(crate::services::versions::VersionServiceConfig {
@@ -335,6 +378,7 @@ impl Backend {
             shortcuts,
             adoption,
             firmware,
+            saves: save_service,
         })
     }
 
@@ -366,7 +410,42 @@ impl Backend {
         let playtime=self.playtime.clone();
         let update=self.update.clone();
         let firmware=self.firmware.clone();
+        let sv=self.saves.clone();
         let h: Handler = match name {
+            "ensure_device_registered" => bind(name,0,0,sv,|s,_|async move{Ok(s.ensure_device_registered().await)}),
+            "list_devices" => bind(name,0,0,sv,|s,_|async move{Ok(s.list_devices().await)}),
+            "get_save_status" => bind(name,1,1,sv,|s,a|async move{Ok(s.get_save_status(rom_id_arg(&a[0])?).await)}),
+            "refresh_save_status" => bind(name,1,1,sv,|s,a|async move{Ok(s.refresh_save_status(rom_id_arg(&a[0])?).await)}),
+            "pre_launch_sync" => bind(name,1,1,sv,|s,a|async move{Ok(s.pre_launch_sync(rom_id_arg(&a[0])?).await)}),
+            "sync_rom_saves" => bind(name,1,1,sv,|s,a|async move{Ok(s.sync_rom_saves(rom_id_arg(&a[0])?).await)}),
+            "sync_all_saves" => bind(name,0,0,sv,|s,_|async move{Ok(s.sync_all_saves().await)}),
+            "resolve_sync_conflict" => bind(name,4,4,sv,|s,a|async move{
+                let (Some(file),Some(save),Some(action))=(a[1].as_str(),a[2].as_i64(),a[3].as_str())else{return Ok(crate::domain::errors::failure("invalid_argument","Expected (rom_id, filename, server_save_id, action)"));};
+                Ok(s.resolve_sync_conflict(rom_id_arg(&a[0])?,file,save,action).await)
+            }),
+            "get_save_sync_settings" => bind(name,0,0,sv,|s,_|async move{Ok(s.get_save_sync_settings())}),
+            "update_save_sync_settings" => bind(name,1,1,sv,|s,a|async move{Ok(s.update_save_sync_settings(&a[0]).await)}),
+            "is_save_tracking_configured" => bind(name,1,1,sv,|s,a|async move{Ok(s.is_save_tracking_configured(rom_id_arg(&a[0])?).await)}),
+            "get_save_setup_info" => bind(name,1,1,sv,|s,a|async move{Ok(s.get_save_setup_info(rom_id_arg(&a[0])?).await)}),
+            "confirm_slot_choice" => bind(name,2,4,sv,|s,a|async move{
+                let migrate=a.get(2).and_then(Value::as_bool).unwrap_or(false);
+                Ok(s.confirm_slot_choice(rom_id_arg(&a[0])?,a[1].as_str(),migrate,a.get(3).and_then(Value::as_str)).await)
+            }),
+            "get_save_slots" => bind(name,1,1,sv,|s,a|async move{Ok(s.get_save_slots(rom_id_arg(&a[0])?).await)}),
+            "get_slot_saves" => bind(name,2,2,sv,|s,a|async move{Ok(s.get_slot_saves(rom_id_arg(&a[0])?,a[1].as_str().unwrap_or("")).await)}),
+            "switch_slot" => bind(name,2,2,sv,|s,a|async move{Ok(s.switch_slot(rom_id_arg(&a[0])?,a[1].as_str().unwrap_or("")).await)}),
+            "get_slot_delete_info" => bind(name,2,2,sv,|s,a|async move{Ok(s.get_slot_delete_info(rom_id_arg(&a[0])?,a[1].as_str().unwrap_or("")).await)}),
+            "delete_slot" => bind(name,2,2,sv,|s,a|async move{Ok(s.delete_slot(rom_id_arg(&a[0])?,a[1].as_str().unwrap_or("")).await)}),
+            "delete_local_saves" => bind(name,1,1,sv,|s,a|async move{Ok(s.delete_local_saves(rom_id_arg(&a[0])?).await)}),
+            "delete_platform_saves" => bind(name,1,1,sv,|s,a|async move{Ok(s.delete_platform_saves(a[0].as_str().unwrap_or("")).await)}),
+            "saves_list_file_versions" => bind(name,3,3,sv,|s,a|async move{Ok(s.list_file_versions(rom_id_arg(&a[0])?,a[1].as_str().unwrap_or(""),a[2].as_str().unwrap_or("")).await)}),
+            "saves_rollback_to_version" => bind(name,3,3,sv,|s,a|async move{
+                let Some(id)=a[2].as_i64()else{return Ok(json!({"status":"version_deleted"}));};
+                Ok(s.rollback_to_version(rom_id_arg(&a[0])?,a[1].as_str().unwrap_or(""),id).await)
+            }),
+            "get_save_title_info" => bind(name,1,1,sv,|s,a|async move{Ok(s.get_save_title_info(rom_id_arg(&a[0])?).await)}),
+            "set_save_title_id" => bind(name,2,3,sv,|s,a|async move{Ok(s.set_save_title_id(rom_id_arg(&a[0])?,a[1].as_str(),a.get(2).and_then(Value::as_str).unwrap_or("manual")).await)}),
+            "set_save_profile" => bind(name,2,2,sv,|s,a|async move{Ok(s.set_save_profile(rom_id_arg(&a[0])?,a[1].as_str().unwrap_or("")).await)}),
             "get_firmware_status" => bind(name,0,0,firmware.clone(),|s,_|async move{Ok(s.get_firmware_status().await)}),
             "save_firmware_version" => bind(name,1,1,firmware.clone(),|s,a|async move{
                 match a[0].as_str() {Some(v)=>Ok(s.set_firmware_version(v).await),None=>Ok(crate::domain::errors::failure("invalid_version","Not a firmware version"))}
@@ -724,7 +803,7 @@ mod tests {
     #[test]
     fn surface_matches_python_backend_size_and_includes_ported() {
         let names = callable_names();
-        assert_eq!(names.len(), 109);
+        assert_eq!(names.len(), 112);
         let mut dedup = names.clone();
         dedup.dedup();
         assert_eq!(dedup.len(), names.len());

@@ -492,7 +492,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     );
 
     // Benign skip (#239): RetroArch writes saves to the content dir, or save sync
-    // is not implemented yet (0.55.0), so sync is unsupported. NOT a failure — proceed to launch silently (no toast,
+    // cannot be located (no title ID, emulator or save folder yet), so sync is unsupported. NOT a failure — proceed to launch silently (no toast,
     // no fallback-launch confirm). The "Save sync off" banner in
     // RomMPlaySection already informs the user; nagging on every launch would
     // be noise.

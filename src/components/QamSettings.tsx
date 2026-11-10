@@ -26,7 +26,7 @@ export const QamSettings: FC<QamSettingsProps> = ({ onBack }) => {
     let alive = true;
     getSaveSyncSettings()
       .then((s) => alive && setSaveSync(s))
-      // Save sync is not implemented yet (0.55.0): the read rejects, say so instead of showing toggles that do nothing.
+      // The read failed (backend not ready): say so instead of showing toggles that do nothing.
       .catch(() => alive && setSaveSyncUnavailable(true));
     getSettings()
       .then((s) => alive && setHost(serverHost(s.romm_url)))
@@ -75,7 +75,7 @@ export const QamSettings: FC<QamSettingsProps> = ({ onBack }) => {
       <PanelSection title="Save sync">
         {saveSyncUnavailable && (
           <PanelSectionRow>
-            <Field label="Save sync is not implemented yet" description="Planned for 0.55.0" focusable />
+            <Field label="Save sync settings unavailable" description="The plugin backend did not answer" focusable />
           </PanelSectionRow>
         )}
         {saveSync && (

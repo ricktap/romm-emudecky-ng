@@ -1,3 +1,5 @@
+> **Not current.** This page describes the RetroArch/RetroDECK design of the upstream plugin. Save sync today covers Nintendo Switch on Eden, yuzu and Ryujinx; see [Save sync](save-sync.md). The retro systems return in 0.80.
+
 # Save sync support by platform
 
 Save sync works **per game**: when a game is installed, its save is uploaded to RomM and pulled back before launch, so

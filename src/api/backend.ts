@@ -1,5 +1,4 @@
 import { callable } from "@decky/api";
-import { unportedCallable } from "./unportedCallable";
 import { detach } from "../utils/detach";
 import type {
   UpdateCheckResult,
@@ -9,6 +8,7 @@ import type {
   DownloadItem,
   InstalledRom,
   LibraryOverview,
+  SaveTitleInfo,
   PlatformSyncSetting,
   CollectionSyncSetting,
   CollectionKind,
@@ -118,7 +118,7 @@ export const getRomRelaunchOptions = callable<[number], { app_id: number; launch
   "get_rom_relaunch_options",
 );
 export const probeReachability = callable<[], { online: boolean }>("probe_reachability");
-export const refreshSaveStatus = unportedCallable<[number], { success: boolean }>("refresh_save_status");
+export const refreshSaveStatus = callable<[number], { success: boolean }>("refresh_save_status");
 export const removeRom = callable<[number], BackendResult>("remove_rom");
 export const getPlatforms = callable<[], { success: boolean; platforms: PlatformSyncSetting[] }>("get_platforms");
 export const savePlatformSync = callable<[number, boolean], { success: boolean; message: string }>(
@@ -448,52 +448,60 @@ export const getInstalledRelaunchOptions = callable<[], { app_id: number; launch
 export const saveShortcutIcon = callable<[number, string], { success: boolean; icon_path?: string }>("save_shortcut_icon");
 
 // Save sync callables
-export const ensureDeviceRegistered = unportedCallable<[], { success: boolean; device_id: string; device_name: string }>(
+export const ensureDeviceRegistered = callable<[], { success: boolean; device_id: string; device_name: string }>(
   "ensure_device_registered",
 );
 
-export const listDevices = unportedCallable<[], ListDevicesResponse>("list_devices");
-export const getSaveStatus = unportedCallable<[number], SaveStatus>("get_save_status");
-export const preLaunchSync = unportedCallable<
+export const listDevices = callable<[], ListDevicesResponse>("list_devices");
+export const getSaveStatus = callable<[number], SaveStatus>("get_save_status");
+export const preLaunchSync = callable<
   [number],
   { success: boolean; message: string; synced?: number; errors?: string[]; conflicts?: SyncConflict[]; reason?: string }
 >("pre_launch_sync");
-export const syncRomSaves = unportedCallable<
+export const syncRomSaves = callable<
   [number],
   { success: boolean; message: string; synced: number; errors?: string[]; conflicts?: SyncConflict[]; reason?: string }
 >("sync_rom_saves");
-export const syncAllSaves = unportedCallable<
+export const getSaveTitleInfo = callable<[number], SaveTitleInfo>("get_save_title_info");
+export const setSaveTitleId = callable<
+  [number, string | null, ("manual" | "learned")?],
+  { success: boolean; message?: string; reason?: string; title_id?: string }
+>("set_save_title_id");
+export const setSaveProfile = callable<[number, string], { success: boolean; message?: string; reason?: string; profile?: string }>(
+  "set_save_profile",
+);
+export const syncAllSaves = callable<
   [],
   { success: boolean; message: string; synced: number; conflicts: number; reason?: string }
 >("sync_all_saves");
-export const resolveSyncConflict = unportedCallable<
+export const resolveSyncConflict = callable<
   [number, string, number, "keep_local" | "use_server"],
   { success: boolean; message?: string; reason?: "stale_conflict"; action?: "keep_local" | "use_server" }
 >("resolve_sync_conflict");
 export const recordSessionStart = callable<[number], { success: boolean }>("record_session_start");
-export const getSaveSyncSettings = unportedCallable<[], SaveSyncSettings>("get_save_sync_settings");
-export const updateSaveSyncSettings = unportedCallable<[SaveSyncSettings], { success: boolean }>("update_save_sync_settings");
-export const getSaveSlots = unportedCallable<
+export const getSaveSyncSettings = callable<[], SaveSyncSettings>("get_save_sync_settings");
+export const updateSaveSyncSettings = callable<[SaveSyncSettings], { success: boolean }>("update_save_sync_settings");
+export const getSaveSlots = callable<
   [number],
   { success: boolean; slots: SaveSlotSummary[]; active_slot: string; reason?: string; message?: string }
 >("get_save_slots");
-export const getSlotSaves = unportedCallable<[number, string], SlotSavesResponse>("get_slot_saves");
-export const switchSlot = unportedCallable<[number, string], SwitchSlotResponse>("switch_slot");
+export const getSlotSaves = callable<[number, string], SlotSavesResponse>("get_slot_saves");
+export const switchSlot = callable<[number, string], SwitchSlotResponse>("switch_slot");
 
-export const getSlotDeleteInfo = unportedCallable<[number, string], SlotDeleteInfo>("get_slot_delete_info");
-export const deleteSlot = unportedCallable<[number, string], DeleteSlotResult>("delete_slot");
+export const getSlotDeleteInfo = callable<[number, string], SlotDeleteInfo>("get_slot_delete_info");
+export const deleteSlot = callable<[number, string], DeleteSlotResult>("delete_slot");
 
-export const isSaveTrackingConfigured = unportedCallable<[number], { configured: boolean; active_slot: string | null }>(
+export const isSaveTrackingConfigured = callable<[number], { configured: boolean; active_slot: string | null }>(
   "is_save_tracking_configured",
 );
-export const getSaveSetupInfo = unportedCallable<[number], SaveSetupInfo>("get_save_setup_info");
+export const getSaveSetupInfo = callable<[number], SaveSetupInfo>("get_save_setup_info");
 // confirm_slot_choice(rom_id, chosen_slot, migrate, migrate_from_slot):
 // `chosen_slot` must be a non-empty named slot — legacy `slot:null` confirmation
 // is retired (#1276), so an empty/`null` target is rejected by the backend's
 // `invalid_slot_name` guard. `migrate` is an explicit boolean — the
 // non-destructive paths pass `false`; `migrate_from_slot` is `null` unless
 // migrating (then the source slot, with `null` meaning the legacy no-slot source).
-export const confirmSlotChoice = unportedCallable<
+export const confirmSlotChoice = callable<
   [number, string, boolean, string | null],
   { success: boolean; needs_conflict_resolution?: boolean; message: string }
 >("confirm_slot_choice");
@@ -560,18 +568,18 @@ export interface SessionFinalizeResult {
 export const finalizeGameSession = callable<[number], SessionFinalizeResult>("finalize_game_session");
 
 // Delete operations
-export const deleteLocalSaves = unportedCallable<[number], { success: boolean; deleted_count: number; message: string }>(
+export const deleteLocalSaves = callable<[number], { success: boolean; deleted_count: number; message: string }>(
   "delete_local_saves",
 );
-export const deletePlatformSaves = unportedCallable<[string], { success: boolean; deleted_count: number; message: string }>(
+export const deletePlatformSaves = callable<[string], { success: boolean; deleted_count: number; message: string }>(
   "delete_platform_saves",
 );
 
 // Save version history callables
-export const savesListFileVersions = unportedCallable<[number, string, string], ListFileVersionsResult>(
+export const savesListFileVersions = callable<[number, string, string], ListFileVersionsResult>(
   "saves_list_file_versions",
 );
-export const savesRollbackToVersion = unportedCallable<[number, string, number], RollbackStatus>("saves_rollback_to_version");
+export const savesRollbackToVersion = callable<[number, string, number], RollbackStatus>("saves_rollback_to_version");
 
 // Self-update: checks GitHub for a newer release (throttled to every 6 h unless
 // force=true). Never installs — see utils/selfUpdate.ts for the Decky handoff.

@@ -565,6 +565,85 @@ mod tests {
         (dir, db)
     }
 
+    async fn with_rom(db: &Db, rom_id: i64) {
+        db.call(move |c| {
+            c.execute(
+                "INSERT INTO roms (rom_id, platform_slug, name, fs_name, last_synced_at) VALUES (?1, 'switch', 'G', 'g.nsp', '2026-01-01')",
+                [rom_id],
+            )
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn save_state_round_trips_with_files_slots_and_attribution() {
+        use crate::domain::rom_save_state::{Baseline, RomSaveState};
+        use crate::services::ports::SaveStateRepo;
+        let (_d, db) = db().await;
+        with_rom(&db, 5).await;
+        let repo = SqliteSaveState::new(db);
+        assert_eq!(repo.get(5).await.unwrap(), None);
+        assert!(!repo.tracked(5).await.unwrap());
+        let mut state = RomSaveState::default();
+        state.confirm_slot("default").unwrap();
+        state.adopt_system("switch");
+        state.record_synced_core(None, "eden").unwrap();
+        state.track_own_upload(9);
+        state.mark_sync_evaluated("2026-02-02T00:00:00Z");
+        state
+            .adopt_baseline("01008CF01BAAC000.zip", Baseline { tracked_save_id: 9, last_sync_hash: "h".into(), last_sync_at: "t".into(), last_sync_local_mtime: Some(12.5), last_sync_local_size: Some(100), ..Baseline::default() })
+            .unwrap();
+        repo.save(5, &state).await.unwrap();
+        assert_eq!(repo.get(5).await.unwrap(), Some(state.clone()));
+        assert!(repo.tracked(5).await.unwrap());
+        assert_eq!(repo.rom_ids().await.unwrap(), vec![5]);
+        // saving again replaces the files: a dropped file is gone
+        state.delete_file_tracking("01008CF01BAAC000.zip");
+        state.own_upload_ids = None;
+        repo.save(5, &state).await.unwrap();
+        let back = repo.get(5).await.unwrap().unwrap();
+        assert!(back.files.is_empty());
+        assert_eq!(back.own_upload_ids, None, "unknown attribution stays unknown, distinct from an empty list");
+        state.own_upload_ids = Some(vec![]);
+        repo.save(5, &state).await.unwrap();
+        assert_eq!(repo.get(5).await.unwrap().unwrap().own_upload_ids, Some(vec![]));
+        repo.delete(5).await.unwrap();
+        assert_eq!(repo.get(5).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_state_for_a_rom_that_does_not_exist_is_refused_and_a_hashless_file_is_not_stored() {
+        use crate::domain::rom_save_state::RomSaveState;
+        use crate::services::ports::SaveStateRepo;
+        let (_d, db) = db().await;
+        let repo = SqliteSaveState::new(db.clone());
+        assert!(repo.save(404, &RomSaveState::default()).await.is_err(), "the roms foreign key holds");
+        with_rom(&db, 6).await;
+        let mut state = RomSaveState::default();
+        state.files.insert("x".into(), crate::domain::rom_save_state::FileSyncState::default());
+        repo.save(6, &state).await.unwrap();
+        assert!(repo.get(6).await.unwrap().unwrap().files.is_empty());
+    }
+
+    #[tokio::test]
+    async fn title_ids_round_trip_and_are_validated_by_the_schema() {
+        use crate::services::ports::{StoredTitle, TitleIdRepo};
+        let (_d, db) = db().await;
+        with_rom(&db, 5).await;
+        let repo = SqliteTitleIds::new(db);
+        assert_eq!(repo.get(5).await.unwrap(), None);
+        repo.set(5, "01008CF01BAAC000", "learned").await.unwrap();
+        assert_eq!(repo.get(5).await.unwrap(), Some(StoredTitle { title_id: "01008CF01BAAC000".into(), source: "learned".into() }));
+        repo.set(5, "0100152000022000", "manual").await.unwrap();
+        assert_eq!(repo.get(5).await.unwrap().unwrap().source, "manual");
+        assert!(repo.set(5, "short", "manual").await.is_err());
+        assert!(repo.set(5, "01008CF01BAAC000", "guessed").await.is_err());
+        assert!(repo.set(404, "01008CF01BAAC000", "manual").await.is_err(), "needs a roms row");
+        repo.clear(5).await.unwrap();
+        assert_eq!(repo.get(5).await.unwrap(), None);
+    }
+
     #[tokio::test]
     async fn kv_round_trip() {
         let (_d, db) = db().await;
@@ -637,7 +716,7 @@ mod tests {
         .unwrap();
         drop(old);
         let (db, version) = Db::open(&path).await.unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, 15);
         let jobs = SqliteDownloadJobs::new(db);
         let multi = jobs.get(JobKey::rom(1)).await.unwrap().unwrap();
         assert!(multi.needs_recovery, "an old multipart partial is kept but flagged");
@@ -686,7 +765,7 @@ mod tests {
         .unwrap();
         drop(old);
         let (db, version) = Db::open(&path).await.unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, 15);
         let jobs = SqliteDownloadJobs::new(db);
         let all = jobs.all().await.unwrap();
         assert_eq!(all.iter().map(|j| (j.kind, j.item_id, j.position)).collect::<Vec<_>>(), vec![
@@ -778,5 +857,215 @@ mod baseline_tests {
         assert_eq!(b.bound_roms.len(),1);assert_eq!(b.bound_roms[0]["id"],1);assert_eq!(b.bound_roms[0]["igdb_id"],serde_json::Value::Null);
         db.call(|c|c.execute("UPDATE roms SET sibling_group_key='igdb:7:1' WHERE rom_id=2",[])).await.unwrap();
         assert!(!repo.baseline("switch").await.unwrap().needs_backfill);
+    }
+}
+
+/// `rom_save_states` + `rom_save_files`: the save-sync aggregate.
+#[derive(Clone)]
+pub struct SqliteSaveState {
+    db: Db,
+}
+
+impl SqliteSaveState {
+    pub fn new(db: Db) -> Self {
+        Self { db }
+    }
+}
+
+#[async_trait]
+impl crate::services::ports::SaveStateRepo for SqliteSaveState {
+    async fn get(&self, rom_id: i64) -> anyhow::Result<Option<crate::domain::rom_save_state::RomSaveState>> {
+        use crate::domain::rom_save_state::{FileSyncState, RomSaveState};
+        self.db
+            .call(move |c| {
+                let head = c
+                    .query_row(
+                        "SELECT active_slot, slot_confirmed, emulator, system, last_synced_core, own_upload_ids, slots, last_sync_check_at \
+                         FROM rom_save_states WHERE rom_id = ?1",
+                        [rom_id],
+                        |r| {
+                            Ok((
+                                r.get::<_, Option<String>>(0)?,
+                                r.get::<_, i64>(1)? != 0,
+                                r.get::<_, String>(2)?,
+                                r.get::<_, String>(3)?,
+                                r.get::<_, Option<String>>(4)?,
+                                r.get::<_, Option<String>>(5)?,
+                                r.get::<_, String>(6)?,
+                                r.get::<_, Option<String>>(7)?,
+                            ))
+                        },
+                    )
+                    .optional()?;
+                let mut files = std::collections::BTreeMap::new();
+                {
+                    let mut stmt = c.prepare(
+                        "SELECT filename, tracked_save_id, last_sync_hash, last_sync_at, last_sync_server_updated_at, last_sync_server_save_id, \
+                         last_sync_server_size, last_sync_local_mtime, last_sync_local_size FROM rom_save_files WHERE rom_id = ?1",
+                    )?;
+                    let rows = stmt.query_map([rom_id], |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            FileSyncState {
+                                tracked_save_id: r.get(1)?,
+                                last_sync_hash: Some(r.get::<_, String>(2)?).filter(|h| !h.is_empty()),
+                                last_sync_at: r.get(3)?,
+                                last_sync_server_updated_at: r.get(4)?,
+                                last_sync_server_save_id: r.get(5)?,
+                                last_sync_server_size: r.get(6)?,
+                                last_sync_local_mtime: r.get(7)?,
+                                last_sync_local_size: r.get(8)?,
+                            },
+                        ))
+                    })?;
+                    for row in rows {
+                        let (name, state) = row?;
+                        files.insert(name, state);
+                    }
+                }
+                Ok(head.map(|(active_slot, slot_confirmed, emulator, system, last_synced_core, own, slots, checked)| RomSaveState {
+                    active_slot,
+                    slot_confirmed,
+                    emulator,
+                    system,
+                    last_synced_core,
+                    own_upload_ids: own.and_then(|text| serde_json::from_str::<Vec<i64>>(&text).ok()),
+                    slots: serde_json::from_str::<std::collections::BTreeMap<String, serde_json::Value>>(&slots).unwrap_or_default(),
+                    files,
+                    last_sync_check_at: checked,
+                }))
+            })
+            .await
+    }
+
+    async fn save(&self, rom_id: i64, state: &crate::domain::rom_save_state::RomSaveState) -> anyhow::Result<()> {
+        let state = state.clone();
+        self.db
+            .call(move |c| {
+                let tx = c.transaction()?;
+                tx.execute(
+                    "INSERT INTO rom_save_states (rom_id, active_slot, slot_confirmed, emulator, system, last_synced_core, own_upload_ids, slots, last_sync_check_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+                     ON CONFLICT(rom_id) DO UPDATE SET active_slot = excluded.active_slot, slot_confirmed = excluded.slot_confirmed, emulator = excluded.emulator, \
+                       system = excluded.system, last_synced_core = excluded.last_synced_core, own_upload_ids = excluded.own_upload_ids, \
+                       slots = excluded.slots, last_sync_check_at = excluded.last_sync_check_at",
+                    params![
+                        rom_id,
+                        state.active_slot,
+                        i64::from(state.slot_confirmed),
+                        state.emulator,
+                        state.system,
+                        state.last_synced_core,
+                        state.own_upload_ids.as_ref().map(|ids| serde_json::to_string(ids).unwrap_or_else(|_| "[]".into())),
+                        serde_json::to_string(&state.slots).unwrap_or_else(|_| "{}".into()),
+                        state.last_sync_check_at,
+                    ],
+                )?;
+                tx.execute("DELETE FROM rom_save_files WHERE rom_id = ?1", [rom_id])?;
+                for (name, f) in &state.files {
+                    // A tracked file always carries a hash baseline (the table says NOT NULL); a hash-less entry is dropped.
+                    let Some(hash) = f.last_sync_hash.as_deref().filter(|h| !h.is_empty()) else { continue };
+                    tx.execute(
+                        "INSERT INTO rom_save_files (rom_id, filename, tracked_save_id, last_sync_hash, last_sync_at, last_sync_server_updated_at, \
+                         last_sync_server_save_id, last_sync_server_size, last_sync_local_mtime, last_sync_local_size) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                        params![
+                            rom_id,
+                            name,
+                            f.tracked_save_id,
+                            hash,
+                            f.last_sync_at,
+                            f.last_sync_server_updated_at,
+                            f.last_sync_server_save_id,
+                            f.last_sync_server_size,
+                            f.last_sync_local_mtime,
+                            f.last_sync_local_size
+                        ],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(())
+            })
+            .await
+    }
+
+    async fn delete(&self, rom_id: i64) -> anyhow::Result<()> {
+        self.db
+            .call(move |c| {
+                c.execute("DELETE FROM rom_save_states WHERE rom_id = ?1", [rom_id])?;
+                c.execute("DELETE FROM rom_save_files WHERE rom_id = ?1", [rom_id])?;
+                Ok(())
+            })
+            .await
+    }
+
+    async fn tracked(&self, rom_id: i64) -> anyhow::Result<bool> {
+        self.db
+            .call(move |c| {
+                c.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM rom_save_files WHERE rom_id = ?1) OR EXISTS(SELECT 1 FROM rom_save_states WHERE rom_id = ?1 AND slots != '{}')",
+                    [rom_id],
+                    |r| r.get(0),
+                )
+            })
+            .await
+    }
+
+    async fn rom_ids(&self) -> anyhow::Result<Vec<i64>> {
+        self.db
+            .call(|c| {
+                let mut stmt = c.prepare("SELECT rom_id FROM rom_save_states ORDER BY rom_id")?;
+                let rows = stmt.query_map([], |r| r.get(0))?;
+                rows.collect()
+            })
+            .await
+    }
+}
+
+/// `rom_title_ids`.
+#[derive(Clone)]
+pub struct SqliteTitleIds {
+    db: Db,
+}
+
+impl SqliteTitleIds {
+    pub fn new(db: Db) -> Self {
+        Self { db }
+    }
+}
+
+#[async_trait]
+impl crate::services::ports::TitleIdRepo for SqliteTitleIds {
+    async fn get(&self, rom_id: i64) -> anyhow::Result<Option<crate::services::ports::StoredTitle>> {
+        self.db
+            .call(move |c| {
+                c.query_row("SELECT title_id, source FROM rom_title_ids WHERE rom_id = ?1", [rom_id], |r| {
+                    Ok(crate::services::ports::StoredTitle { title_id: r.get(0)?, source: r.get(1)? })
+                })
+                .optional()
+            })
+            .await
+    }
+
+    async fn set(&self, rom_id: i64, title_id: &str, source: &str) -> anyhow::Result<()> {
+        let (title_id, source) = (title_id.to_string(), source.to_string());
+        self.db
+            .call(move |c| {
+                c.execute(
+                    "INSERT INTO rom_title_ids (rom_id, title_id, source) VALUES (?1, ?2, ?3) \
+                     ON CONFLICT(rom_id) DO UPDATE SET title_id = excluded.title_id, source = excluded.source",
+                    params![rom_id, title_id, source],
+                )?;
+                Ok(())
+            })
+            .await
+    }
+
+    async fn clear(&self, rom_id: i64) -> anyhow::Result<()> {
+        self.db
+            .call(move |c| {
+                c.execute("DELETE FROM rom_title_ids WHERE rom_id = ?1", [rom_id])?;
+                Ok(())
+            })
+            .await
     }
 }

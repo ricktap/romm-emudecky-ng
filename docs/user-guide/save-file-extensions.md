@@ -1,3 +1,5 @@
+> **Not current.** This page describes the RetroArch/RetroDECK design of the upstream plugin. Save sync today covers Nintendo Switch on Eden, yuzu and Ryujinx; see [Save sync](save-sync.md). The retro systems return in 0.80.
+
 # Save File Extensions
 
 Research results for which save file extensions EmuDeck cores produce, and what our plugin needs to support. This

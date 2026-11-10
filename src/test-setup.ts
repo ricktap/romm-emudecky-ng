@@ -50,12 +50,6 @@ vi.mock("@decky/api", async () => {
   };
 });
 
-// unportedCallable (firmware/save-sync callables awaiting their Rust port) behaves like callable()
-// in component tests: a vi.fn that resolves to undefined. Its own test loads the real module.
-vi.mock("./api/unportedCallable", async (importActual) => {
-  const actual = await importActual<typeof import("./api/unportedCallable")>();
-  return { ...actual, unportedCallable: <T>(_name: string) => vi.fn().mockResolvedValue(undefined) as unknown as T };
-});
 
 // @decky/ui — explicit pass-through stubs. Auto-mock yields undefined components
 // and breaks RTL render() with "Element type is invalid".

@@ -222,9 +222,14 @@ async def test_shim_against_the_real_rust_backend(tmp_path):
     assert await plugin.get_settings_reset_notice() == {"pending": False, "backed_up_to": None}  # type: ignore[attr-defined]
 
     assert await plugin.get_download_queue() == {"downloads": []}  # type: ignore[attr-defined]
-    unported = await plugin.get_save_sync_settings()  # type: ignore[attr-defined]
-    assert unported["success"] is False
-    assert unported["reason"] == "not_implemented"
+    save_settings = await plugin.get_save_sync_settings()  # type: ignore[attr-defined]
+    assert save_settings == {
+        "save_sync_enabled": False,
+        "sync_before_launch": True,
+        "sync_after_exit": True,
+        "default_slot": "default",
+        "autocleanup_limit": 10,
+    }
     process = plugin._backend.process
     await plugin._unload()
     assert process.returncode == 0

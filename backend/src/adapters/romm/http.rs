@@ -178,6 +178,43 @@ impl RommHttp {
         .await
     }
 
+    /// Authenticated JSON `POST`/`PUT`, one attempt (a write is never replayed blindly). An empty answer is `{}`.
+    pub async fn send_json(&self, method: Method, path: &str, body: &Value) -> Result<Value, RommError> {
+        let url = self.url(path);
+        let label = method.as_str().to_string();
+        let resp = send(self.authed(method, &url, REQUEST_TIMEOUT)?.json(body), &url, &label).await?;
+        json_body(resp, &url, &label, true).await
+    }
+
+    /// Authenticated multipart upload of one in-memory file under the form field `saveFile` (RomM's save endpoints). One
+    /// attempt, a longer timeout than a plain request; the file name never carries a line break, NUL or quote.
+    pub async fn upload_save_file(&self, method: Method, path: &str, file_name: &str, data: Vec<u8>) -> Result<Value, RommError> {
+        let url = self.url(path);
+        let label = method.as_str().to_string();
+        let safe: String = file_name.chars().filter(|c| !matches!(c, '\r' | '\n' | '\0' | '"')).collect();
+        let part = reqwest::multipart::Part::bytes(data).file_name(safe).mime_str("application/octet-stream").map_err(|e| RommError::Api(e.to_string()))?;
+        let form = reqwest::multipart::Form::new().part("saveFile", part);
+        let resp = send(self.authed(method, &url, Duration::from_secs(60))?.multipart(form), &url, &label).await?;
+        json_body(resp, &url, &label, true).await
+    }
+
+    /// Authenticated `GET` of a binary body held in memory (a save is small), refused beyond `limit` bytes.
+    pub async fn get_bytes(&self, path: &str, limit: u64) -> Result<Vec<u8>, RommError> {
+        let url = self.url(path);
+        self.with_retry(|| async {
+            let resp = send(self.authed(Method::GET, &url, Duration::from_secs(60))?, &url, "GET").await?;
+            if resp.content_length().is_some_and(|n| n > limit) {
+                return Err(RommError::Api(format!("Response too large ({url})")));
+            }
+            let bytes = resp.bytes().await.map_err(|e| translate_transport(&e, &url))?;
+            if bytes.len() as u64 > limit {
+                return Err(RommError::Api(format!("Response too large ({url})")));
+            }
+            Ok(bytes.to_vec())
+        })
+        .await
+    }
+
     /// Authenticated `GET` in a single attempt with a short timeout.
     pub async fn get_json_once(&self, path: &str, timeout: Duration) -> Result<Value, RommError> {
         let url = self.url(path);
@@ -240,10 +277,10 @@ impl RommHttp {
         json_body(resp, &url, &label, true).await
     }
 
-    async fn with_retry<F, Fut>(&self, mut attempt_fn: F) -> Result<Value, RommError>
+    async fn with_retry<T, F, Fut>(&self, mut attempt_fn: F) -> Result<T, RommError>
     where
         F: FnMut() -> Fut,
-        Fut: Future<Output = Result<Value, RommError>>,
+        Fut: Future<Output = Result<T, RommError>>,
     {
         let max = self.retry.max_attempts.max(1);
         let mut attempt = 0;
@@ -733,6 +770,7 @@ pub fn translate_status(status: StatusCode, url: &str, method: &str, detail: Opt
         401 => RommError::Auth(message),
         403 => RommError::Forbidden(message),
         404 => RommError::NotFound { message, detail },
+        409 => RommError::Conflict(message),
         429 => RommError::Server {
             status: 429,
             message: format!("Rate limited \u{2014} too many requests ({method} {url})"),

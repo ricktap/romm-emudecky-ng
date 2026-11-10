@@ -18,8 +18,34 @@ export interface SaveSyncSettings {
  *  `SAVE_SYNC_IN_CONTENT_DIR_REASON`. */
 export const SAVEFILES_IN_CONTENT_DIR_REASON = "savefiles_in_content_dir";
 
-/** The `reason` of a callable the backend has not ported yet (save sync until 0.55.0, firmware until 0.45.0). */
+/** The `reason` of a callable the backend has not ported yet. No callable answers it today; it stays a benign skip. */
 export const NOT_IMPLEMENTED_REASON = "not_implemented";
+
+/** What the game page's Saves chip says when a game's save cannot be located yet (the backend's labels). */
+export const CHOOSE_SAVE_LABEL = "Choose save folder";
+export const CHOOSE_PROFILE_LABEL = "Choose profile";
+
+/** One title folder in the emulator's save directory, a candidate for "this game's save". */
+export interface SaveTitleCandidate {
+  title_id: string;
+  files: number;
+  bytes: number;
+  /** Newest file time, seconds since the epoch. */
+  newest: number;
+}
+
+/** `get_save_title_info`: the title ID bound to a game, what to choose from, and the Eden/yuzu user profile. */
+export interface SaveTitleInfo {
+  success: boolean;
+  title_id: string | null;
+  source: "file_name" | "romm" | "learned" | "manual" | null;
+  /** The one save folder that changed during the last play session, to confirm. */
+  proposal: string | null;
+  candidates: SaveTitleCandidate[];
+  profiles: { id: string; name: string }[];
+  /** The user profile in use (chosen, or the only one); `null` when a choice is needed or there is none yet. */
+  profile: string | null;
+}
 
 /**
  * A pre-launch sync answer that means "there is nothing to sync here" rather than "syncing failed": the game
