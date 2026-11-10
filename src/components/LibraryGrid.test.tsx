@@ -9,9 +9,10 @@ vi.mock("../api/backend", () => ({
   startDownload: vi.fn(),
   pauseDownload: vi.fn(),
   resumeDownload: vi.fn(),
+  getArtworkBase64: vi.fn(),
 }));
 
-import { getLibraryOverview, getPlatforms, pauseDownload, resumeDownload, startDownload } from "../api/backend";
+import { getArtworkBase64, getLibraryOverview, getPlatforms, pauseDownload, resumeDownload, startDownload } from "../api/backend";
 import { setDownloads } from "../utils/downloadStore";
 import { emitDeckyEvent } from "../test-utils/decky-api-mock";
 import { getLibraryPlatformFilter, setLibraryPlatformFilter } from "../utils/libraryRoute";
@@ -127,9 +128,23 @@ describe("LibraryGrid", () => {
     expect(getLibraryOverview).toHaveBeenCalledTimes(2);
   });
 
-  it("a cover whose image cannot load falls back to the name", async () => {
+  it("a cover without Steam art is taken from RomM, shown, and given back to Steam", async () => {
+    vi.mocked(getArtworkBase64).mockResolvedValue({ base64: "QUJD" });
+    const setArt = vi.fn().mockResolvedValue(undefined);
+    (globalThis as any).SteamClient = { ...(globalThis as any).SteamClient, Apps: { SetCustomArtworkForApp: setArt } };
     const { getByTestId } = await renderGrid();
     fireEvent.error(getByTestId("cover-1").querySelector("img")!);
+    await flush();
+    expect(getArtworkBase64).toHaveBeenCalledWith(1);
+    expect(getByTestId("cover-1").querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,QUJD");
+    expect(setArt).toHaveBeenCalledWith(1001, "QUJD", "png", 0);
+  });
+
+  it("a cover RomM has no image for either falls back to the name", async () => {
+    vi.mocked(getArtworkBase64).mockResolvedValue({ base64: null });
+    const { getByTestId } = await renderGrid();
+    fireEvent.error(getByTestId("cover-1").querySelector("img")!);
+    await flush();
     expect(getByTestId("cover-1").querySelector('[data-testid="cover-fallback"]')?.textContent).toBe("Zelda");
   });
 

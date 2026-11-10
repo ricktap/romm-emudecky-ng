@@ -2,7 +2,7 @@ import { FC, useEffect, useMemo, useState } from "react";
 import { addEventListener, removeEventListener, toaster } from "@decky/api";
 import { DialogButton, Focusable, Navigation, TextField } from "@decky/ui";
 import { FaCheck, FaCloud, FaDownload, FaExclamationTriangle, FaPause } from "react-icons/fa";
-import { getPlatforms, getLibraryOverview, pauseDownload, resumeDownload, startDownload } from "../api/backend";
+import { getArtworkBase64, getPlatforms, getLibraryOverview, pauseDownload, resumeDownload, startDownload } from "../api/backend";
 import { getDownloadState } from "../utils/downloadStore";
 import {
   GRID_FILTERS,
@@ -48,7 +48,23 @@ const Badge: FC<{ status: CoverStatus }> = ({ status }) => {
 
 const Cover: FC<{ rom: LibraryOverviewRom; status: CoverStatus; onAction: (a: Exclude<QuickAction, null>) => void }> = ({ rom, status, onAction }) => {
   const [broken, setBroken] = useState(false);
+  const [fallback, setFallback] = useState<string | null>(null);
   const action = quickAction(status);
+  // Steam has no portrait art for this shortcut (lost, or never applied): take the cover from RomM, show it, and
+  // give it back to Steam so the game page and Steam's own library show it too.
+  const healCover = () => {
+    getArtworkBase64(rom.rom_id)
+      .then(async (r) => {
+        if (!r?.base64) return setBroken(true);
+        setFallback(`data:image/png;base64,${r.base64}`);
+        try {
+          await SteamClient.Apps.SetCustomArtworkForApp(rom.app_id, r.base64, "png", 0);
+        } catch {
+          // showing it here is enough; Refresh Artwork will retry the Steam side
+        }
+      })
+      .catch(() => setBroken(true));
+  };
   return (
     <Focusable
       data-testid={`cover-${rom.rom_id}`}
@@ -61,9 +77,9 @@ const Cover: FC<{ rom: LibraryOverviewRom; status: CoverStatus; onAction: (a: Ex
       <div style={{ position: "relative", width: "150px", height: "200px", borderRadius: "4px", overflow: "hidden", background: "#171c23" }}>
         {!broken && (
           <img
-            src={coverUrl(rom.app_id)}
+            src={fallback ?? coverUrl(rom.app_id)}
             alt=""
-            onError={() => setBroken(true)}
+            onError={() => (fallback ? setBroken(true) : healCover())}
             style={{ width: "100%", height: "100%", objectFit: "cover", opacity: status.state === "romm_only" ? 0.6 : 1 }}
           />
         )}
