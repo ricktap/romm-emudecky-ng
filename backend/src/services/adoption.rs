@@ -124,7 +124,7 @@ impl InstallAdoptionService {
             .map(str::to_string)
             .or_else(|| row.as_ref().and_then(|r| r.sibling_group_key.clone()));
         let blocked = self.library.install(rom_id).await?.is_some()
-            || self.jobs.get(rom_id).await?.is_some()
+            || self.jobs.get(crate::domain::download_job::JobKey::rom(rom_id)).await?.is_some()
             || self.sibling_installed(rom_id, group_key.as_deref()).await?;
         Ok(Eligibility {
             blocked,
@@ -434,7 +434,7 @@ impl InstallAdoptionService {
             return Ok(true);
         };
         Ok(self.library.install(rom_id).await?.is_some()
-            || self.jobs.get(rom_id).await?.is_some()
+            || self.jobs.get(crate::domain::download_job::JobKey::rom(rom_id)).await?.is_some()
             || self.sibling_installed(rom_id, row.sibling_group_key.as_deref()).await?)
     }
 

@@ -78,7 +78,7 @@ fn seed_rom(dirs: &Dirs, id: i64, fs_name: &str, app_id: Option<i64>) {
 
 fn job_status(dirs: &Dirs, id: i64) -> Option<String> {
     db(dirs)
-        .query_row("SELECT status FROM download_jobs WHERE rom_id = ?1", [id], |r| r.get(0))
+        .query_row("SELECT status FROM download_jobs WHERE kind = 'rom' AND item_id = ?1", [id], |r| r.get(0))
         .ok()
 }
 
@@ -278,6 +278,53 @@ async fn cancel_deletes_the_partial_and_one_transfer_runs_at_a_time() {
     b.shutdown().await;
 }
 
+// ── Download kinds (rom, firmware) ───────────────────────────────────────
+
+#[tokio::test]
+async fn rom_frames_and_queue_rows_carry_their_kind_and_the_download_callables_take_an_optional_one() {
+    let romm = FakeRomm::start().await;
+    let dirs = Dirs::new();
+    prepare(&dirs, &romm);
+    romm.set_rom(switch_rom(7, "metroid.nsp", LEN));
+    romm.set_content(7, payload(LEN));
+    romm.stall_at(Some(PARTIAL));
+    let mut b = Backend::spawn(&dirs).await;
+    seed_rom(&dirs, 7, "metroid.nsp", None);
+
+    // The kind is optional and defaults to a ROM; a ROM id given with kind "rom" is the same request.
+    assert_eq!(b.call("start_download", json!([7, "rom"])).await["success"], true);
+    let frame = b.wait_event("download_progress", |p| p["rom_id"] == 7 && p["status"] == "downloading").await;
+    assert_eq!(frame["kind"], "rom");
+    assert!(frame.get("firmware_id").is_none());
+    let entry = queue_entry(&b.call("get_download_queue", json!([])).await, 7);
+    assert_eq!((entry["kind"].clone(), entry["rom_id"].clone()), (json!("rom"), json!(7)));
+    assert_eq!(
+        b.call("pause_download", json!([7, "rom"])).await,
+        json!({"success": true, "message": "Download paused"})
+    );
+    romm.stall_at(None);
+    romm.release.notify_waiters();
+    b.wait_event("download_progress", |p| p["rom_id"] == 7 && p["status"] == "paused").await;
+
+    // Firmware has no handler yet: every download callable says so instead of touching a ROM with the same id.
+    for call in ["start_download", "resume_download", "cancel_download", "pause_download"] {
+        let r = b.call(call, json!([7, "firmware"])).await;
+        assert_eq!(r["success"], false, "{call}");
+        assert_eq!(r["reason"], "unsupported_kind", "{call}");
+    }
+    let still = queue_entry(&b.call("get_download_queue", json!([])).await, 7);
+    assert_eq!(still["status"], "paused", "the firmware request did not disturb the ROM download");
+
+    // Bad kind and bad arity are protocol errors.
+    let bad = b.request("start_download", json!([7, "save"])).await;
+    assert!(bad["error"]["message"].as_str().unwrap().contains("kind must be"));
+    let bad = b.request("start_download", json!([7, 5])).await;
+    assert!(bad["error"]["message"].as_str().unwrap().contains("kind must be a string"));
+    let bad = b.request("start_download", json!([7, "rom", "x"])).await;
+    assert!(bad["error"]["message"].as_str().unwrap().contains("1 to 2 positional arguments"));
+    b.shutdown().await;
+}
+
 // ── Multipart ROMs as RomM's cached ZIP ──────────────────────────────────
 
 const ETAG_V1: &str = "\"cached-v1\"";
@@ -317,7 +364,7 @@ fn archive(seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
 fn job_identity(dirs: &Dirs, id: i64) -> (Option<String>, Option<i64>, i64, i64) {
     db(dirs)
         .query_row(
-            "SELECT etag, representation_length, cached_zip, needs_recovery FROM download_jobs WHERE rom_id = ?1",
+            "SELECT etag, representation_length, cached_zip, needs_recovery FROM download_jobs WHERE kind = 'rom' AND item_id = ?1",
             [id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
@@ -466,7 +513,7 @@ async fn move_to_front_runs_that_download_next() {
     assert_eq!(backend.downloads.move_to_front(99).await["reason"], "not_queued");
     let positions: Vec<(i64, i64)> = {
         let c = db(&dirs);
-        let mut stmt = c.prepare("SELECT rom_id, position FROM download_jobs ORDER BY position").unwrap();
+        let mut stmt = c.prepare("SELECT item_id, position FROM download_jobs ORDER BY position").unwrap();
         stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
             .unwrap()
             .map(Result::unwrap)

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use rusqlite::{OptionalExtension, Row, params};
 
 use crate::adapters::db::Db;
-use crate::domain::download_job::{DownloadJob, JobStatus};
+use crate::domain::download_job::{DownloadJob, JobKey, JobKind, JobStatus};
 use crate::domain::rom_install::RomInstall;
 use crate::services::ports::{
     DownloadJobRepo, KvConfigRepo, LibraryRepo, RegistryPlatformRow, RomRegionsReader, RomRow,
@@ -94,39 +94,43 @@ impl RomRegionsReader for SqliteRomRegions {
     }
 }
 
-const JOB_COLUMNS: &str = "rom_id, rom_name, platform_name, file_name, target_path, tmp_path, is_multi, total_bytes, \
-     status, interrupt_reason, range_supported, position, created_at, updated_at, \
+const JOB_COLUMNS: &str = "kind, item_id, rom_name, platform_name, file_name, target_path, tmp_path, is_multi, \
+     total_bytes, status, interrupt_reason, range_supported, position, created_at, updated_at, \
      etag, last_modified, representation_length, cached_zip, needs_recovery";
 
 fn row_to_job(r: &Row<'_>) -> rusqlite::Result<DownloadJob> {
-    let status: String = r.get(8)?;
-    let total: Option<i64> = r.get(7)?;
+    let kind: String = r.get(0)?;
+    let status: String = r.get(9)?;
+    let total: Option<i64> = r.get(8)?;
     Ok(DownloadJob {
-        rom_id: r.get(0)?,
-        rom_name: r.get(1)?,
-        platform_name: r.get(2)?,
-        file_name: r.get(3)?,
-        target_path: r.get(4)?,
-        tmp_path: r.get(5)?,
-        is_multi: r.get::<_, i64>(6)? != 0,
+        kind: JobKind::parse(&kind).ok_or_else(|| {
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, format!("bad kind {kind}").into())
+        })?,
+        item_id: r.get(1)?,
+        rom_name: r.get(2)?,
+        platform_name: r.get(3)?,
+        file_name: r.get(4)?,
+        target_path: r.get(5)?,
+        tmp_path: r.get(6)?,
+        is_multi: r.get::<_, i64>(7)? != 0,
         total_bytes: total.and_then(|t| u64::try_from(t).ok()),
         status: JobStatus::parse(&status).ok_or_else(|| {
             rusqlite::Error::FromSqlConversionFailure(
-                8,
+                9,
                 rusqlite::types::Type::Text,
                 format!("bad status {status}").into(),
             )
         })?,
-        interrupt_reason: r.get(9)?,
-        range_supported: r.get::<_, Option<i64>>(10)?.map(|v| v != 0),
-        position: r.get(11)?,
-        created_at: r.get(12)?,
-        updated_at: r.get(13)?,
-        etag: r.get(14)?,
-        last_modified: r.get(15)?,
-        representation_length: r.get::<_, Option<i64>>(16)?.and_then(|l| u64::try_from(l).ok()),
-        cached_zip: r.get::<_, i64>(17)? != 0,
-        needs_recovery: r.get::<_, i64>(18)? != 0,
+        interrupt_reason: r.get(10)?,
+        range_supported: r.get::<_, Option<i64>>(11)?.map(|v| v != 0),
+        position: r.get(12)?,
+        created_at: r.get(13)?,
+        updated_at: r.get(14)?,
+        etag: r.get(15)?,
+        last_modified: r.get(16)?,
+        representation_length: r.get::<_, Option<i64>>(17)?.and_then(|l| u64::try_from(l).ok()),
+        cached_zip: r.get::<_, i64>(18)? != 0,
+        needs_recovery: r.get::<_, i64>(19)? != 0,
     })
 }
 
@@ -144,12 +148,12 @@ impl SqliteDownloadJobs {
 
 #[async_trait]
 impl DownloadJobRepo for SqliteDownloadJobs {
-    async fn get(&self, rom_id: i64) -> anyhow::Result<Option<DownloadJob>> {
+    async fn get(&self, key: JobKey) -> anyhow::Result<Option<DownloadJob>> {
         self.db
             .call(move |c| {
                 c.query_row(
-                    &format!("SELECT {JOB_COLUMNS} FROM download_jobs WHERE rom_id = ?1"),
-                    [rom_id],
+                    &format!("SELECT {JOB_COLUMNS} FROM download_jobs WHERE kind = ?1 AND item_id = ?2"),
+                    params![key.kind.as_str(), key.id],
                     row_to_job,
                 )
                 .optional()
@@ -164,10 +168,11 @@ impl DownloadJobRepo for SqliteDownloadJobs {
                 c.execute(
                     &format!(
                         "INSERT OR REPLACE INTO download_jobs ({JOB_COLUMNS}) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)"
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)"
                     ),
                     params![
-                        j.rom_id,
+                        j.kind.as_str(),
+                        j.item_id,
                         j.rom_name,
                         j.platform_name,
                         j.file_name,
@@ -193,11 +198,14 @@ impl DownloadJobRepo for SqliteDownloadJobs {
             .await
     }
 
-    async fn delete(&self, rom_id: i64) -> anyhow::Result<()> {
+    async fn delete(&self, key: JobKey) -> anyhow::Result<()> {
         self.db
             .call(move |c| {
-                c.execute("DELETE FROM download_jobs WHERE rom_id = ?1", [rom_id])
-                    .map(|_| ())
+                c.execute(
+                    "DELETE FROM download_jobs WHERE kind = ?1 AND item_id = ?2",
+                    params![key.kind.as_str(), key.id],
+                )
+                .map(|_| ())
             })
             .await
     }
@@ -206,7 +214,7 @@ impl DownloadJobRepo for SqliteDownloadJobs {
         self.db
             .call(|c| {
                 let mut stmt = c.prepare(&format!(
-                    "SELECT {JOB_COLUMNS} FROM download_jobs ORDER BY position, rom_id"
+                    "SELECT {JOB_COLUMNS} FROM download_jobs ORDER BY position, kind, item_id"
                 ))?;
                 let rows = stmt.query_map([], row_to_job)?;
                 rows.collect()
@@ -427,7 +435,7 @@ impl LibraryRepo for SqliteLibrary {
                 let id = i.rom_id;
                 if !exists("SELECT count(*) FROM roms WHERE rom_id = ?1", &id)?
                     || exists("SELECT count(*) FROM rom_installs WHERE rom_id = ?1", &id)?
-                    || exists("SELECT count(*) FROM download_jobs WHERE rom_id = ?1", &id)?
+                    || exists("SELECT count(*) FROM download_jobs WHERE kind = 'rom' AND item_id = ?1", &id)?
                 {
                     return Ok(false);
                 }
@@ -550,7 +558,8 @@ mod tests {
     fn new_job(rom_id: i64, is_multi: bool) -> DownloadJob {
         DownloadJob::enqueue(
             crate::domain::download_job::NewJob {
-                rom_id,
+                kind: JobKind::Rom,
+                item_id: rom_id,
                 rom_name: "Game".into(),
                 platform_name: "Switch".into(),
                 file_name: "game.zip".into(),
@@ -579,7 +588,7 @@ mod tests {
             "2026-01-01T00:01:00+00:00",
         );
         jobs.save(&job).await.unwrap();
-        let back = jobs.get(7).await.unwrap().unwrap();
+        let back = jobs.get(JobKey::rom(7)).await.unwrap().unwrap();
         assert_eq!(back, job);
         assert_eq!(back.etag.as_deref(), Some("\"ab\\c d\""), "the exact header value is preserved");
         assert_eq!(back.representation_length, Some(15_232_100_000));
@@ -605,14 +614,67 @@ mod tests {
         .unwrap();
         drop(old);
         let (db, version) = Db::open(&path).await.unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
         let jobs = SqliteDownloadJobs::new(db);
-        let multi = jobs.get(1).await.unwrap().unwrap();
+        let multi = jobs.get(JobKey::rom(1)).await.unwrap().unwrap();
         assert!(multi.needs_recovery, "an old multipart partial is kept but flagged");
         assert_eq!((multi.etag, multi.representation_length, multi.cached_zip), (None, None, false));
-        let single = jobs.get(2).await.unwrap().unwrap();
+        let single = jobs.get(JobKey::rom(2)).await.unwrap().unwrap();
         assert!(!single.needs_recovery, "single-file jobs are unaffected");
-        assert_eq!(jobs.get(1).await.unwrap().unwrap().status, JobStatus::Interrupted, "progress is not discarded");
+        assert_eq!(jobs.get(JobKey::rom(1)).await.unwrap().unwrap().status, JobStatus::Interrupted, "progress is not discarded");
+    }
+
+    #[tokio::test]
+    async fn the_same_id_can_be_a_rom_job_and_a_firmware_job() {
+        let (_d, db) = db().await;
+        let jobs = SqliteDownloadJobs::new(db);
+        let rom = new_job(7, false);
+        let mut firmware = new_job(7, false);
+        firmware.kind = JobKind::Firmware;
+        firmware.rom_name = "prod.keys".into();
+        jobs.save(&rom).await.unwrap();
+        jobs.save(&firmware).await.unwrap();
+        assert_eq!(jobs.get(JobKey::rom(7)).await.unwrap().unwrap().rom_name, "Game");
+        assert_eq!(jobs.get(JobKey::firmware(7)).await.unwrap().unwrap().rom_name, "prod.keys");
+        assert_eq!(jobs.all().await.unwrap().len(), 2);
+        jobs.delete(JobKey::rom(7)).await.unwrap();
+        assert!(jobs.get(JobKey::rom(7)).await.unwrap().is_none());
+        assert!(jobs.get(JobKey::firmware(7)).await.unwrap().is_some(), "deleting one kind leaves the other");
+    }
+
+    #[tokio::test]
+    async fn migration_14_turns_every_existing_job_into_a_rom_job_and_keeps_all_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        let (old, version) = Db::open_with(&path, &crate::adapters::db::MIGRATIONS[..13]).await.unwrap();
+        assert_eq!(version, 13);
+        old.call(|c| {
+            c.execute_batch(
+                "INSERT INTO download_jobs (rom_id, rom_name, platform_name, file_name, target_path, tmp_path, is_multi,
+                     total_bytes, status, interrupt_reason, range_supported, position, created_at, updated_at,
+                     etag, last_modified, representation_length, cached_zip, needs_recovery) VALUES
+                 (5, 'Zelda', 'Switch', 'z.zip', '/r/z', '/r/z.zip.tmp', 1, 900, 'interrupted', 'timeout', 1, 4, 'c', 'u',
+                  '\"tag\"', 'lm', 900, 1, 0),
+                 (6, 'Mario', 'Switch', 'm.nsp', '/r/m.nsp', '/r/m.nsp.tmp', 0, NULL, 'paused', NULL, NULL, 9, 'c2', 'u2',
+                  NULL, NULL, NULL, 0, 0);",
+            )
+        })
+        .await
+        .unwrap();
+        drop(old);
+        let (db, version) = Db::open(&path).await.unwrap();
+        assert_eq!(version, 14);
+        let jobs = SqliteDownloadJobs::new(db);
+        let all = jobs.all().await.unwrap();
+        assert_eq!(all.iter().map(|j| (j.kind, j.item_id, j.position)).collect::<Vec<_>>(), vec![
+            (JobKind::Rom, 5, 4),
+            (JobKind::Rom, 6, 9)
+        ]);
+        let z = jobs.get(JobKey::rom(5)).await.unwrap().unwrap();
+        assert_eq!((z.etag.as_deref(), z.representation_length, z.cached_zip), (Some("\"tag\""), Some(900), true));
+        assert_eq!((z.interrupt_reason.as_deref(), z.range_supported, z.total_bytes), (Some("timeout"), Some(true), Some(900)));
+        assert_eq!(jobs.get(JobKey::rom(6)).await.unwrap().unwrap().status, JobStatus::Paused);
+        assert_eq!(jobs.next_position().await.unwrap(), 10, "the position index and ordering survive");
     }
 
     #[tokio::test]

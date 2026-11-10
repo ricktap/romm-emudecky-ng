@@ -13,7 +13,12 @@
 export type DownloadStatus =
   "queued" | "downloading" | "extracting" | "completed" | "failed" | "cancelled" | "paused" | "interrupted";
 
+/** What a queued download is. ROM frames carry `rom_id`; firmware frames will carry `firmware_id` (0.45.0). */
+export type DownloadKind = "rom" | "firmware";
+
 export interface DownloadItem {
+  /** Absent on frames from before kinds existed: a ROM. */
+  kind?: DownloadKind;
   rom_id: number;
   rom_name: string;
   platform_name: string;
@@ -53,6 +58,7 @@ export interface DownloadItem {
 export type DownloadPhase = "waiting" | "retrying";
 
 export interface DownloadProgressEvent {
+  kind?: DownloadKind;
   rom_id: number;
   rom_name: string;
   platform_name: string;

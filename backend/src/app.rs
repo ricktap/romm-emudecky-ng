@@ -16,6 +16,7 @@ use crate::adapters::plugin_metadata::read_plugin_version;
 use crate::adapters::repositories::{SqliteDownloadJobs, SqliteKvConfig, SqliteLibrary, SqliteRomRegions};
 use crate::adapters::romm::api::RommApi;
 use crate::adapters::romm::http::{RetryListener, RetryPolicy, RommHttp};
+use crate::domain::download_job::JobKind;
 use crate::domain::errors::unknown_failure;
 use crate::domain::settings::{RESET_NOTICE_KEY, fold_legacy_save_sync_settings, migrate_settings, stored_version};
 use crate::domain::version::MIN_REQUIRED_VERSION;
@@ -405,24 +406,30 @@ impl Backend {
                 let run=a[1].as_str().unwrap_or("");let id=a[2].as_str().map(str::to_string).unwrap_or_else(||a[2].to_string());
                 Ok(s.report(&a[0],run,&id).await.unwrap_or_else(|e|unknown_failure(&e)))
             }),
-            "start_download" => bind(name, 1, 1, d, |d, a| async move {
-                let id = rom_id_arg(&a[0])?;
-                Ok(d.start_download(id).await)
+            "start_download" => bind(name, 1, 2, d, |d, a| async move {
+                match job_args(&a)? {
+                    (id, JobKind::Rom) => Ok(d.start_download(id).await),
+                    (_, JobKind::Firmware) => Ok(unsupported_kind()),
+                }
             }),
-            "resume_download" => bind(name, 1, 1, d, |d, a| async move {
-                let id = rom_id_arg(&a[0])?;
-                Ok(d.resume_download(id).await)
+            "resume_download" => bind(name, 1, 2, d, |d, a| async move {
+                match job_args(&a)? {
+                    (id, JobKind::Rom) => Ok(d.resume_download(id).await),
+                    (_, JobKind::Firmware) => Ok(unsupported_kind()),
+                }
             }),
-            "cancel_download" => bind(name, 1, 1, d, |d, a| async move {
-                Ok(d.cancel_download(rom_id_arg(&a[0])?))
+            "cancel_download" => bind(name, 1, 2, d, |d, a| async move {
+                match job_args(&a)? {
+                    (id, JobKind::Rom) => Ok(d.cancel_download(id)),
+                    (_, JobKind::Firmware) => Ok(unsupported_kind()),
+                }
             }),
-            "pause_download" => bind(
-                name,
-                1,
-                1,
-                d,
-                |d, a| async move { Ok(d.pause_download(rom_id_arg(&a[0])?)) },
-            ),
+            "pause_download" => bind(name, 1, 2, d, |d, a| async move {
+                match job_args(&a)? {
+                    (id, JobKind::Rom) => Ok(d.pause_download(id)),
+                    (_, JobKind::Firmware) => Ok(unsupported_kind()),
+                }
+            }),
             "get_download_queue" => bind(name, 0, 0, d, |d, _| async move { Ok(d.get_download_queue()) }),
             "get_installed_rom" => bind(name, 1, 1, d, |d, a| async move {
                 let id = rom_id_arg(&a[0])?;
@@ -582,6 +589,24 @@ where
         }
         Box::pin(f(service.clone(), args))
     })
+}
+
+/// The arguments of the download callables: the id, then an optional kind (`"rom"` by default).
+fn job_args(a: &[Value]) -> Result<(i64, JobKind), String> {
+    let id = rom_id_arg(&a[0])?;
+    let kind = match a.get(1) {
+        None | Some(Value::Null) => JobKind::Rom,
+        Some(Value::String(s)) => {
+            JobKind::parse(s).ok_or_else(|| format!("kind must be \"rom\" or \"firmware\", got {s:?}"))?
+        }
+        Some(other) => return Err(format!("kind must be a string, got {other}")),
+    };
+    Ok((id, kind))
+}
+
+/// Firmware downloads join the queue with the firmware work; until then the queue answers this.
+fn unsupported_kind() -> Value {
+    crate::domain::errors::failure("unsupported_kind", "Firmware downloads are not supported yet")
 }
 
 /// A ROM id argument: an integer, or a string holding one (Python `int()`).

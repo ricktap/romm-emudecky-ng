@@ -106,3 +106,13 @@ While a download waits for the server (request out, no response headers yet) the
 (`"waiting"` or `"retrying"`), `phase_since` (epoch seconds when the phase began), `attempt`, `max_attempts` and, for
 `retrying`, `retry_delay_s`. A frame without `phase` means bytes are flowing. Interrupted downloads may carry the
 reasons `timeout` and `needs_recovery` (see `docs/architecture/multipart-downloads.md`).
+
+## Download kinds
+
+The durable download queue holds more than one kind of download, so a job is identified by `(kind, id)` (migration
+`014_download_job_kinds.sql`). `download_progress` frames and `get_download_queue` rows carry `kind` (`"rom"` or
+`"firmware"`) and the id under the name consumers use: `rom_id` for a ROM, `firmware_id` for firmware. The callables
+`start_download`, `resume_download`, `cancel_download` and `pause_download` take an optional second argument, the kind
+(default `"rom"`). Until the firmware handler exists, kind `"firmware"` answers
+`{success: false, reason: "unsupported_kind"}`; any other kind is a protocol error. Only ROM downloads count for
+`active_download_rom_ids` (version switch and uninstall guards).

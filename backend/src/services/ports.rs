@@ -293,9 +293,9 @@ pub trait EmulatorLocator: Send + Sync {
 /// The persisted download queue (`download_jobs`).
 #[async_trait]
 pub trait DownloadJobRepo: Send + Sync {
-    async fn get(&self, rom_id: i64) -> anyhow::Result<Option<crate::domain::download_job::DownloadJob>>;
+    async fn get(&self, key: crate::domain::download_job::JobKey) -> anyhow::Result<Option<crate::domain::download_job::DownloadJob>>;
     async fn save(&self, job: &crate::domain::download_job::DownloadJob) -> anyhow::Result<()>;
-    async fn delete(&self, rom_id: i64) -> anyhow::Result<()>;
+    async fn delete(&self, key: crate::domain::download_job::JobKey) -> anyhow::Result<()>;
     /// Every job, in queue order.
     async fn all(&self) -> anyhow::Result<Vec<crate::domain::download_job::DownloadJob>>;
     /// `max(position) + 1`, or 1 for an empty queue.
