@@ -1,6 +1,7 @@
-import { definePlugin, addEventListener, removeEventListener, toaster } from "@decky/api";
+import { definePlugin, addEventListener, removeEventListener, toaster, routerHook } from "@decky/api";
 import { FaGamepad } from "react-icons/fa";
 import { downloadKey } from "./utils/downloadKey";
+import { LibraryRoute, LIBRARY_ROUTE } from "./components/LibraryRoute";
 import { QAMPanel } from "./components/QAMPanel";
 import { initUnitSyncManager, resetSyncCancel } from "./utils/syncManager";
 import { setSyncProgress } from "./utils/syncProgress";
@@ -506,12 +507,15 @@ export default definePlugin(() => {
     },
   );
 
+  routerHook.addRoute(LIBRARY_ROUTE, LibraryRoute, { exact: true });
+
   return {
     name: "EmuDecky RomM NG",
     icon: <FaGamepad />,
     content: <QAMPanel />,
     alwaysRender: true,
     onDismount() {
+      routerHook.removeRoute(LIBRARY_ROUTE);
       destroySessionManager();
       unregisterLaunchInterceptor();
       unregisterGameDetailPatch();

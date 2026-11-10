@@ -60,6 +60,7 @@ pub const PORTED_CALLABLES: &[&str] = &[
     "frontend_log",
     "get_download_queue",
     "get_app_id_rom_id_map",
+    "get_library_overview",
     "get_collections",
     "get_installed_rom",
     "get_known_regions",
@@ -483,6 +484,17 @@ impl Backend {
                 l,
                 |l, _| async move { Ok(l.get_sync_stats().await.unwrap_or_else(|e| unknown_failure(&e))) },
             ),
+            "get_library_overview" => {
+                let d = d.clone();
+                bind(name, 0, 0, l, move |l, _| {
+                    let d = d.clone();
+                    async move {
+                        let mut overview = l.get_library_overview().await.map_err(err)?;
+                        merge_download_state(&mut overview, &d.get_download_queue());
+                        Ok(overview)
+                    }
+                })
+            }
             "get_app_id_rom_id_map" => bind(name, 0, 0, l, |l, _| async move {
                 Ok(l.get_app_id_rom_id_map().await.unwrap_or_else(|e| unknown_failure(&e)))
             }),
@@ -588,6 +600,23 @@ fn not_implemented(name: &str) -> Handler {
     })
 }
 
+/// Attach the ROM download queue entries to the overview rows: `download` is `{status, progress}` for a ROM
+/// that is queued, downloading, paused, interrupted or failed, and stays `null` otherwise. Firmware jobs are skipped.
+fn merge_download_state(overview: &mut Value, queue: &Value) {
+    let mut by_rom = std::collections::HashMap::new();
+    for entry in queue["downloads"].as_array().into_iter().flatten() {
+        let is_rom = entry.get("kind").and_then(Value::as_str).is_none_or(|k| k == "rom");
+        if let (true, Some(id)) = (is_rom, entry.get("rom_id").and_then(Value::as_i64)) {
+            by_rom.insert(id, json!({"status": entry["status"], "progress": entry["progress"]}));
+        }
+    }
+    for rom in overview["roms"].as_array_mut().into_iter().flatten() {
+        if let Some(download) = rom["rom_id"].as_i64().and_then(|id| by_rom.get(&id)) {
+            rom["download"] = download.clone();
+        }
+    }
+}
+
 /// Bind a service method as a handler with an arity check of `min..=max`
 /// positional arguments.
 fn bind<S, F, Fut>(name: &str, min: usize, max: usize, service: Arc<S>, f: F) -> Handler
@@ -676,12 +705,26 @@ fn loose_str(v: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn overview_gets_the_download_of_rom_jobs_only() {
+        let mut overview = json!({"roms": [{"rom_id": 1, "download": null}, {"rom_id": 2, "download": null}, {"rom_id": 3, "download": null}]});
+        let queue = json!({"downloads": [
+            {"kind": "rom", "rom_id": 1, "status": "downloading", "progress": 0.5},
+            {"kind": "firmware", "firmware_id": 2, "rom_id": 2, "status": "queued", "progress": 0.0},
+            {"rom_id": 3, "status": "paused", "progress": 0.1},
+        ]});
+        merge_download_state(&mut overview, &queue);
+        assert_eq!(overview["roms"][0]["download"], json!({"status": "downloading", "progress": 0.5}));
+        assert_eq!(overview["roms"][1]["download"], Value::Null, "a firmware job is not a ROM download");
+        assert_eq!(overview["roms"][2]["download"]["status"], "paused", "a row without kind is a ROM");
+    }
+
     use super::*;
 
     #[test]
     fn surface_matches_python_backend_size_and_includes_ported() {
         let names = callable_names();
-        assert_eq!(names.len(), 108);
+        assert_eq!(names.len(), 109);
         let mut dedup = names.clone();
         dedup.dedup();
         assert_eq!(dedup.len(), names.len());

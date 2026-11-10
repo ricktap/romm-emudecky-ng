@@ -29,6 +29,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
+import { Navigation } from "@decky/ui";
 import { createElement } from "react";
 import { MainPage } from "./MainPage";
 import * as backend from "../api/backend";
@@ -74,6 +75,7 @@ vi.mock("@decky/ui", async () => {
   const { createElement: ce } = await import("react");
   const passthrough = (tag: string) => (p: AnyProps) => ce(tag, {}, p.children as never);
   return {
+    Navigation: { Navigate: vi.fn(), CloseSideMenus: vi.fn() },
     PanelSection: (p: AnyProps & { title?: unknown }) =>
       ce(
         "section",
@@ -283,6 +285,16 @@ describe("MainPage", () => {
       await flushAsync();
       const titles = Array.from(container.querySelectorAll('[data-testid="panel-title"]')).map((n) => n.textContent);
       expect(titles).toEqual(expect.arrayContaining(["Status", "Sync", "Settings"]));
+    });
+  });
+
+  describe("RomM Library entry", () => {
+    it("opens the full-screen library: side menus close first, then the route opens", async () => {
+      const { getByText } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      fireEvent.click(getByText("Open RomM Library"));
+      expect(Navigation.CloseSideMenus).toHaveBeenCalledTimes(1);
+      expect(Navigation.Navigate).toHaveBeenCalledWith("/romm-library");
     });
   });
 

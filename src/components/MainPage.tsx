@@ -8,6 +8,7 @@ import {
   ToggleField,
   Spinner,
 } from "@decky/ui";
+import { openLibraryRoute } from "./LibraryRoute";
 import { FaCheckCircle, FaTimesCircle, FaExclamationTriangle } from "react-icons/fa";
 import {
   testConnection,
@@ -775,6 +776,14 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
           </PanelSectionRow>
         </PanelSection>
       )}
+
+      <PanelSection title="RomM Library">
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={() => openLibraryRoute()}>
+            Open RomM Library
+          </ButtonItem>
+        </PanelSectionRow>
+      </PanelSection>
 
       <PanelSection title="Settings">
         <PanelSectionRow>

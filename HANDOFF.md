@@ -169,7 +169,7 @@ archive identity columns; legacy multipart partials are flagged `needs_recovery`
   Unix socket, forwards every callable and relays events to `decky.emit`. Forwarders are installed at import time
   (`--list-methods`) because Decky serves frontend calls in parallel with `_main`; calls wait for readiness. The frontend
   never changes: callable names/arity/response shapes and event payloads are the contract.
-- **Callable surface:** on `rust`, `backend/callables.json` is the source of truth (108 names). Unported callables answer
+- **Callable surface:** on `rust`, `backend/callables.json` is the source of truth (109 names). Unported callables answer
   `{success: false, reason: "not_implemented", ...}`. `scripts/check_callable_manifest.py` / `check_event_parity.py` check
   the frontend against it.
 - **Crate layout** (`backend/`): `domain/` pure · `services/` (trait ports in `ports.rs`) · `adapters/` (all I/O) · `rpc/` ·

@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { act } from "@testing-library/react";
-import { toaster } from "@decky/api";
+import { toaster, routerHook } from "@decky/api";
 import { emitDeckyEvent } from "./test-utils/decky-api-mock";
 import { getSettingsResetNotice, getAllPlaytime, getAppIdRomIdMap, getInstalledRelaunchOptions } from "./api/backend";
 import { getSettingsResetState, setSettingsResetState } from "./utils/settingsResetStore";
@@ -903,5 +903,16 @@ describe("index.tsx — firmware downloads share the queue without being mistake
       expect.objectContaining({ body: expect.stringContaining("Download failed: prod.keys") }),
     );
     plugin.onDismount();
+  });
+});
+
+describe("index.tsx — library route", () => {
+  it("registers /romm-library on load and removes it on dismount", () => {
+    vi.mocked(routerHook.addRoute).mockClear();
+    vi.mocked(routerHook.removeRoute).mockClear();
+    const plugin = pluginFactory();
+    expect(routerHook.addRoute).toHaveBeenCalledWith("/romm-library", expect.anything(), { exact: true });
+    plugin.onDismount();
+    expect(routerHook.removeRoute).toHaveBeenCalledWith("/romm-library");
   });
 });
