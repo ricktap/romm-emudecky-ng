@@ -10,6 +10,7 @@ export * from "./api";
 export * from "./sync";
 export * from "./downloads";
 export * from "./firmware";
+export * from "./library";
 export * from "./saves";
 export * from "./devices";
 export * from "./update";

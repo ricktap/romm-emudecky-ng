@@ -496,6 +496,29 @@ impl LibraryRepo for SqliteLibrary {
             .await
     }
 
+    async fn overview_rows(&self) -> anyhow::Result<Vec<crate::services::ports::OverviewRow>> {
+        self.db
+            .call(|c| {
+                let mut stmt = c.prepare(
+                    "SELECT r.rom_id, r.platform_slug, r.name, r.shortcut_app_id, r.cover_path, i.rom_id IS NOT NULL \
+                     FROM roms r LEFT JOIN rom_installs i ON i.rom_id = r.rom_id \
+                     WHERE r.shortcut_app_id IS NOT NULL ORDER BY r.name COLLATE NOCASE, r.rom_id",
+                )?;
+                let rows = stmt.query_map([], |r| {
+                    Ok(crate::services::ports::OverviewRow {
+                        rom_id: r.get(0)?,
+                        platform_slug: r.get(1)?,
+                        name: r.get(2)?,
+                        app_id: r.get(3)?,
+                        cover_path: r.get(4)?,
+                        installed: r.get(5)?,
+                    })
+                })?;
+                rows.collect()
+            })
+            .await
+    }
+
     async fn latest_completed_sync_finished_at(&self) -> anyhow::Result<Option<String>> {
         self.db
             .call(|c| {

@@ -375,6 +375,17 @@ pub struct RegistryPlatformRow {
     pub count: i64,
 }
 
+/// One library row for the overview: a synced ROM bound to a Steam shortcut, and whether it is installed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverviewRow {
+    pub rom_id: i64,
+    pub platform_slug: String,
+    pub name: String,
+    pub app_id: i64,
+    pub cover_path: Option<String>,
+    pub installed: bool,
+}
+
 /// A consistent ROM/install pair, read before filesystem or emulator probes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchSnapshot {
@@ -413,6 +424,8 @@ pub trait LibraryRepo: Send + Sync {
     async fn bound_rom_count(&self) -> anyhow::Result<i64>;
     async fn registry_platforms(&self) -> anyhow::Result<Vec<RegistryPlatformRow>>;
     async fn app_id_rom_id_map(&self) -> anyhow::Result<Vec<(i64, i64)>>;
+    /// Every ROM bound to a shortcut with its install state, by name: one read for the whole library grid.
+    async fn overview_rows(&self) -> anyhow::Result<Vec<OverviewRow>>;
     async fn latest_completed_sync_finished_at(&self) -> anyhow::Result<Option<String>>;
     async fn delete_completed_sync_runs(&self) -> anyhow::Result<()>;
     /// Startup only: terminalize runs left in flight by the previous process.

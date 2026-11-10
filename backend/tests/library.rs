@@ -502,3 +502,34 @@ async fn startup_artwork_cleanup_preserves_known_siblings_and_unpublished_stagin
     assert!(!grid.join("romm_1_cover.png").exists());assert!(!grid.join("romm_2_cover.png").exists());assert!(grid.join("romm_3_cover.png").exists());assert!(grid.join("unrelated.png").exists());
     assert_eq!(b.call("get_artwork_base64",json!([3])).await["base64"],"YXJ0");assert_eq!(b.call("get_artwork_base64",json!([999])).await["base64"],Value::Null);b.shutdown().await;
 }
+
+#[tokio::test]
+async fn library_overview_lists_bound_roms_by_name_with_install_state_and_platform_counts() {
+    let dirs = Dirs::new();
+    let mut b = Backend::spawn(&dirs).await;
+    assert_eq!(
+        b.call("get_library_overview", json!([])).await,
+        json!({"success": true, "roms": [], "platforms": []})
+    );
+    let conn = rusqlite::Connection::open(dirs.db()).unwrap();
+    conn.execute_batch("
+        INSERT INTO roms (rom_id, platform_slug, name, fs_name, shortcut_app_id, last_synced_at, cover_path)
+        VALUES (11, 'switch', 'zelda', 'z.xci', 4000000001, '2026-01-01', '/c/11.png'),
+               (12, 'switch', 'Unbound', 'u.xci', NULL, '2026-01-01', NULL),
+               (13, 'switch', 'Another game', 'a.nsp', 4000000002, '2026-01-01', NULL);
+        INSERT INTO rom_installs (rom_id, file_path, rom_dir, platform_slug, system, installed_at)
+        VALUES (11, '/r/z.xci', NULL, 'switch', 'switch', '2026-01-02');
+    ").unwrap();
+    let r = b.call("get_library_overview", json!([])).await;
+    assert_eq!(r["success"], true);
+    let roms = r["roms"].as_array().unwrap();
+    assert_eq!(roms.len(), 2, "an unbound ROM has no shortcut to open and is left out");
+    assert_eq!(roms[0]["name"], "Another game", "case-insensitive name order");
+    assert_eq!(roms[0]["installed"], false);
+    assert_eq!(roms[1], json!({
+        "rom_id": 11, "app_id": 4000000001_i64, "name": "zelda", "platform_slug": "switch",
+        "cover_path": "/c/11.png", "installed": true, "download": null, "issues": []
+    }));
+    assert_eq!(r["platforms"], json!([{"platform_slug": "switch", "count": 2, "installed": 1}]));
+    b.shutdown().await;
+}

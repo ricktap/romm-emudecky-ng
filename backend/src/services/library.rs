@@ -301,6 +301,38 @@ impl LibraryService {
         Ok(Value::Object(map))
     }
 
+    /// The library grid in one answer: every ROM bound to a shortcut (name order) with its install state, plus
+    /// per-platform counts. Download state is merged in by the callable, issue flags stay empty until save sync lands.
+    pub async fn get_library_overview(&self) -> anyhow::Result<Value> {
+        let rows = self.library.overview_rows().await?;
+        let mut platforms: std::collections::BTreeMap<&str, (i64, i64)> = std::collections::BTreeMap::new();
+        for row in &rows {
+            let entry = platforms.entry(row.platform_slug.as_str()).or_default();
+            entry.0 += 1;
+            entry.1 += i64::from(row.installed);
+        }
+        let platform_rows: Vec<Value> = platforms
+            .into_iter()
+            .map(|(slug, (count, installed))| json!({"platform_slug": slug, "count": count, "installed": installed}))
+            .collect();
+        let roms: Vec<Value> = rows
+            .iter()
+            .map(|r| {
+                json!({
+                    "rom_id": r.rom_id,
+                    "app_id": r.app_id,
+                    "name": r.name,
+                    "platform_slug": r.platform_slug,
+                    "cover_path": r.cover_path,
+                    "installed": r.installed,
+                    "download": Value::Null,
+                    "issues": [],
+                })
+            })
+            .collect();
+        Ok(json!({"success": true, "roms": roms, "platforms": platform_rows}))
+    }
+
     pub async fn clear_sync_cache(&self) -> anyhow::Result<Value> {
         self.library.delete_completed_sync_runs().await?;
         Ok(json!({"success": true, "message": "Next sync will do a full fetch"}))
@@ -483,6 +515,9 @@ mod tests {
         }
         async fn app_id_rom_id_map(&self) -> anyhow::Result<Vec<(i64, i64)>> {
             Ok(self.app_map.lock().unwrap().clone())
+        }
+        async fn overview_rows(&self) -> anyhow::Result<Vec<crate::services::ports::OverviewRow>> {
+            Ok(vec![])
         }
         async fn latest_completed_sync_finished_at(&self) -> anyhow::Result<Option<String>> {
             Ok(self.last_sync.lock().unwrap().clone())

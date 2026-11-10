@@ -46,6 +46,7 @@ vi.mock("@decky/api", async () => {
     definePlugin: (fn: unknown) => fn,
     addEventListener: bus.mockAddEventListener,
     removeEventListener: bus.mockRemoveEventListener,
+    routerHook: { addRoute: vi.fn(), removeRoute: vi.fn(), addPatch: vi.fn(), removePatch: vi.fn() },
   };
 });
 
@@ -173,7 +174,15 @@ vi.mock("@decky/ui", () => {
     Menu: passthrough("div"),
     MenuItem: ({ children, onClick }: AnyProps) => createElement("button", { onClick }, children as never),
     Router: { CloseSideMenus: vi.fn(), Navigate: vi.fn() },
-    Navigation: { NavigateToExternalWeb: vi.fn(), Navigate: vi.fn() },
+    Navigation: { NavigateToExternalWeb: vi.fn(), Navigate: vi.fn(), NavigateBack: vi.fn(), CloseSideMenus: vi.fn() },
+    // Tabs: the tab titles as buttons, and the active tab's content only (like the real component).
+    Tabs: ({ tabs, activeTab, onShowTab }: { tabs: { id: string; title: string; content: unknown }[]; activeTab: string; onShowTab: (id: string) => void }) =>
+      createElement(
+        "div",
+        { "data-testid": "tabs" },
+        tabs.map((t) => createElement("button", { key: t.id, "data-testid": `tab-${t.id}`, onClick: () => onShowTab(t.id) }, t.title)),
+        tabs.find((t) => t.id === activeTab)?.content as never,
+      ),
     // findSP locates Steam's <SteamRoot> iframe document for stylesheet
     // injection. Tests run in happy-dom — no Steam, no iframe — so the
     // safe stub returns undefined and the consumer's `!sp?.window?.document`

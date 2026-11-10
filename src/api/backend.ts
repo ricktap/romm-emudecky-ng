@@ -8,6 +8,7 @@ import type {
   SyncProgress,
   DownloadItem,
   InstalledRom,
+  LibraryOverview,
   PlatformSyncSetting,
   CollectionSyncSetting,
   CollectionKind,
@@ -438,6 +439,7 @@ export const logError = (msg: string) => {
 export const getRomMetadata = callable<[number], RomMetadata>("get_rom_metadata");
 export const getAllMetadataCache = callable<[], Record<string, RomMetadata>>("get_all_metadata_cache");
 export const getAppIdRomIdMap = callable<[], Record<string, number>>("get_app_id_rom_id_map");
+export const getLibraryOverview = callable<[], LibraryOverview>("get_library_overview");
 export const getInstalledRelaunchOptions = callable<[], { app_id: number; launch_options: string }[]>(
   "get_installed_relaunch_options",
 );
