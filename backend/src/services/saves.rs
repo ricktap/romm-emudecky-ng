@@ -24,7 +24,7 @@ use crate::domain::{
     sync_action::{compute_sync_action, resolve_upload_conflict, FileState, LocalFile, ServerSave, SkipReason, SyncAction, UploadConflict},
 };
 use crate::services::ports::{
-    Clock, KvConfigRepo, LibraryRepo, RommConnectionApi, RommSavesApi, SaveSafety, SaveStateRepo, SaveUpload, SettingsPersister,
+    Clock, EventSink, KvConfigRepo, LibraryRepo, RommConnectionApi, RommSavesApi, SaveSafety, SaveStateRepo, SaveUpload, SettingsPersister,
     SettingsStore, TitleIdRepo,
 };
 use crate::util::path_safety::basename;
@@ -101,6 +101,8 @@ pub struct SaveServiceConfig {
     pub clock: Arc<dyn Clock>,
     pub host: Arc<dyn HostIdentity>,
     pub plugin_version: String,
+    /// Where `save_status_updated` goes (the frontend listens for it).
+    pub events: Arc<dyn EventSink>,
 }
 
 // ── Settings (pure) ────────────────────────────────────────────────────────
@@ -1007,9 +1009,10 @@ impl SaveService {
         v
     }
 
-    /// Refresh the status in the background; the frontend asks for it through `get_save_status`.
+    /// Recompute the status and push it to the frontend as `save_status_updated`.
     pub async fn refresh_save_status(&self, rom_id: i64) -> Value {
-        let _ = self.get_save_status(rom_id).await;
+        let status = self.get_save_status(rom_id).await;
+        self.c.events.emit("save_status_updated", status);
         json!({"success": true})
     }
 }

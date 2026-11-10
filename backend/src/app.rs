@@ -322,7 +322,7 @@ impl Backend {
             state:Arc::new(crate::adapters::repositories::SqliteSaveState::new(db.clone())),titles:Arc::new(crate::adapters::repositories::SqliteTitleIds::new(db.clone())),
             library:library.clone(),kv:kv_config.clone(),emulators:Arc::new(LaunchEmulator(launch.clone())),
             local:Arc::new(crate::adapters::switch_saves::SwitchSaves::new(env.user_home.clone())),clock:clock.clone(),
-            host:Arc::new(crate::adapters::switch_saves::LinuxHost),plugin_version:read_plugin_version(&env.plugin_dir).await,
+            host:Arc::new(crate::adapters::switch_saves::LinuxHost),plugin_version:read_plugin_version(&env.plugin_dir).await,events:events.clone(),
         }));
         let save_safety=save_service.clone();
         let version_repo=Arc::new(crate::adapters::versions::SqliteVersions::new(db.clone()));

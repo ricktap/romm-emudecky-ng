@@ -14,7 +14,7 @@ saves in sync across devices through your RomM server.
 
 - **Library sync** — Pulls platforms and ROMs from your RomM server and creates Steam shortcuts, complete with cover
   art, hero banners, and logos (with optional [SteamGridDB](https://www.steamgriddb.com/) artwork)
-- **Save sync** — *Planned for 0.55.0, not working yet.* Keeps save files in sync across devices through your RomM server, with newest-wins conflict resolution and a manual override
+- **Save sync** — Keeps a Switch game's save in sync across devices through your RomM server (Eden, yuzu, Ryujinx): never overwrites silently, keeps a backup of what it replaces, and asks when both sides changed
 - **ROM downloads** — Download ROMs on demand with progress tracking and a managed download queue
 - **Switch firmware and keys** — See which keys and firmware RomM has, compare them with your emulators (Eden, yuzu, Ryujinx), download what is missing, pick the firmware version, and replace a key with a backup
 - **RomM Library** — A full-screen library of your games with platform rail, filters, search and cover grid, the full download queue, Switch keys and firmware, and all settings
@@ -34,7 +34,7 @@ saves in sync across devices through your RomM server.
 | Switch emulators | **Eden, yuzu, Ryujinx**, launched through EmuDeck (tested on the Steam Deck; Bazzite not yet verified) |
 | Library sync, downloads, games on the Steam page | Working |
 | Switch keys and firmware | Working: Eden, yuzu and Ryujinx (list, version choice, download, replace with backup) |
-| Save sync | **Not working yet**, planned for 0.55.0 (the screens exist and say so) |
+| Save sync | Working for Eden, yuzu and Ryujinx; **not yet verified on all devices** (hardware acceptance is open) |
 | Other systems' BIOS | Not available until 0.80 / 0.90 |
 
 The plugin is an unofficial community plugin and not affiliated with EmuDeck or RomM. The roadmap is in [`EMUDECK_PORT_PLAN.md`](EMUDECK_PORT_PLAN.md).

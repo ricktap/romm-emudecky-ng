@@ -290,6 +290,7 @@ struct Env {
     settings: SettingsStore,
     persister: Arc<FakePersister>,
     emulator: Arc<FixedEmulator>,
+    events: Arc<crate::services::testing::RecordingEvents>,
     db: Db,
     _dir: tempfile::TempDir,
 }
@@ -314,6 +315,7 @@ async fn env_with(file_name: &str, enabled: bool) -> Env {
     kv.insert(DEVICE_ID_KEY, ME);
     let persister = Arc::new(FakePersister::default());
     let emulator = Arc::new(FixedEmulator(Mutex::new(Some("eden".into()))));
+    let events = Arc::new(crate::services::testing::RecordingEvents::default());
     let svc = SaveService::new(SaveServiceConfig {
         settings: settings.clone(),
         persister: persister.clone(),
@@ -328,8 +330,9 @@ async fn env_with(file_name: &str, enabled: bool) -> Env {
         clock: Arc::new(FakeClock::default()),
         host: Arc::new(TestHost),
         plugin_version: "9.9.9".into(),
+        events: events.clone(),
     });
-    Env { svc, api, local, romm, kv, settings, persister, emulator, db, _dir: dir }
+    Env { svc, api, local, romm, kv, settings, persister, emulator, events, db, _dir: dir }
 }
 
 /// A game whose file name carries the title tag, with save sync on.
@@ -435,6 +438,7 @@ async fn rebuild_config(e: &Env) -> SaveServiceConfig {
         clock: Arc::new(FakeClock::default()),
         host: Arc::new(TestHost),
         plugin_version: "9.9.9".into(),
+        events: e.events.clone(),
     }
 }
 
@@ -1055,4 +1059,15 @@ async fn confirming_a_different_slot_invalidates_the_old_slots_baselines() {
     assert!(!SqliteSaveState::new(e.db.clone()).get(ROM).await.unwrap().unwrap().files.is_empty(), "confirming the same slot again keeps them");
     e.svc.confirm_slot_choice(ROM, Some("B"), false, None).await;
     assert!(SqliteSaveState::new(e.db.clone()).get(ROM).await.unwrap().unwrap().files.is_empty(), "a baseline of slot A means nothing in slot B");
+}
+
+#[tokio::test]
+async fn refreshing_the_status_pushes_it_to_the_frontend_as_an_event() {
+    let e = env().await;
+    e.local.put("eden", TITLE, zelda_save("v1"), 1.7e9);
+    assert_eq!(e.svc.refresh_save_status(ROM).await, json!({"success": true}));
+    let events = e.events.0.lock().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].0, "save_status_updated");
+    assert_eq!((events[0].1["rom_id"].clone(), events[0].1["files"][0]["status"].clone()), (json!(ROM), json!("upload")));
 }
