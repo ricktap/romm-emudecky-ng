@@ -277,7 +277,7 @@ describe("DownloadQueue", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(500);
       });
-      expect(container.querySelector('[data-testid="dl-caption"]')?.textContent).toBe("Queued (Genesis)");
+      expect(container.querySelector('[data-testid="dl-caption"]')?.textContent).toBe("Queued (Genesis) — In Queue");
     });
 
     it("if no cleared rom_id matches, cleared Set stays the same instance (no needless re-set)", async () => {
@@ -454,6 +454,18 @@ describe("DownloadQueue", () => {
       });
       expect(backend.resumeDownload).toHaveBeenCalledWith(9);
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Queued behind another download
+  // ---------------------------------------------------------------------------
+  it("marks a download that waits for the transfer slot as In Queue", async () => {
+    vi.mocked(backend.getDownloadQueue).mockResolvedValue({
+      downloads: [makeItem({ rom_id: 3, rom_name: "Second", status: "queued", bytes_downloaded: 0 })],
+    });
+    const { container } = render(<DownloadQueue onBack={() => {}} />);
+    await flushMount();
+    expect(container.querySelector('[data-testid="dl-caption"]')?.textContent).toContain("In Queue");
   });
 
   // ---------------------------------------------------------------------------

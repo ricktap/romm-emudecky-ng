@@ -582,6 +582,60 @@ describe("CustomPlayButton — waiting for the server (archive preparation)", ()
   });
 });
 
+describe("CustomPlayButton — queued download", () => {
+  beforeEach(() => {
+    vi.mocked(getCachedGameDetail).mockReset();
+    vi.mocked(backend.startDownload).mockResolvedValue({ success: true, message: "" });
+    vi.mocked(backend.getDownloadQueue).mockResolvedValue({ downloads: [] });
+  });
+
+  const frame = {
+    rom_id: 42,
+    rom_name: "Test ROM",
+    platform_name: "Switch",
+    file_name: "game.zip",
+    progress: 0,
+    bytes_downloaded: 0,
+    total_bytes: 15_977_000_000,
+  };
+
+  it("says In Queue, not 0.00 / 14.88 GB, while another download holds the slot, then shows progress", async () => {
+    mockCachedDetail({ rom_id: 42, installed: false });
+    const { findByText, queryByText } = render(<CustomPlayButton appId={100} />);
+    const downloadBtn = await findByText("Download");
+    await act(async () => {
+      downloadBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", { ...frame, status: "queued" });
+    });
+    expect(await findByText("In Queue")).toBeInTheDocument();
+    expect(queryByText(/GB/)).toBeNull();
+
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", {
+        ...frame,
+        status: "downloading",
+        bytes_downloaded: 1_000_000_000,
+        progress: 0.06,
+      });
+    });
+    expect(await findByText(/0\.93 \/ 14\.88 GB/)).toBeInTheDocument();
+    expect(queryByText("In Queue")).toBeNull();
+  });
+
+  it("rehydrates a queued download with the In Queue label", async () => {
+    mockCachedDetail({ rom_id: 42, installed: false });
+    vi.mocked(backend.getDownloadQueue).mockResolvedValue({
+      downloads: [{ ...frame, status: "queued", resumable: false }],
+    });
+    const { findByText } = render(<CustomPlayButton appId={100} />);
+    expect(await findByText("In Queue")).toBeInTheDocument();
+  });
+});
+
 describe("CustomPlayButton — interrupted download (durable queue)", () => {
   beforeEach(() => {
     vi.mocked(getCachedGameDetail).mockReset();
