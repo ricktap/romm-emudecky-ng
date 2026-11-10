@@ -53,9 +53,14 @@ The frontend is bundled with Rollup into a single `dist/index.js` file that Deck
 ## Testing
 
 ```bash
-python -m pytest tests/ -q     # run the backend test suite
+python -m pytest tests/ -q     # run the Python test suite (the spec of not-yet-ported callables)
 mise run test                   # same thing via mise
+cd backend && cargo test        # the native (Rust) backend: unit + integration tests
 ```
+
+The Rust integration tests (`backend/tests/`) spawn the real binary on a temp socket, drive it with the backend
+protocol, and point it at a fake RomM HTTP server. `cargo llvm-cov --summary-only` reports coverage (CI fails below 80%
+lines). The compiler version is pinned in `backend/rust-toolchain.toml`.
 
 To run with coverage:
 
@@ -116,12 +121,13 @@ Every backend feature or callable where testing makes sense should have unit tes
 mise run dev          # build frontend, deploy to the plugin dir, restart plugin_loader
 ```
 
-This builds the frontend, copies the plugin files into `~/homebrew/plugins/romm-emudecky-ng`, and restarts `plugin_loader`
-to pick up the changes. It **stops** `plugin_loader` around the file copy on purpose: the loader runs as root and
-continuously re-owns the plugin dir back to root within ~1–2s as a tamper guard, so copying while it runs races against
-that re-own and fails with `permission denied`. With the loader stopped, the copy is uncontested; it restarts
-automatically when the task finishes — even if the build or copy fails, so a failure never leaves the plugin dead. For
-backend-only changes, restarting the plugin loader is sufficient without rebuilding.
+This builds the frontend, copies the plugin files into `~/homebrew/plugins/romm-emudecky-ng`, and restarts
+`plugin_loader` to pick up the changes. It **stops** `plugin_loader` around the file copy on purpose: the loader runs as
+root and continuously re-owns the plugin dir back to root within ~1–2s as a tamper guard, so copying while it runs races
+against that re-own and fails with `permission denied`. With the loader stopped, the copy is uncontested; it restarts
+automatically when the task finishes — even if the build or copy fails, so a failure never leaves the plugin dead. The
+deploy also builds the native backend (`cargo build --release` in `backend/`) and installs it as
+`bin/romm-emudecky-ng-backend`, so the machine running it needs the Rust toolchain.
 
 For frontend iteration there is a much faster loop: after a one-time `mise run dev:setup`,
 `mise run dev:watch [display]` hot-reloads the **frontend** into a windowed Big Picture on the desktop as you save, with

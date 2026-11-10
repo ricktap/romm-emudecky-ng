@@ -44,13 +44,13 @@ import { showCoreChangeModal } from "./CoreChangeModal";
 import { handleConflicts } from "./SyncConflictModal";
 import { showOfflineDriftModal } from "./OfflineDriftModal";
 import { showFallbackLaunchModal } from "./FallbackLaunchModal";
-import { getMigrationState } from "../utils/migrationStore";
 import { runLaunchGate, markLaunchSkipped } from "../utils/launchGate";
 import type { GateVerdict, LaunchGateOps, PreLaunchSyncOutcome } from "../utils/launchGate";
 import { getActiveSessionRomId } from "../utils/sessionManager";
 import { isAppRunning } from "../utils/runningApps";
 import type { DownloadProgressEvent, DownloadCompleteEvent, DownloadFailedEvent } from "../types";
-import { SAVEFILES_IN_CONTENT_DIR_REASON } from "../types";
+import { phaseButtonLabel, useNowMs, type PhaseFields } from "../utils/downloadPhase";
+import { isBenignSyncSkip } from "../types";
 import { detach } from "../utils/detach";
 import { interruptedLabel, isStoppedStatus, isUnfinishedStatus } from "../utils/downloadStatus";
 import { setLaunchOptionsConfirmed } from "../utils/steamShortcuts";
@@ -71,6 +71,8 @@ interface DownloadProgress {
   paused: boolean;
   /** Reason slug ("" when unknown) when the download was interrupted, not user-paused; null otherwise. */
   interruptReason: string | null;
+  /** Live phase while waiting for the server (no bytes yet); undefined while bytes flow. */
+  phaseInfo?: PhaseFields;
   /**
    * True once an `extracting` frame arrives — the byte transfer is done and the
    * multi-file ZIP is being unpacked. The transfer is not cancellable here, so
@@ -78,6 +80,8 @@ interface DownloadProgress {
    * Pause-Resume chevron.
    */
   extracting: boolean;
+  /** The download is accepted but another one holds the transfer slot: no bytes yet. */
+  queued?: boolean;
 }
 
 function lerpColor(a: [number, number, number], b: [number, number, number], t: number): string {
@@ -116,6 +120,8 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
   const [romName, setRomName] = useState<string>("");
   const [actionPending, setActionPending] = useState(false);
   const [dlProgress, setDlProgress] = useState<DownloadProgress | null>(null);
+  // Local clock for the "waiting for RomM" elapsed time; ticks only while a phase is shown.
+  const nowMs = useNowMs(Boolean(dlProgress?.phaseInfo));
   const [isOffline, setIsOffline] = useState(getRommConnectionState() === "offline");
   // Running overlay (#1313): when the game is already running, the button shows
   // Resume (top precedence over install/conflict/download) and brings the game to
@@ -163,6 +169,18 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
           paused: isStoppedStatus(entry.status),
           interruptReason: entry.status === "interrupted" ? (entry.reason ?? "") : null,
           extracting: entry.status === "extracting",
+          queued: entry.status === "queued",
+          ...(entry.phase && entry.status === "downloading"
+            ? {
+                phaseInfo: {
+                  phase: entry.phase,
+                  phase_since: entry.phase_since,
+                  attempt: entry.attempt,
+                  max_attempts: entry.max_attempts,
+                  retry_delay_s: entry.retry_delay_s,
+                },
+              }
+            : {}),
         });
       }
     } catch (e) {
@@ -257,6 +275,18 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
             paused: extracting ? false : isStoppedStatus(evt.status),
             interruptReason: evt.status === "interrupted" ? (evt.reason ?? "") : null,
             extracting,
+            queued: evt.status === "queued",
+            ...(evt.phase && evt.status === "downloading"
+              ? {
+                  phaseInfo: {
+                    phase: evt.phase,
+                    phase_since: evt.phase_since,
+                    attempt: evt.attempt,
+                    max_attempts: evt.max_attempts,
+                    retry_delay_s: evt.retry_delay_s,
+                  },
+                }
+              : {}),
           }));
         }
       },
@@ -481,13 +511,13 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
       ),
     );
 
-    // Benign skip (#239): RetroArch writes saves to the content dir, so sync
-    // is unsupported. NOT a failure — proceed to launch silently (no toast,
+    // Benign skip (#239): RetroArch writes saves to the content dir, or save sync
+    // is not implemented yet (0.55.0), so sync is unsupported. NOT a failure — proceed to launch silently (no toast,
     // no fallback-launch confirm). The "Save sync off" banner in
     // RomMPlaySection already informs the user; nagging on every launch would
     // be noise.
-    if (result.reason === SAVEFILES_IN_CONTENT_DIR_REASON) {
-      detach(debugLog("CustomPlayButton: pre-launch sync skipped (savefiles_in_content_dir) — launching"));
+    if (isBenignSyncSkip(result.reason)) {
+      detach(debugLog(`CustomPlayButton: pre-launch sync skipped (${result.reason}) — launching`));
       return { success: true, message: result.message };
     }
 
@@ -535,7 +565,6 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
   // auto-adopt. Reachability is a FRESH probe at Play time (decision B), so the
   // page-open-stale `getRommConnectionState()` flag no longer gates the launch.
   const makePlayButtonOps = (rid: number): LaunchGateOps => ({
-    migrationPending: () => getMigrationState().pending,
     ensureTrackingConfigured: () => ensureTrackingConfigured(rid),
     checkCoreChange: () => confirmCoreChangeIfNeeded(rid),
     checkReachability: async () => {
@@ -625,9 +654,9 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
         return "done";
       case "abort":
       case "block":
-        // abort: the user saw setup/core UI and declined. block: migration
-        // pending (the QAM/page already surfaces it). Either way, bail silently
-        // to "play" without launching.
+        // abort: the user saw setup/core UI and declined. block: a hard
+        // precondition failed. Either way, bail silently to "play" without
+        // launching.
         setState("play");
         return "done";
       case "conflict": {
@@ -977,6 +1006,9 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     const paused = downloading ? dlProgress.paused : false;
     const interruptReason = downloading ? dlProgress.interruptReason : null;
     const resumable = downloading ? dlProgress.resumable : false;
+    // Request out, no response headers yet (RomM may be preparing an archive): no byte progress, but
+    // Pause and Cancel stay available.
+    const waitingInfo = downloading && !paused && !dlProgress.extracting ? dlProgress.phaseInfo : undefined;
     // Post-transfer ZIP unpack for a multi-file ROM — bytes climb 0→100 again
     // over the uncompressed total. Not cancellable: the right-side action is a
     // disabled throbber rather than the cancel X / Pause-Resume chevron.
@@ -1013,6 +1045,10 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
       dlLabel = `Extracting… ${Math.round(t * 100)}%`;
     } else if (paused) {
       dlLabel = interruptReason === null ? "Paused" : interruptedLabel(interruptReason);
+    } else if (downloading && dlProgress.queued) {
+      dlLabel = "In Queue";
+    } else if (waitingInfo) {
+      dlLabel = phaseButtonLabel(waitingInfo, nowMs);
     } else if (downloading) {
       dlLabel = formatProgress(dlProgress.bytesDownloaded, dlProgress.totalBytes);
     } else if (actionPending) {
@@ -1153,7 +1189,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     let rightAction: ReactElement;
     if (extracting) {
       rightAction = extractThrobber;
-    } else if (resumable || paused) {
+    } else if (resumable || paused || waitingInfo) {
       rightAction = dropdown;
     } else {
       rightAction = cancelX;

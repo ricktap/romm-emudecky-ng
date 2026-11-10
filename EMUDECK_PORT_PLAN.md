@@ -11,17 +11,22 @@
 
 ## 0. Version roadmap (set 2026-11-09)
 
-| Versions        | Focus                                                                                                  |
+| Version         | Focus                                                                                                  |
 | --------------- | ------------------------------------------------------------------------------------------------------ |
-| up to **0.75**  | **Nintendo Switch only**: Eden / Ryujinx / yuzu launch, adoption, downloads, Switch save sync, Switch firmware/keys |
-| **0.40.0**      | Rust backend rewrite (GitHub milestone "0.40.0"), still Switch-only                                      |
-| 0.75 → **0.90** | add the other systems back (RetroArch, PS2 / GC / PS1, Wii U / Vita, …)                                  |
-| 0.90 → **1.0.0**| prepare for the official Decky plugin store                                                              |
+| **0.40.0**      | Rust backend rewrite, rewrite steps 1–3 and 6 (remove Python), still Switch-only. It is built on the long-running `rust` branch and swapped in all at once (no hybrid releases); `main` gets only bugfixes until then. Tests are ported to Rust, with the Python tests as the spec |
+| **0.45.0**      | Switch firmware/keys in Rust (rewrite step 4, Phase 7)                                                  |
+| **0.55.0**      | Switch save sync in Rust (rewrite step 5, Phase 6; needs an ADR first)                                  |
+| up to **0.70.0**| New UI and new features (internal/external URL, Downloads view, health check), still Switch-only        |
+| **0.80.0**      | Retro emulators, Atari up to the N64 era                                                                |
+| **0.90.0**      | Modern consoles, Xbox/PS2 up to today                                                                   |
+| **1.0.0**       | Release in the Decky plugin store                                                                       |
+
+Each version is a GitHub milestone. **Nintendo Switch only up to 0.70.0.**
 
 What this means for the work below:
 
-- Phases that target other systems (the non-Switch parts of Phases 2, 6 and 7) are deferred to the 0.75–0.90 range.
-- The rewrite's "what's still needed" reviews (steps 3–5) may remove or skip non-Switch features until then.
+- Phases that target other systems (the non-Switch parts of Phases 2, 6 and 7) are deferred to the 0.80–0.90 range.
+- The rewrite's "what's still needed" reviews (steps 3–5) may remove or skip non-Switch features until 0.80.0.
 - Releases follow semver. Minor and patch releases are cut as soon as they are reviewed and tested.
 
 ---
@@ -320,7 +325,7 @@ the plugin process. Only what sits behind the socket changes later.
 **Accept:** Eden, Ryujinx and yuzu each launch a Switch game (one single-file, one folder game) from Steam on the first
 try. Changing a game's emulator or launch file re-bakes the shortcut. The contract tests pass through the shim.
 
-**Status:** implemented in v0.33.0; the on-device acceptance test is open. Review fixes:
+**Status:** accepted on the Deck (v0.33.1, 2026-11-09). Eden, Ryujinx and yuzu all launch Switch games from Steam (single-file and folder), and the launch-file override works. Review fixes:
 
 - The shim installs its forwarders at import time and gates calls on backend readiness, because Decky serves frontend
   calls in parallel with `_main`.

@@ -29,7 +29,6 @@ import * as sectionRefresh from "../utils/sectionRefresh";
 import * as playSectionUtils from "../utils/playSection";
 import * as formatters from "../utils/formatters";
 import { useVersionError } from "./VersionErrorCard";
-import { useMigrationStatus } from "./MigrationBlockedPage";
 
 // Type-only import — vi.mock("./CustomPlayButton", ...) below replaces the
 // runtime impl, but pinning the captured-props shape to the real component
@@ -39,9 +38,6 @@ import type { CustomPlayButton } from "./CustomPlayButton";
 // ----- Sibling hook mocks -----
 vi.mock("./VersionErrorCard", () => ({
   useVersionError: vi.fn(() => null),
-}));
-vi.mock("./MigrationBlockedPage", () => ({
-  useMigrationStatus: vi.fn(() => ({ pending: false })),
 }));
 
 // ----- CustomPlayButton — capture props per render -----
@@ -72,11 +68,6 @@ vi.mock("../utils/formatters", () => ({
 }));
 vi.mock("../utils/playSection", () => ({
   applySaveSyncDisplay: vi.fn(() => ({ status: null, label: "" })),
-  extractBiosInfo: vi.fn(() => ({
-    biosNeeded: true,
-    biosStatus: "ok",
-    biosLabel: "OK",
-  })),
   extractCoreInfo: vi.fn(
     (c: {
       active_core_label?: string | null;
@@ -100,9 +91,7 @@ vi.mock("../utils/playSection", () => ({
   timeoutMs: vi.fn(() => new Promise(() => {})),
 }));
 vi.mock("../utils/sectionRefresh", () => ({
-  refreshAchievementsInBackground: vi.fn(),
   refreshActiveSlotInBackground: vi.fn(),
-  refreshBiosInBackground: vi.fn(),
   refreshCoreInfoInBackground: vi.fn(),
 }));
 // The REAL in-memory connection store is used so useRommConnectionState drives
@@ -263,19 +252,13 @@ describe("RomMPlaySection", () => {
     connectionState.setVersionError(null);
 
     // resetAllMocks wipes module-mock impls — re-stub below.
-    // Default sibling-hook stubs — no version error, no migration pending.
+    // Default sibling-hook stubs — no version error.
     vi.mocked(useVersionError).mockReturnValue(null);
-    vi.mocked(useMigrationStatus).mockReturnValue({ pending: false });
 
     // Re-stub the playSection helpers (they were reset by resetAllMocks).
     vi.mocked(playSectionUtils.applySaveSyncDisplay).mockReturnValue({
       status: "synced",
       label: "synced label",
-    });
-    vi.mocked(playSectionUtils.extractBiosInfo).mockReturnValue({
-      biosNeeded: true,
-      biosStatus: "ok",
-      biosLabel: "OK",
     });
     vi.mocked(playSectionUtils.extractCoreInfo).mockReturnValue({
       activeCoreLabel: null,
@@ -374,14 +357,7 @@ describe("RomMPlaySection", () => {
       expect(container.firstChild).toBeNull();
     });
 
-    it("returns null when migration is pending", async () => {
-      vi.mocked(useMigrationStatus).mockReturnValue({ pending: true });
-      const { container } = render(<RomMPlaySection appId={testAppId} />);
-      await flushAsync();
-      expect(container.firstChild).toBeNull();
-    });
-
-    it("renders the play-section row with CustomPlayButton when neither gate fires", async () => {
+    it("renders the play-section row with CustomPlayButton when the version gate does not fire", async () => {
       const { queryByTestId } = render(<RomMPlaySection appId={testAppId} />);
       await flushAsync();
       expect(queryByTestId("play-button")).not.toBeNull();
@@ -430,11 +406,9 @@ describe("RomMPlaySection", () => {
       render(<RomMPlaySection appId={testAppId} />);
       await flushAsync();
       expect(sectionRefresh.refreshActiveSlotInBackground).not.toHaveBeenCalled();
-      expect(sectionRefresh.refreshAchievementsInBackground).not.toHaveBeenCalled();
-      expect(sectionRefresh.refreshBiosInBackground).not.toHaveBeenCalled();
     });
 
-    it("applies cached fields and dispatches active-slot/achievements/BIOS/core background refreshes", async () => {
+    it("applies cached fields and dispatches active-slot/core background refreshes", async () => {
       vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
         found: true,
         rom_id: 99,
@@ -443,17 +417,7 @@ describe("RomMPlaySection", () => {
         rom_file: "test.sfc",
         save_sync_enabled: true,
         save_sync_display: { status: "synced", label: "label", last_sync_check_at: null },
-        ra_id: 7,
-        achievement_summary: { earned: 3, total: 50, earned_hardcore: 0 },
-        stale_fields: ["metadata", "achievements", "bios"],
-        bios_status: {
-          platform_slug: "snes",
-          server_count: 1,
-          local_count: 1,
-          all_downloaded: true,
-        },
-        bios_level: "ok",
-        bios_label: "OK",
+        stale_fields: ["metadata"],
       });
       vi.mocked(backend.getRomMetadata).mockResolvedValue({} as never);
 
@@ -466,29 +430,13 @@ describe("RomMPlaySection", () => {
         expect.any(Function),
       );
       expect(backend.getRomMetadata).toHaveBeenCalledWith(99);
-      expect(sectionRefresh.refreshAchievementsInBackground).toHaveBeenCalledWith(
-        99,
-        expect.any(Function),
-        expect.any(Function),
-      );
-      expect(sectionRefresh.refreshBiosInBackground).toHaveBeenCalledWith(
-        99,
-        expect.any(Function),
-        expect.any(Function),
-      );
       // Core info is fetched from its own path (#923), keyed on the rom_id so
-      // the active core reflects a per-game DB override (epic #945), independent
-      // of the BIOS refresh.
+      // the active core reflects a per-game DB override (epic #945).
       expect(sectionRefresh.refreshCoreInfoInBackground).toHaveBeenCalledWith(
         99,
         expect.any(Function),
         expect.any(Function),
       );
-      // Assert exact arg shape: (cached.bios_level, cached.bios_label). The BIOS
-      // status dict is no longer passed — extractBiosInfo takes only the
-      // pre-computed level/label (#923). Catches arg-order regressions that a
-      // bare .toHaveBeenCalled() would miss.
-      expect(playSectionUtils.extractBiosInfo).toHaveBeenCalledWith("ok", "OK");
       // resolveSaveSyncLabel is called with the cached save_sync_display.
       expect(playSectionUtils.resolveSaveSyncLabel).toHaveBeenCalledWith(
         expect.objectContaining({ status: "synced", label: "label" }),
@@ -518,18 +466,6 @@ describe("RomMPlaySection", () => {
       render(<RomMPlaySection appId={testAppId} />);
       await flushAsync();
       expect(backend.getRomMetadata).not.toHaveBeenCalled();
-    });
-
-    it("skips achievements refresh when ra_id is null even if stale", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 50,
-        ra_id: null,
-        stale_fields: ["achievements"],
-      });
-      render(<RomMPlaySection appId={testAppId} />);
-      await flushAsync();
-      expect(sectionRefresh.refreshAchievementsInBackground).not.toHaveBeenCalled();
     });
 
     it("logs via logError when getCachedGameDetail rejects", async () => {
@@ -752,36 +688,6 @@ describe("RomMPlaySection", () => {
       } finally {
         logErrorSpy.mockRestore();
       }
-    });
-
-    it("keeps the header trophy count when a switch re-derive lacks the achievement summary (offline) (#1345 F1)", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 50,
-        ra_id: 42,
-        achievement_summary: { earned: 7, total: 70, earned_hardcore: 0 },
-        stale_fields: [],
-      });
-      const { container } = render(<RomMPlaySection appId={testAppId} />);
-      await flushAsync();
-      await flushAsync();
-      expect(container.textContent).toContain("7/70");
-
-      // A switch during an offline window re-derives from a cache whose
-      // achievement summary is cold (backend progress cache expired / server
-      // unreachable). The shown count must NOT reset to 0 — keep the last value.
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 51,
-        ra_id: 42,
-        stale_fields: [],
-      });
-      await act(async () => {
-        dispatchSwitch(testAppId, 51);
-        await Promise.resolve();
-      });
-      await flushAsync();
-      expect(container.textContent).toContain("7/70");
     });
   });
 
@@ -1417,7 +1323,7 @@ describe("RomMPlaySection", () => {
       expect(vi.mocked(backend.getSaveStatus)).not.toHaveBeenCalled();
     });
 
-    it("core_changed: reads core data from getPlatformCoreInfo (not BIOS) + BIOS level from getBiosStatus", async () => {
+    it("core_changed: reads core data from getPlatformCoreInfo", async () => {
       vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
         found: true,
         rom_id: 60,
@@ -1445,17 +1351,6 @@ describe("RomMPlaySection", () => {
           },
         ],
       });
-      // BIOS level/label come from the (now core-free) BIOS status.
-      vi.mocked(backend.getBiosStatus).mockResolvedValue({
-        bios_status: {
-          platform_slug: "snes",
-          server_count: 0,
-          local_count: 0,
-          all_downloaded: true,
-        },
-        bios_level: "ok",
-        bios_label: "All BIOS present",
-      });
 
       await act(async () => {
         globalThis.dispatchEvent(
@@ -1469,77 +1364,12 @@ describe("RomMPlaySection", () => {
       });
       // Keyed on rom_id (#945), not the event slug + filename.
       expect(vi.mocked(backend.getPlatformCoreInfo)).toHaveBeenCalledWith(60);
-      expect(vi.mocked(backend.getBiosStatus)).toHaveBeenCalledWith(60);
-    });
-
-    it("core_changed: no-BIOS → needs-BIOS switch surfaces the missing-BIOS badge (#923)", async () => {
-      // Mount with a core that needs no BIOS: cached has no bios_status, so the
-      // badge starts hidden (biosNeeded=false).
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 60,
-        platform_slug: "snes",
-      });
-      const { container } = render(<RomMPlaySection appId={testAppId} />);
-      await flushAsync();
-      expect(container.textContent).not.toContain("BIOS");
-
-      // Switch to a core whose BIOS is missing — getBiosStatus now returns a
-      // populated bios_status + missing level. The badge must appear: biosNeeded
-      // is re-derived from the refreshed status, not the (stale) mount value.
-      vi.mocked(backend.getPlatformCoreInfo).mockResolvedValue({
-        active_core: "blastem.so",
-        active_core_label: "BlastEm",
-        platform_core_label: null,
-        has_game_override: false,
-        emulator_data_available: true,
-        emulators: [
-          { label: "Snes9x", kind: "libretro", core_so: "snes9x.so", is_default: true, bakeable: true, reason: null },
-          {
-            label: "BlastEm",
-            kind: "libretro",
-            core_so: "blastem.so",
-            is_default: false,
-            bakeable: true,
-            reason: null,
-          },
-        ],
-      });
-      vi.mocked(backend.getBiosStatus).mockResolvedValue({
-        bios_status: {
-          platform_slug: "snes",
-          server_count: 3,
-          local_count: 0,
-          all_downloaded: false,
-        },
-        bios_level: "missing",
-        bios_label: "0/3",
-      });
-      vi.mocked(playSectionUtils.extractBiosInfo).mockReturnValue({
-        biosNeeded: true,
-        biosStatus: "missing",
-        biosLabel: "0/3",
-      });
-
-      await act(async () => {
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_data_changed", {
-            detail: { type: "core_changed", platform_slug: "snes" },
-          }),
-        );
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(container.textContent).toContain("BIOS");
-      expect(container.textContent).toContain("0/3");
     });
 
     it("core_changed: skips when no romId", async () => {
       // cached.found=false → no romId
       render(<RomMPlaySection appId={testAppId} />);
       await flushAsync();
-      vi.mocked(backend.getBiosStatus).mockClear();
       vi.mocked(backend.getPlatformCoreInfo).mockClear();
       await act(async () => {
         globalThis.dispatchEvent(
@@ -1549,7 +1379,6 @@ describe("RomMPlaySection", () => {
         );
         await Promise.resolve();
       });
-      expect(vi.mocked(backend.getBiosStatus)).not.toHaveBeenCalled();
       expect(vi.mocked(backend.getPlatformCoreInfo)).not.toHaveBeenCalled();
     });
 
@@ -1653,7 +1482,6 @@ describe("RomMPlaySection", () => {
       render(<RomMPlaySection appId={testAppId} />);
       await flushAsync();
       vi.mocked(backend.getSaveStatus).mockClear();
-      vi.mocked(backend.getBiosStatus).mockClear();
       await act(async () => {
         globalThis.dispatchEvent(
           new CustomEvent("romm_data_changed", {
@@ -1663,13 +1491,12 @@ describe("RomMPlaySection", () => {
         await Promise.resolve();
       });
       expect(vi.mocked(backend.getSaveStatus)).not.toHaveBeenCalled();
-      expect(vi.mocked(backend.getBiosStatus)).not.toHaveBeenCalled();
     });
 
     it("dispatch handler throw → onDataChanged outer try/catch fires debugLog", async () => {
       // Drive the outer try/catch in onDataChanged by routing through the
-      // core_changed branch (no inline .catch on getBiosStatus) and making
-      // getBiosStatus reject. The throw escapes handleCoreChange, propagates
+      // core_changed branch (no inline .catch on getPlatformCoreInfo) and making
+      // getPlatformCoreInfo reject. The throw escapes handleCoreChange, propagates
       // to onDataChanged's catch, and surfaces via debugLog.
       vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
         found: true,
@@ -1677,7 +1504,7 @@ describe("RomMPlaySection", () => {
       });
       render(<RomMPlaySection appId={testAppId} />);
       await flushAsync();
-      vi.mocked(backend.getBiosStatus).mockRejectedValue(new Error("handler-boom"));
+      vi.mocked(backend.getPlatformCoreInfo).mockRejectedValue(new Error("handler-boom"));
       vi.mocked(backend.debugLog).mockClear();
       await act(async () => {
         globalThis.dispatchEvent(
@@ -2061,133 +1888,6 @@ describe("RomMPlaySection", () => {
   });
 
   // ------------------------------------------------------------------
-  // J. handleDownloadBios
-  // ------------------------------------------------------------------
-
-  describe("handleDownloadBios", () => {
-    async function setupBiosAction() {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 42,
-        platform_slug: "ps1",
-      });
-      render(<RomMPlaySection appId={testAppId} />);
-      await flushAsync();
-      return openRomMMenuAndGetItems(testAppId);
-    }
-
-    it("happy path: downloads BIOS, dispatches bios event, refreshes status", async () => {
-      const items = await setupBiosAction();
-      vi.mocked(backend.downloadAllFirmware).mockResolvedValue({
-        success: true,
-        message: "",
-        downloaded: 3,
-        errors: [],
-      } as never);
-      vi.mocked(backend.getBiosStatus).mockResolvedValue({
-        bios_status: {
-          platform_slug: "ps1",
-          server_count: 1,
-          local_count: 1,
-          all_downloaded: true,
-        },
-        bios_level: "ok",
-        bios_label: "OK",
-      });
-      vi.mocked(toaster.toast).mockClear();
-      const listener = vi.fn();
-      globalThis.addEventListener("romm_data_changed", listener);
-      try {
-        await act(async () => {
-          await items[3]!.props.onClick?.();
-        });
-        expect(vi.mocked(backend.downloadAllFirmware)).toHaveBeenCalledWith("ps1");
-        expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(
-          expect.objectContaining({ body: "BIOS downloaded (3 files)" }),
-        );
-        const biosEv = listener.mock.calls.map((c) => c[0] as CustomEvent).find((e) => e.detail.type === "bios");
-        expect(biosEv?.detail).toMatchObject({
-          type: "bios",
-          platform_slug: "ps1",
-        });
-      } finally {
-        globalThis.removeEventListener("romm_data_changed", listener);
-      }
-    });
-
-    it("getBiosStatus rejection during refresh → uses safe fallback, no setInfo write", async () => {
-      const items = await setupBiosAction();
-      vi.mocked(backend.downloadAllFirmware).mockResolvedValue({
-        success: true,
-        message: "",
-        downloaded: 0,
-        errors: [],
-      } as never);
-      vi.mocked(backend.getBiosStatus).mockRejectedValue(new Error("net"));
-      vi.mocked(toaster.toast).mockClear();
-      await act(async () => {
-        await items[3]!.props.onClick?.();
-      });
-      // Toast still fires; fallback has bios_status null → skips setInfo.
-      expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(
-        expect.objectContaining({ body: "BIOS downloaded (0 files)" }),
-      );
-    });
-
-    it("failure with message → toasts the message", async () => {
-      const items = await setupBiosAction();
-      vi.mocked(backend.downloadAllFirmware).mockResolvedValue({
-        success: false,
-        message: "no internet",
-      } as never);
-      vi.mocked(toaster.toast).mockClear();
-      await act(async () => {
-        await items[3]!.props.onClick?.();
-      });
-      expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(expect.objectContaining({ body: "no internet" }));
-    });
-
-    it("failure with empty message → falls back to 'BIOS download failed'", async () => {
-      const items = await setupBiosAction();
-      vi.mocked(backend.downloadAllFirmware).mockResolvedValue({
-        success: false,
-        message: "",
-      } as never);
-      vi.mocked(toaster.toast).mockClear();
-      await act(async () => {
-        await items[3]!.props.onClick?.();
-      });
-      expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(expect.objectContaining({ body: "BIOS download failed" }));
-    });
-
-    it("throw → toasts 'BIOS download failed'", async () => {
-      const items = await setupBiosAction();
-      vi.mocked(backend.downloadAllFirmware).mockRejectedValue(new Error("io"));
-      vi.mocked(toaster.toast).mockClear();
-      await act(async () => {
-        await items[3]!.props.onClick?.();
-      });
-      expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(expect.objectContaining({ body: "BIOS download failed" }));
-    });
-
-    it("no platformSlug → early return, no fetch", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 42,
-        platform_slug: "",
-      });
-      render(<RomMPlaySection appId={testAppId} />);
-      await flushAsync();
-      const items = await openRomMMenuAndGetItems(testAppId);
-      vi.mocked(backend.downloadAllFirmware).mockClear();
-      await act(async () => {
-        await items[3]!.props.onClick?.();
-      });
-      expect(vi.mocked(backend.downloadAllFirmware)).not.toHaveBeenCalled();
-    });
-  });
-
-  // ------------------------------------------------------------------
   // K. handleUninstall (separator is at index 4, so uninstall is at index 6)
   // ------------------------------------------------------------------
 
@@ -2215,7 +1915,7 @@ describe("RomMPlaySection", () => {
       try {
         await act(async () => {
           // Last MenuItem (uninstall) — find via tone or position. The order
-          // is [refresh-artwork, refresh-metadata, sync-saves, download-bios,
+          // is [refresh-artwork, refresh-metadata, sync-saves,
           // separator, delete-saves, uninstall] but we filtered to MenuItems
           // only, so it's index 5 (after delete-saves at 4).
           // Actually after dropping the separator from filtered MenuItems,
@@ -2391,19 +2091,6 @@ describe("RomMPlaySection", () => {
         rom_id: 42,
         platform_slug: "snes",
         rom_file: "mario.sfc",
-        bios_status: {
-          platform_slug: "snes",
-          server_count: 0,
-          local_count: 0,
-          all_downloaded: true,
-        },
-        bios_level: "ok",
-        bios_label: "OK",
-      });
-      vi.mocked(playSectionUtils.extractBiosInfo).mockReturnValue({
-        biosNeeded: true,
-        biosStatus: "ok",
-        biosLabel: "OK",
       });
       // Core data is sourced from the dedicated get_platform_core_info path (#923),
       // which feeds extractCoreInfo. The core button gates on availableCores > 1.
@@ -2457,11 +2144,6 @@ describe("RomMPlaySection", () => {
         success: true,
         launch_options: 'flatpak run net.retrodeck.retrodeck -e "...blastem.so..." "/roms/mario.sfc"',
         app_id: 777,
-      });
-      vi.mocked(backend.getBiosStatus).mockResolvedValue({
-        bios_status: null,
-        bios_level: null,
-        bios_label: null,
       });
       render(<RomMPlaySection appId={testAppId} />);
       await flushAsync();
@@ -2642,19 +2324,6 @@ describe("RomMPlaySection", () => {
         rom_id: 42,
         platform_slug: "snes",
         rom_file: "mario.sfc",
-        bios_status: {
-          platform_slug: "snes",
-          server_count: 0,
-          local_count: 0,
-          all_downloaded: true,
-        },
-        bios_level: "ok",
-        bios_label: "OK",
-      });
-      vi.mocked(playSectionUtils.extractBiosInfo).mockReturnValue({
-        biosNeeded: true,
-        biosStatus: "ok",
-        biosLabel: "OK",
       });
       vi.mocked(backend.getPlatformCoreInfo).mockResolvedValue({
         active_core: "blastem.so",
@@ -2708,11 +2377,6 @@ describe("RomMPlaySection", () => {
         launch_options: 'flatpak run net.retrodeck.retrodeck "/roms/mario.sfc"',
         app_id: 888,
       });
-      vi.mocked(backend.getBiosStatus).mockResolvedValue({
-        bios_status: null,
-        bios_level: null,
-        bios_label: null,
-      });
       render(<RomMPlaySection appId={testAppId} />);
       await flushAsync();
       const coreItems = await openCoreMenuAndGetItems(testAppId);
@@ -2754,11 +2418,6 @@ describe("RomMPlaySection", () => {
         success: true,
         launch_options: 'flatpak run net.retrodeck.retrodeck -e "...snes9x.so..." "/roms/mario.sfc"',
         app_id: 777,
-      });
-      vi.mocked(backend.getBiosStatus).mockResolvedValue({
-        bios_status: null,
-        bios_level: null,
-        bios_label: null,
       });
       render(<RomMPlaySection appId={testAppId} />);
       await flushAsync();
@@ -2846,7 +2505,7 @@ describe("RomMPlaySection", () => {
   // ------------------------------------------------------------------
 
   describe("context menus", () => {
-    it("showRomMMenu yields 6 MenuItems + 1 separator (Refresh artwork/metadata/saves/bios + delete-saves + uninstall)", async () => {
+    it("showRomMMenu yields 5 MenuItems + 1 separator (Refresh artwork/metadata, sync saves + delete-saves + uninstall; no BIOS item)", async () => {
       vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
         found: true,
         rom_id: 42,
@@ -2854,7 +2513,7 @@ describe("RomMPlaySection", () => {
       render(<RomMPlaySection appId={testAppId} />);
       await flushAsync();
       const items = await openRomMMenuAndGetItems(testAppId);
-      expect(items).toHaveLength(6);
+      expect(items).toHaveLength(5);
       // tone="destructive" on the delete-saves + uninstall ones.
       const destructive = items.filter((i) => i.props.tone === "destructive");
       expect(destructive).toHaveLength(2);
@@ -2866,19 +2525,6 @@ describe("RomMPlaySection", () => {
         rom_id: 42,
         platform_slug: "snes",
         rom_file: "mario.sfc",
-        bios_status: {
-          platform_slug: "snes",
-          server_count: 0,
-          local_count: 0,
-          all_downloaded: true,
-        },
-        bios_level: "ok",
-        bios_label: "OK",
-      });
-      vi.mocked(playSectionUtils.extractBiosInfo).mockReturnValue({
-        biosNeeded: true,
-        biosStatus: "ok",
-        biosLabel: "OK",
       });
       vi.mocked(playSectionUtils.extractCoreInfo).mockReturnValue(extractCore);
       render(<RomMPlaySection appId={testAppId} />);
@@ -3139,29 +2785,6 @@ describe("RomMPlaySection", () => {
       expect(container.textContent).toContain("1h 30m");
     });
 
-    it("achievements item renders when raId is set; clicking dispatches romm_tab_switch with tab=achievements", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 42,
-        ra_id: 12345,
-        achievement_summary: { earned: 3, total: 50, earned_hardcore: 0 },
-      });
-      const { container, getByText } = render(<RomMPlaySection appId={testAppId} />);
-      await flushAsync();
-      expect(container.textContent).toContain("ACHIEVEMENTS");
-      const listener = vi.fn();
-      globalThis.addEventListener("romm_tab_switch", listener);
-      try {
-        act(() => {
-          getByText("ACHIEVEMENTS").click();
-        });
-        const ev = listener.mock.calls[0]?.[0] as CustomEvent;
-        expect(ev.detail).toEqual({ tab: "achievements" });
-      } finally {
-        globalThis.removeEventListener("romm_tab_switch", listener);
-      }
-    });
-
     it("legacy slot warning shows when activeSlot null and saveSyncEnabled true", async () => {
       // The component's initial activeSlot is "default" (not null); we'd need
       // refreshActiveSlotInBackground to set it to null. Easier: re-mock the
@@ -3182,82 +2805,11 @@ describe("RomMPlaySection", () => {
       expect(container.textContent).toContain("Legacy save slot");
     });
 
-    it("BIOS warning shows when biosNeeded + biosStatus is 'partial' or 'missing'; click dispatches romm_tab_switch with tab=bios", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 42,
-        bios_status: {
-          platform_slug: "snes",
-          server_count: 1,
-          local_count: 0,
-          all_downloaded: false,
-        },
-        bios_level: "missing",
-        bios_label: "0/3",
-      });
-      vi.mocked(playSectionUtils.extractBiosInfo).mockReturnValue({
-        biosNeeded: true,
-        biosStatus: "missing",
-        biosLabel: "0/3",
-      });
-      const { container, getByText } = render(<RomMPlaySection appId={testAppId} />);
-      await flushAsync();
-      expect(container.textContent).toContain("BIOS");
-      const listener = vi.fn();
-      globalThis.addEventListener("romm_tab_switch", listener);
-      try {
-        act(() => {
-          getByText("BIOS").click();
-        });
-        const ev = listener.mock.calls[0]?.[0] as CustomEvent;
-        expect(ev.detail).toEqual({ tab: "bios" });
-      } finally {
-        globalThis.removeEventListener("romm_tab_switch", listener);
-      }
-    });
-
-    it("BIOS warning suppressed when biosStatus is 'ok'", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 42,
-        bios_status: {
-          platform_slug: "snes",
-          server_count: 1,
-          local_count: 1,
-          all_downloaded: true,
-        },
-        bios_level: "ok",
-        bios_label: "OK",
-      });
-      vi.mocked(playSectionUtils.extractBiosInfo).mockReturnValue({
-        biosNeeded: true,
-        biosStatus: "ok",
-        biosLabel: "OK",
-      });
-      const { container } = render(<RomMPlaySection appId={testAppId} />);
-      await flushAsync();
-      // Render row exists but no BIOS info item.
-      expect(container.textContent).not.toContain("BIOS");
-    });
-
     it("core button only renders when availableCores.length > 1", async () => {
       vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
         found: true,
         rom_id: 42,
         platform_slug: "snes",
-        bios_status: {
-          platform_slug: "snes",
-          server_count: 0,
-          local_count: 0,
-          all_downloaded: true,
-        },
-        bios_level: "ok",
-        bios_label: "OK",
-      });
-      vi.mocked(playSectionUtils.extractBiosInfo).mockReturnValue({
-        biosNeeded: true,
-        biosStatus: "ok",
-        biosLabel: "OK",
       });
       // Single core from the dedicated path → button hidden.
       vi.mocked(playSectionUtils.extractCoreInfo).mockReturnValue({

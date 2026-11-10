@@ -38,7 +38,7 @@ export interface PreLaunchSyncOutcome {
  *                          internal error was swallowed). Launch may proceed.
  *   - `block`            — a hard precondition failed and the user has not yet
  *                          been shown UI for it. `reason` selects the caller's
- *                          message (`not_installed`, `migration_pending`).
+ *                          message (`not_installed`).
  *   - `abort`            — the user was shown UI (tracking-setup or core-change)
  *                          and chose not to proceed. The caller bails silently,
  *                          with no further message — the user already decided.
@@ -52,7 +52,7 @@ export interface PreLaunchSyncOutcome {
  */
 export type GateVerdict =
   | { decision: "allow" }
-  | { decision: "block"; reason: "not_installed" | "migration_pending" }
+  | { decision: "block"; reason: "not_installed" }
   | { decision: "abort" }
   | { decision: "conflict"; conflicts: SyncConflict[] }
   | { decision: "offline_drift" }
@@ -64,13 +64,6 @@ export type GateVerdict =
  * module state — which makes it fully unit-testable with stubs.
  */
 export interface LaunchGateOps {
-  /**
-   * Synchronous in-memory check: is a RetroDECK migration pending? When true
-   * the gate blocks immediately (`block`/`migration_pending`) — launching with
-   * a pending migration risks silent save-data loss.
-   */
-  migrationPending: () => boolean;
-
   /**
    * Ensure save-slot tracking is configured for this ROM. Returns `"proceed"`
    * to continue, or `"abort"` when the user was shown setup UI and declined
@@ -110,12 +103,11 @@ export interface LaunchGateOps {
  * UI — the caller acts on the verdict.
  *
  * Step order (each step's failure short-circuits the rest):
- *   1. migration pending      -> block / migration_pending
- *   2. ensureTrackingConfigured -> "abort" => abort
- *   3. checkCoreChange        -> cancel => abort
- *   4. checkReachability      -> online vs offline split
- *   5a. online:  preLaunchSync -> conflict | sync_failed | allow
- *   5b. offline: checkLocalDrift -> offline_drift | allow
+ *   1. ensureTrackingConfigured -> "abort" => abort
+ *   2. checkCoreChange        -> cancel => abort
+ *   3. checkReachability      -> online vs offline split
+ *   4a. online:  preLaunchSync -> conflict | sync_failed | allow
+ *   4b. offline: checkLocalDrift -> offline_drift | allow
  *
  * The gate NEVER throws and NEVER blocks the user on an internal error: the
  * whole body is wrapped so any thrown error (from an injected callback or
@@ -128,27 +120,22 @@ export interface LaunchGateOps {
  */
 export async function runLaunchGate(_appId: number, _romId: number, ops: LaunchGateOps): Promise<GateVerdict> {
   try {
-    // 1. Pending RetroDECK migration — hard block before any other work.
-    if (ops.migrationPending()) {
-      return { decision: "block", reason: "migration_pending" };
-    }
-
-    // 2. Save-slot tracking setup. "abort" means the user saw setup UI and
+    // 1. Save-slot tracking setup. "abort" means the user saw setup UI and
     //    declined — bail silently.
     if ((await ops.ensureTrackingConfigured()) === "abort") {
       return { decision: "abort" };
     }
 
-    // 3. Emulator core-change confirm. Cancel => bail silently.
+    // 2. Emulator core-change confirm. Cancel => bail silently.
     if (!(await ops.checkCoreChange())) {
       return { decision: "abort" };
     }
 
-    // 4. Fresh reachability probe decides the sync branch.
+    // 3. Fresh reachability probe decides the sync branch.
     const online = await ops.checkReachability();
 
     if (online) {
-      // 5a. Online — run pre-launch sync and map its outcome.
+      // 4a. Online — run pre-launch sync and map its outcome.
       const sync = await ops.preLaunchSync();
       if (sync.conflicts && sync.conflicts.length > 0) {
         return { decision: "conflict", conflicts: sync.conflicts };
@@ -159,7 +146,7 @@ export async function runLaunchGate(_appId: number, _romId: number, ops: LaunchG
       return { decision: "allow" };
     }
 
-    // 5b. Offline — block only when the local save has drifted; otherwise allow.
+    // 4b. Offline — block only when the local save has drifted; otherwise allow.
     if (await ops.checkLocalDrift()) {
       return { decision: "offline_drift" };
     }

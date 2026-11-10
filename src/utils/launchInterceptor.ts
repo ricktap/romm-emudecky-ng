@@ -18,7 +18,6 @@
 import { toaster } from "@decky/api";
 import { isRomMAppId } from "../patches/gameDetailPatch";
 import {
-  refreshMigrationState,
   getInstalledRom,
   getCachedGameDetail,
   isSaveTrackingConfigured,
@@ -31,9 +30,7 @@ import {
   logInfo,
   logError,
 } from "../api/backend";
-import { getMigrationState, setMigrationStatus } from "./migrationStore";
 import { reportServerReachable } from "./connectionState";
-import { setSaveSortMigrationStatus } from "./saveSortMigrationStore";
 import { getAppIdRomIdMapSnapshot, getActiveSessionRomId } from "./sessionManager";
 import { isAppRunning } from "./runningApps";
 import { runLaunchGate, markLaunchSkipped, consumeLaunchSkip } from "./launchGate";
@@ -44,13 +41,11 @@ import { showCoreChangeModal } from "../components/CoreChangeModal";
 import { handleConflicts } from "../components/SyncConflictModal";
 import { showOfflineDriftModal } from "../components/OfflineDriftModal";
 import { showFallbackLaunchModal } from "../components/FallbackLaunchModal";
-import { SAVEFILES_IN_CONTENT_DIR_REASON } from "../types";
+import { isBenignSyncSkip } from "../types";
 import { detach } from "./detach";
 
 let gameActionHook: { unregister: () => void } | null = null;
 
-/** Migration block copy — surfaced as a toast (no relaunch). */
-const MIGRATION_TOAST_BODY = "Pending RetroDECK migration. Open the plugin QAM to migrate or dismiss.";
 
 /**
  * Watcher variant of the tracking-setup gate. On a cold grid launch there is no
@@ -114,7 +109,7 @@ const PRE_LAUNCH_SYNC_TIMEOUT_MS = 15000;
 
 /**
  * Online pre-launch sync, mapped onto the gate's {@link PreLaunchSyncOutcome}.
- * The benign `savefiles_in_content_dir` skip is treated as a successful proceed
+ * The benign skips (`savefiles_in_content_dir`, `not_implemented`) are treated as a successful proceed
  * (no conflict, no failure) — exactly as the Play button does — so it never
  * surfaces a fallback confirm.
  *
@@ -136,7 +131,7 @@ async function preLaunchSyncWatcher(romId: number): Promise<PreLaunchSyncOutcome
     logError(`Watcher pre-launch sync failed (surfacing fallback confirm): ${e}`);
     return { success: false, message: "Couldn't sync saves with RomM server." };
   }
-  if (result.reason === SAVEFILES_IN_CONTENT_DIR_REASON) {
+  if (isBenignSyncSkip(result.reason)) {
     return { success: true, message: result.message };
   }
   const outcome: PreLaunchSyncOutcome = { success: result.success, message: result.message };
@@ -147,7 +142,6 @@ async function preLaunchSyncWatcher(romId: number): Promise<PreLaunchSyncOutcome
 /** Build the funnel callbacks for a given romId. */
 function makeWatcherOps(romId: number): LaunchGateOps {
   return {
-    migrationPending: () => getMigrationState().pending,
     ensureTrackingConfigured: async (): Promise<"proceed"> => {
       await ensureTrackingConfiguredWatcher(romId);
       return "proceed";
@@ -216,9 +210,6 @@ async function handleWatcherVerdict(verdict: GateVerdict, appId: number, romId: 
       // The user saw setup/core UI and declined — already cancelled, nothing to do.
       return "done";
     case "block":
-      if (verdict.reason === "migration_pending") {
-        toaster.toast({ title: "EmuDecky RomM Manager", body: MIGRATION_TOAST_BODY });
-      }
       return "done";
     case "conflict": {
       const resolution = await handleConflicts(verdict.conflicts);
@@ -318,15 +309,6 @@ export function registerLaunchInterceptor(): void {
       detach(
         (async () => {
           try {
-            // Fire-and-forget migration refresh — picks up RetroArch sort
-            // changes made via the in-game Quick Menu before the prior session.
-            refreshMigrationState()
-              .then(({ retrodeck, save_sort }) => {
-                setMigrationStatus(retrodeck);
-                setSaveSortMigrationStatus(save_sort);
-              })
-              .catch((e) => logError(`Pre-launch migration refresh failed: ${e}`));
-
             // Resolve romId synchronously from the session map snapshot. An
             // unknown appId is not ours to gate — relaunch and bail.
             const romId = getAppIdRomIdMapSnapshot()[String(appId)];

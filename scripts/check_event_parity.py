@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Backend↔frontend emit-event parity gate.
 
-The realtime event channel is declared twice: the backend emits a named event
-via ``self._emit("name", payload)`` (Python) and the frontend subscribes to it
+The realtime event channel is declared twice: the Rust backend emits a named event
+via ``emit("name", payload)`` (``backend/src``) and the frontend subscribes to it
 via ``addEventListener<[Payload]>("name", handler)`` (TypeScript). Nothing ties
 the two together at build time — a renamed/added/removed event on either side
 only surfaces at runtime as an event that fires into the void (emit with no
@@ -25,33 +25,43 @@ What it guarantees (and what it deliberately does not):
     frontend. ``globalThis.addEventListener`` / ``el.addEventListener`` are DOM
     ``CustomEvent`` subscriptions, not backend emits, and are excluded.
 
-``EXEMPT`` holds event names deliberately kept out of the parity check. It is
-empty today; an entry here is a conscious "this event is intentionally declared
-on only one side" decision — never a lever to silence a real drift. A genuine
-drift is a finding to triage, not to exempt.
+``EXEMPT`` holds event names deliberately kept out of the parity check. An
+entry here is a conscious "this event is intentionally declared on only one
+side" decision — never a lever to silence a real drift. Current entries are
+frontend listeners for save sync, which is not ported to Rust until 0.55.0
+(see ``HANDOFF.md``); the Python implementation is at the commit noted there.
+
+Backend detection is textual (Rust has no cheap AST here): a name counts as
+emitted when it is the first literal argument of an ``emit…("name", …)`` call, or
+when a frontend-listened name appears as a string literal in non-test backend
+source (events are also emitted through helpers that take the name as an
+argument).
 
 Exit 0 when the two surfaces match, 1 (one line per discrepancy) otherwise.
 """
 
 from __future__ import annotations
 
-import ast
+import re
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PY_MODULES_DIR = REPO_ROOT / "py_modules"
-VENDOR_DIR = PY_MODULES_DIR / "_vendor"
+BACKEND_SRC_DIR = REPO_ROOT / "backend" / "src"
 SRC_DIR = REPO_ROOT / "src"
-MAIN_PY = REPO_ROOT / "main.py"
 
-# Event names deliberately excluded from the parity check. Empty today; add an
-# entry only as a conscious decision (see the module docstring). Do NOT add a
-# name here to silence a real drift — a drift is a finding to triage.
-EXEMPT: frozenset[str] = frozenset()
+# Event names deliberately excluded from the parity check. Add an entry only as
+# a conscious decision (see the module docstring). Do NOT add a name here to
+# silence a real drift — a drift is a finding to triage.
+EXEMPT: frozenset[str] = frozenset(
+    {
+        # Save sync is not ported to the Rust backend until 0.55.0; the frontend
+        # keeps its listeners so the UI is ready when the backend returns.
+        "save_status_updated",
+    }
+)
 
-# Attribute names that name an emit call (``self.emit`` / ``self._emit``).
-_EMIT_ATTRS = frozenset({"emit", "_emit"})
+_EMIT_CALL = re.compile(r"\bemit\w*\(\s*\"([a-z][a-z0-9_]*)\"")
 
 # Mirrors the TS-source helpers in check_callable_manifest.py (kept local:
 # scripts/ is not importable from the importlib-loaded contract tests).
@@ -244,45 +254,31 @@ def _parse_text_into(text: str, result: set[str]) -> None:
 
 
 def _iter_backend_files() -> list[Path]:
-    """Every backend ``.py`` to scan: all of py_modules/ minus _vendor/, plus main.py."""
-    files = sorted(p for p in PY_MODULES_DIR.rglob("*.py") if VENDOR_DIR not in p.parents and p != VENDOR_DIR)
-    if MAIN_PY.is_file():
-        files.append(MAIN_PY)
-    return files
+    """Every non-test Rust source file of the backend."""
+    return sorted(
+        p
+        for p in BACKEND_SRC_DIR.rglob("*.rs")
+        if p.name != "tests.rs" and not p.name.endswith("_tests.rs") and "tests" not in p.relative_to(BACKEND_SRC_DIR).parts
+    )
 
 
-def parse_backend_emits(files: list[Path] | None = None) -> set[str]:
-    """Parse every literal ``self.emit("name", ...)`` / ``self._emit("name", ...)``.
+def parse_backend_emits(files: list[Path] | None = None, listened: set[str] | None = None) -> set[str]:
+    """Event names the Rust backend emits (see the module docstring for the heuristic).
 
-    Uses ``ast`` (emits span multiple lines, so a regex would be brittle). Walks
-    every ``ast.Call`` whose ``func`` is an ``ast.Attribute`` with ``.attr`` in
-    ``{"emit", "_emit"}`` and a first positional arg that is a string constant —
-    that constant is the event name. Dynamic/variable event names can't be
-    matched statically and are skipped. Returns the set of literal event names.
+    *listened* defaults to the frontend's listener names.
     """
     if files is None:
         files = _iter_backend_files()
+    if listened is None:
+        listened = parse_frontend_listeners(SRC_DIR)
     result: set[str] = set()
     for path in files:
         try:
-            source = path.read_text(encoding="utf-8")
+            text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        try:
-            tree = ast.parse(source, filename=str(path))
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            if not (isinstance(func, ast.Attribute) and func.attr in _EMIT_ATTRS):
-                continue
-            if not node.args:
-                continue
-            first = node.args[0]
-            if isinstance(first, ast.Constant) and isinstance(first.value, str):
-                result.add(first.value)
+        result.update(_EMIT_CALL.findall(text))
+        result.update(name for name in listened if f'"{name}"' in text)
     return result
 
 
@@ -327,7 +323,7 @@ def main(argv: list[str]) -> int:
             print(line)
         print()
         print(
-            "ERROR: the backend (py_modules emit calls) and frontend (src/**/*.ts "
+            "ERROR: the backend (backend/src emit calls) and frontend (src/**/*.ts "
             "addEventListener calls) event surfaces have drifted. Every emitted event "
             "must have a frontend listener and vice versa (or be explicitly EXEMPT) so "
             "the event channel stays one source of truth."

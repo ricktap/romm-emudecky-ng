@@ -1,4 +1,5 @@
 import { callable } from "@decky/api";
+import { unportedCallable } from "./unportedCallable";
 import { detach } from "../utils/detach";
 import type {
   UpdateCheckResult,
@@ -13,8 +14,6 @@ import type {
   RegistryPlatform,
   FirmwareStatus,
   FirmwareDownloadResult,
-  BiosStatus,
-  BiosFileStatus,
   CoreInfo,
   RomMetadata,
   SaveSyncSettings,
@@ -23,9 +22,6 @@ import type {
   SyncConflict,
   RommErrorCode,
   SyncPreview,
-  AchievementSummary,
-  AchievementList,
-  AchievementProgress,
   SaveSlotSummary,
   SaveSetupInfo,
   SlotSavesResponse,
@@ -33,10 +29,6 @@ import type {
   LaunchVerdict,
   SlotDeleteInfo,
   DeleteSlotResult,
-  MigrationStatus,
-  MigrationResult,
-  RetroDeckStatus,
-  SaveSortMigrationStatus,
   RollbackStatus,
   ListFileVersionsResult,
   ListDevicesResponse,
@@ -66,22 +58,7 @@ export interface CachedGameDetail {
   } | null;
 
   metadata?: Record<string, unknown> | null;
-  bios_status?: {
-    needs_bios?: boolean;
-    platform_slug: string;
-    server_count: number;
-    local_count: number;
-    all_downloaded: boolean;
-    required_count?: number;
-    required_downloaded?: number;
-    cached_at?: number;
-    files?: BiosFileStatus[];
-  } | null;
   rom_file?: string;
-  ra_id?: number | null;
-  achievement_summary?: AchievementSummary | null;
-  bios_level?: "ok" | "partial" | "missing" | null;
-  bios_label?: string | null;
   save_sync_display?: SaveSyncDisplay | null;
   stale_fields?: string[];
   // Version metadata (ADR-0021) — the RomM sibling-group dimensions of the
@@ -138,7 +115,7 @@ export const getRomRelaunchOptions = callable<[number], { app_id: number; launch
   "get_rom_relaunch_options",
 );
 export const probeReachability = callable<[], { online: boolean }>("probe_reachability");
-export const refreshSaveStatus = callable<[number], { success: boolean }>("refresh_save_status");
+export const refreshSaveStatus = unportedCallable<[number], { success: boolean }>("refresh_save_status");
 export const removeRom = callable<[number], BackendResult>("remove_rom");
 export const getPlatforms = callable<[], { success: boolean; platforms: PlatformSyncSetting[] }>("get_platforms");
 export const savePlatformSync = callable<[number, boolean], { success: boolean; message: string }>(
@@ -247,34 +224,9 @@ export const saveSgdbApiKey = callable<[string], { success: boolean; message: st
 export const verifySgdbApiKey = callable<[string], { success: boolean; message: string }>("verify_sgdb_api_key");
 export const saveSteamInputSetting = callable<[string], { success: boolean }>("save_steam_input_setting");
 export const applySteamInputSetting = callable<[], { success: boolean; message: string }>("apply_steam_input_setting");
-export const getFirmwareStatus = callable<[], FirmwareStatus>("get_firmware_status");
-export const downloadAllFirmware = callable<[string], FirmwareDownloadResult>("download_all_firmware");
-export const downloadRequiredFirmware = callable<[string], FirmwareDownloadResult>("download_required_firmware");
-export const checkPlatformBios = callable<[string], BiosStatus>("check_platform_bios");
-export const getBiosStatus = callable<
-  [number],
-  {
-    bios_status: CachedGameDetail["bios_status"];
-    bios_level: "ok" | "partial" | "missing" | null;
-    bios_label: string | null;
-  }
->("get_bios_status");
-/**
- * A single shortcut whose baked `launch_options` must be confirm-set after a
- * per-platform core change. The backend returns one entry per installed + bound
- * ROM on the platform (minus per-game-overridden ROMs); the frontend fans out
- * `setLaunchOptionsConfirmed(app_id, launch_options)` over the list.
- */
-export interface RebakeItem {
-  app_id: number;
-  launch_options: string;
-}
-
-export const setSystemCore = callable<
-  [string, string],
-  { success: boolean; message?: string; bios_status?: BiosStatus; rebake_items?: RebakeItem[] }
->("set_system_core");
-
+export const getFirmwareStatus = unportedCallable<[], FirmwareStatus>("get_firmware_status");
+export const downloadAllFirmware = unportedCallable<[string], FirmwareDownloadResult>("download_all_firmware");
+export const downloadRequiredFirmware = unportedCallable<[string], FirmwareDownloadResult>("download_required_firmware");
 /**
  * Result of pinning / clearing a per-game emulator override. On success for an
  * installed + bound ROM, the backend re-bakes and returns the fresh
@@ -469,9 +421,6 @@ export const logWarn = (msg: string) => {
 export const logError = (msg: string) => {
   detach(frontendLog("error", msg));
 };
-export const fixRetroarchInputDriver = callable<[], { success: boolean; message: string }>(
-  "fix_retroarch_input_driver",
-);
 export const getRomMetadata = callable<[number], RomMetadata>("get_rom_metadata");
 export const getAllMetadataCache = callable<[], Record<string, RomMetadata>>("get_all_metadata_cache");
 export const getAppIdRomIdMap = callable<[], Record<string, number>>("get_app_id_rom_id_map");
@@ -479,56 +428,56 @@ export const getInstalledRelaunchOptions = callable<[], { app_id: number; launch
   "get_installed_relaunch_options",
 );
 
-// Icon support (VDF-based)
-export const saveShortcutIcon = callable<[number, string], { success: boolean }>("save_shortcut_icon");
+// Icon files are saved by the backend and applied through SteamClient.
+export const saveShortcutIcon = callable<[number, string], { success: boolean; icon_path?: string }>("save_shortcut_icon");
 
 // Save sync callables
-export const ensureDeviceRegistered = callable<[], { success: boolean; device_id: string; device_name: string }>(
+export const ensureDeviceRegistered = unportedCallable<[], { success: boolean; device_id: string; device_name: string }>(
   "ensure_device_registered",
 );
 
-export const listDevices = callable<[], ListDevicesResponse>("list_devices");
-export const getSaveStatus = callable<[number], SaveStatus>("get_save_status");
-export const preLaunchSync = callable<
+export const listDevices = unportedCallable<[], ListDevicesResponse>("list_devices");
+export const getSaveStatus = unportedCallable<[number], SaveStatus>("get_save_status");
+export const preLaunchSync = unportedCallable<
   [number],
   { success: boolean; message: string; synced?: number; errors?: string[]; conflicts?: SyncConflict[]; reason?: string }
 >("pre_launch_sync");
-export const syncRomSaves = callable<
+export const syncRomSaves = unportedCallable<
   [number],
   { success: boolean; message: string; synced: number; errors?: string[]; conflicts?: SyncConflict[]; reason?: string }
 >("sync_rom_saves");
-export const syncAllSaves = callable<
+export const syncAllSaves = unportedCallable<
   [],
   { success: boolean; message: string; synced: number; conflicts: number; reason?: string }
 >("sync_all_saves");
-export const resolveSyncConflict = callable<
+export const resolveSyncConflict = unportedCallable<
   [number, string, number, "keep_local" | "use_server"],
   { success: boolean; message?: string; reason?: "stale_conflict"; action?: "keep_local" | "use_server" }
 >("resolve_sync_conflict");
 export const recordSessionStart = callable<[number], { success: boolean }>("record_session_start");
-export const getSaveSyncSettings = callable<[], SaveSyncSettings>("get_save_sync_settings");
-export const updateSaveSyncSettings = callable<[SaveSyncSettings], { success: boolean }>("update_save_sync_settings");
-export const getSaveSlots = callable<
+export const getSaveSyncSettings = unportedCallable<[], SaveSyncSettings>("get_save_sync_settings");
+export const updateSaveSyncSettings = unportedCallable<[SaveSyncSettings], { success: boolean }>("update_save_sync_settings");
+export const getSaveSlots = unportedCallable<
   [number],
   { success: boolean; slots: SaveSlotSummary[]; active_slot: string; reason?: string; message?: string }
 >("get_save_slots");
-export const getSlotSaves = callable<[number, string], SlotSavesResponse>("get_slot_saves");
-export const switchSlot = callable<[number, string], SwitchSlotResponse>("switch_slot");
+export const getSlotSaves = unportedCallable<[number, string], SlotSavesResponse>("get_slot_saves");
+export const switchSlot = unportedCallable<[number, string], SwitchSlotResponse>("switch_slot");
 
-export const getSlotDeleteInfo = callable<[number, string], SlotDeleteInfo>("get_slot_delete_info");
-export const deleteSlot = callable<[number, string], DeleteSlotResult>("delete_slot");
+export const getSlotDeleteInfo = unportedCallable<[number, string], SlotDeleteInfo>("get_slot_delete_info");
+export const deleteSlot = unportedCallable<[number, string], DeleteSlotResult>("delete_slot");
 
-export const isSaveTrackingConfigured = callable<[number], { configured: boolean; active_slot: string | null }>(
+export const isSaveTrackingConfigured = unportedCallable<[number], { configured: boolean; active_slot: string | null }>(
   "is_save_tracking_configured",
 );
-export const getSaveSetupInfo = callable<[number], SaveSetupInfo>("get_save_setup_info");
+export const getSaveSetupInfo = unportedCallable<[number], SaveSetupInfo>("get_save_setup_info");
 // confirm_slot_choice(rom_id, chosen_slot, migrate, migrate_from_slot):
 // `chosen_slot` must be a non-empty named slot — legacy `slot:null` confirmation
 // is retired (#1276), so an empty/`null` target is rejected by the backend's
 // `invalid_slot_name` guard. `migrate` is an explicit boolean — the
 // non-destructive paths pass `false`; `migrate_from_slot` is `null` unless
 // migrating (then the source slot, with `null` meaning the legacy no-slot source).
-export const confirmSlotChoice = callable<
+export const confirmSlotChoice = unportedCallable<
   [number, string, boolean, string | null],
   { success: boolean; needs_conflict_resolution?: boolean; message: string }
 >("confirm_slot_choice");
@@ -554,23 +503,6 @@ export const reconcilePlaytime = callable<
   { total_seconds: number; session_count: number; last_played: string | null; server_query_failed: boolean }
 >("reconcile_playtime");
 
-// RetroDECK path-resolution health for the QAM banner — discriminated status
-// ("ok" | "absent" | "unreadable" | "root_missing") plus the probed paths. The
-// frontend owns the human-readable copy; the backend returns the discriminant.
-export const getRetroDeckStatus = callable<[], RetroDeckStatus>("get_retrodeck_status");
-
-// RetroDECK path migration
-export const getMigrationStatus = callable<[], MigrationStatus>("get_migration_status");
-export const migrateRetroDeckFiles = callable<[string | null], MigrationResult>("migrate_retrodeck_files");
-export const dismissRetrodeckMigration = callable<[], { success: boolean }>("dismiss_retrodeck_migration");
-
-export const getSaveSortMigrationStatus = callable<[], SaveSortMigrationStatus>("get_save_sort_migration_status");
-export const migrateSaveSortFiles = callable<[string | null], MigrationResult>("migrate_save_sort_files");
-export const dismissSaveSortMigration = callable<[], { success: boolean }>("dismiss_save_sort_migration");
-export const refreshMigrationState = callable<[], { retrodeck: MigrationStatus; save_sort: SaveSortMigrationStatus }>(
-  "refresh_migration_state",
-);
-
 // Persistent corrupt-settings-reset notice. When settings.json was unparseable
 // at boot it is backed up to settings.json.corrupt-<ts> and reset to defaults,
 // and a marker is persisted into the fresh settings.json. This read is
@@ -592,8 +524,7 @@ export const dismissSettingsResetNotice = callable<[], { success: boolean }>("di
 // and pull-only — no backend dismiss callable, the QAM banner's Dismiss is local.
 export const getPlaytimeScopeNotice = callable<[], { pending: boolean }>("get_playtime_scope_notice");
 
-// End-of-session orchestration — collapses recordSessionEnd + syncAchievementsAfterSession
-// + postExitSync + refreshMigrationState into a single backend round-trip.
+// End-of-session orchestration — collapses recordSessionEnd + postExitSync into a single backend round-trip.
 // See SessionLifecycleService in py_modules/services/session_lifecycle.py.
 interface SessionFinalizeSyncResult {
   offline: boolean;
@@ -605,43 +536,26 @@ interface SessionFinalizeSyncResult {
   conflicts_toast: string | null;
 }
 
-interface SessionFinalizeMigration {
-  retrodeck: MigrationStatus;
-  save_sort: SaveSortMigrationStatus;
-}
-
 export interface SessionFinalizeResult {
   total_seconds: number | null;
   sync: SessionFinalizeSyncResult;
-  // ``null`` when the backend's migration-state refresh raised — the
-  // frontend then leaves the migration stores untouched (any stale
-  // ``pending`` badge keeps showing), matching the pre-PR behavior
-  // where ``refreshMigrationState().catch`` logged without clearing.
-  migration: SessionFinalizeMigration | null;
 }
 
 export const finalizeGameSession = callable<[number], SessionFinalizeResult>("finalize_game_session");
 
 // Delete operations
-export const deleteLocalSaves = callable<[number], { success: boolean; deleted_count: number; message: string }>(
+export const deleteLocalSaves = unportedCallable<[number], { success: boolean; deleted_count: number; message: string }>(
   "delete_local_saves",
 );
-export const deletePlatformSaves = callable<[string], { success: boolean; deleted_count: number; message: string }>(
+export const deletePlatformSaves = unportedCallable<[string], { success: boolean; deleted_count: number; message: string }>(
   "delete_platform_saves",
-);
-export const deletePlatformBios = callable<[string], { success: boolean; deleted_count: number; message: string }>(
-  "delete_platform_bios",
 );
 
 // Save version history callables
-export const savesListFileVersions = callable<[number, string, string], ListFileVersionsResult>(
+export const savesListFileVersions = unportedCallable<[number, string, string], ListFileVersionsResult>(
   "saves_list_file_versions",
 );
-export const savesRollbackToVersion = callable<[number, string, number], RollbackStatus>("saves_rollback_to_version");
-
-// Achievements callables
-export const getAchievements = callable<[number], AchievementList>("get_achievements");
-export const getAchievementProgress = callable<[number], AchievementProgress>("get_achievement_progress");
+export const savesRollbackToVersion = unportedCallable<[number, string, number], RollbackStatus>("saves_rollback_to_version");
 
 // Self-update: checks GitHub for a newer release (throttled to every 6 h unless
 // force=true). Never installs — see utils/selfUpdate.ts for the Decky handoff.

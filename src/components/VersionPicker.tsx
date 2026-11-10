@@ -270,6 +270,22 @@ export const VersionPicker: FC<VersionPickerProps> = ({ appId }) => {
     }
   };
 
+  // The toast for a refused switch. A running download in the version group is the one refusal the user
+  // can act on at once, so it says so in the (always visible) body rather than only in the subtext.
+  const switchRefusedToast = (result: { reason?: string; message?: string }): void => {
+    if (result.reason === "download_in_progress") {
+      toaster.toast({
+        title: "EmuDecky RomM Manager",
+        body: "Can't switch version while a download is running",
+        subtext: "Pause or cancel the download first.",
+      });
+      return;
+    }
+    // Keep the toast body short (Steam truncates it to one line) and put the
+    // backend detail in the subtext so the reason is readable (#1359).
+    toaster.toast({ title: "EmuDecky RomM Manager", body: "Could not switch version", subtext: result.message });
+  };
+
   // Set the in-flight guard on entry and release it on every non-success terminal
   // path (below). On success we deliberately LEAVE it set: `applySwitchSuccess`
   // always broadcasts version_switched, and the resulting list reload clears the
@@ -314,15 +330,13 @@ export const VersionPicker: FC<VersionPickerProps> = ({ appId }) => {
           await applySwitchSuccess(forced);
         } else {
           setSwitching(false);
-          toaster.toast({ title: "EmuDecky RomM Manager", body: "Could not switch version", subtext: forced.message });
+          switchRefusedToast(forced);
         }
         return;
       }
       if (result.reason === "server_unreachable") reportServerReachable(false);
       setSwitching(false);
-      // Keep the toast body short (Steam truncates it to one line) and put the
-      // backend detail in the subtext so the reason is readable (#1359).
-      toaster.toast({ title: "EmuDecky RomM Manager", body: "Could not switch version", subtext: result.message });
+      switchRefusedToast(result);
     } catch (e) {
       setSwitching(false);
       logError(`VersionPicker: switchVersion failed: ${e}`);

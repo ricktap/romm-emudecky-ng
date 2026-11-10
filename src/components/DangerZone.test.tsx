@@ -98,11 +98,6 @@ describe("DangerZone", () => {
       deleted_count: 0,
       message: "",
     });
-    vi.mocked(backend.deletePlatformBios).mockResolvedValue({
-      success: true,
-      deleted_count: 0,
-      message: "",
-    });
     vi.mocked(clearPlatformCollection).mockResolvedValue(undefined);
     vi.mocked(clearAllRomMCollections).mockResolvedValue(undefined);
     // Default app store / collection store — empty.
@@ -541,103 +536,6 @@ describe("DangerZone", () => {
         await confirm?.onOK?.();
       });
       expect(container.textContent).toContain("Failed to delete saves");
-    });
-  });
-
-  describe("ShortcutRemovalSection — handleDeleteBios", () => {
-    function setupOnePlatform() {
-      vi.mocked(backend.getRegistryPlatforms).mockResolvedValue({
-        platforms: [{ slug: "snes", name: "Super Nintendo", count: 1 }],
-      });
-    }
-
-    it("calls deletePlatformBios and surfaces result.message", async () => {
-      setupOnePlatform();
-      vi.mocked(backend.deletePlatformBios).mockResolvedValue({
-        success: true,
-        deleted_count: 2,
-        message: "Deleted 2 BIOS files",
-      });
-      const { getByText, container } = render(<DangerZone onBack={vi.fn()} />);
-      await flushAsync();
-      fireEvent.click(getByText("Super Nintendo (1)"));
-      const platformModal = lastShownModalProps<{ onDeleteBios?: () => void }>();
-      await act(async () => {
-        platformModal?.onDeleteBios?.();
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(vi.mocked(backend.deletePlatformBios)).toHaveBeenCalledWith("snes");
-      expect(container.textContent).toContain("Deleted 2 BIOS files");
-    });
-
-    it("dispatches a romm_data_changed {type:'bios', platform_slug} event on success", async () => {
-      setupOnePlatform();
-      vi.mocked(backend.deletePlatformBios).mockResolvedValue({
-        success: true,
-        deleted_count: 2,
-        message: "Deleted 2 BIOS files",
-      });
-      const { getByText } = render(<DangerZone onBack={vi.fn()} />);
-      await flushAsync();
-      fireEvent.click(getByText("Super Nintendo (1)"));
-      const platformModal = lastShownModalProps<{ onDeleteBios?: () => void }>();
-      const listener = vi.fn();
-      globalThis.addEventListener("romm_data_changed", listener);
-      try {
-        await act(async () => {
-          platformModal?.onDeleteBios?.();
-          await Promise.resolve();
-          await Promise.resolve();
-        });
-        expect(listener).toHaveBeenCalledTimes(1);
-        const ev = listener.mock.calls[0]?.[0] as CustomEvent;
-        expect(ev.detail).toEqual({ type: "bios", platform_slug: "snes" });
-      } finally {
-        globalThis.removeEventListener("romm_data_changed", listener);
-      }
-    });
-
-    it("does NOT dispatch romm_data_changed when deletePlatformBios reports success=false", async () => {
-      setupOnePlatform();
-      vi.mocked(backend.deletePlatformBios).mockResolvedValue({
-        success: false,
-        deleted_count: 0,
-        message: "Nothing to delete",
-      });
-      const { getByText, container } = render(<DangerZone onBack={vi.fn()} />);
-      await flushAsync();
-      fireEvent.click(getByText("Super Nintendo (1)"));
-      const platformModal = lastShownModalProps<{ onDeleteBios?: () => void }>();
-      const listener = vi.fn();
-      globalThis.addEventListener("romm_data_changed", listener);
-      try {
-        await act(async () => {
-          platformModal?.onDeleteBios?.();
-          await Promise.resolve();
-          await Promise.resolve();
-        });
-        // Failure branch surfaces the message but emits no refresh event.
-        expect(container.textContent).toContain("Nothing to delete");
-        expect(listener).not.toHaveBeenCalled();
-      } finally {
-        globalThis.removeEventListener("romm_data_changed", listener);
-      }
-    });
-
-    it("surfaces 'Failed to delete BIOS files' on rejection", async () => {
-      setupOnePlatform();
-      vi.mocked(backend.deletePlatformBios).mockRejectedValue(new Error("io"));
-      const { getByText, container } = render(<DangerZone onBack={vi.fn()} />);
-      await flushAsync();
-      fireEvent.click(getByText("Super Nintendo (1)"));
-      const platformModal = lastShownModalProps<{ onDeleteBios?: () => void }>();
-      await act(async () => {
-        platformModal?.onDeleteBios?.();
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(container.textContent).toContain("Failed to delete BIOS files");
     });
   });
 
@@ -1209,34 +1107,6 @@ describe("DangerZone", () => {
       });
       expect(closeModal).toHaveBeenCalled();
       expect(vi.mocked(backend.removePlatformShortcuts)).toHaveBeenCalledWith("a");
-    });
-
-    it("Delete BIOS Files DialogButton fires closeModal + triggers handleDeleteBios", async () => {
-      vi.mocked(backend.getRegistryPlatforms).mockResolvedValue({
-        platforms: [{ slug: "a", name: "PlatA", count: 1 }],
-      });
-      vi.mocked(backend.deletePlatformBios).mockResolvedValue({
-        success: true,
-        deleted_count: 0,
-        message: "ok",
-      });
-      const { getByText } = render(<DangerZone onBack={vi.fn()} />);
-      await flushAsync();
-      fireEvent.click(getByText("PlatA (1)"));
-      const modalEl = vi.mocked(showModal).mock.calls[0]?.[0];
-      const closeModal = vi.fn();
-      const cloned = createElement((modalEl as ReactElement).type, {
-        ...(modalEl as ReactElement<Record<string, unknown>>).props,
-        closeModal,
-      });
-      const { getByText: getByTextModal } = render(cloned);
-      await act(async () => {
-        fireEvent.click(getByTextModal("Delete BIOS Files"));
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(closeModal).toHaveBeenCalled();
-      expect(vi.mocked(backend.deletePlatformBios)).toHaveBeenCalledWith("a");
     });
   });
 });

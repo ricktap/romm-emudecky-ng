@@ -19,7 +19,6 @@ import {
   reportRemovalResults,
   uninstallAllRoms,
   deletePlatformSaves,
-  deletePlatformBios,
   logInfo,
   logWarn,
   logError,
@@ -73,8 +72,7 @@ const PlatformActionModal: FC<{
   closeModal?: () => void;
   onRemoveShortcuts: () => void;
   onDeleteSaves: () => void;
-  onDeleteBios: () => void;
-}> = ({ platform, closeModal, onRemoveShortcuts, onDeleteSaves, onDeleteBios }) => (
+}> = ({ platform, closeModal, onRemoveShortcuts, onDeleteSaves }) => (
   <ModalRoot closeModal={closeModal}>
     <div style={{ padding: "16px", minWidth: "320px" }}>
       <div style={{ fontSize: "16px", fontWeight: "bold", color: "#fff", marginBottom: "16px" }}>
@@ -96,14 +94,6 @@ const PlatformActionModal: FC<{
           }}
         >
           Delete Save Files
-        </DialogButton>
-        <DialogButton
-          onClick={() => {
-            closeModal?.();
-            onDeleteBios();
-          }}
-        >
-          Delete BIOS Files
         </DialogButton>
         <DialogButton onClick={() => closeModal?.()} style={{ opacity: 0.5 }}>
           Cancel
@@ -188,22 +178,6 @@ const ShortcutRemovalSection: FC<ShortcutRemovalSectionProps> = ({
     );
   };
 
-  const handleDeleteBios = async (p: RegistryPlatform) => {
-    setActionStatus(`Deleting ${p.name} BIOS...`);
-    try {
-      const result = await deletePlatformBios(p.slug);
-      setActionStatus(result.message);
-      if (result.success) {
-        // Notify an open game-detail page so it re-checks BIOS status (#939).
-        globalThis.dispatchEvent(
-          new CustomEvent("romm_data_changed", { detail: { type: "bios", platform_slug: p.slug } }),
-        );
-      }
-    } catch {
-      setActionStatus("Failed to delete BIOS files");
-    }
-  };
-
   const handleRemoveAllRomm = async () => {
     if (!confirmRemoveAllRomm) {
       setConfirmRemoveAllRomm(true);
@@ -282,9 +256,6 @@ const ShortcutRemovalSection: FC<ShortcutRemovalSectionProps> = ({
                   detach(handleRemoveShortcuts(p));
                 }}
                 onDeleteSaves={() => handleDeleteSaves(p)}
-                onDeleteBios={() => {
-                  detach(handleDeleteBios(p));
-                }}
               />,
             );
           }}

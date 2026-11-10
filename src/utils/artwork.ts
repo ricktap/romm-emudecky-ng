@@ -64,11 +64,16 @@ export async function applyArtwork(romId: number, appId: number): Promise<number
     await SteamClient.Apps.SetCustomArtworkForApp(appId, results[2].base64, "png", 3);
     applied++;
   }
-  // Type 4 = icon (VDF-based)
+  // Type 4 = icon: save bytes, then let Steam update its shortcut record.
   if (results[3].base64) {
     if (superseded()) return bail();
-    await saveShortcutIcon(appId, results[3].base64);
-    applied++;
+    const icon = await saveShortcutIcon(appId, results[3].base64);
+    if (superseded()) return bail();
+    if (icon.success) {
+      // Older Python backends already apply the icon and omit icon_path.
+      if (icon.icon_path) SteamClient.Apps.SetShortcutIcon(appId, icon.icon_path);
+      applied++;
+    }
   }
 
   return applied;

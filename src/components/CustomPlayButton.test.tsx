@@ -52,12 +52,6 @@ vi.mock("../utils/launchGate", async (importActual) => {
   return { ...actual, markLaunchSkipped: vi.fn(actual.markLaunchSkipped) };
 });
 
-// Migration store is a real module defaulting to { pending: false }; mock it so
-// the migration-block verdict test can flip `pending` true.
-vi.mock("../utils/migrationStore", () => ({
-  getMigrationState: vi.fn(() => ({ pending: false })),
-}));
-
 // Already-running guard deps (#1148 round 2). Default: no live session and nothing
 // running, so the guard is inert and the existing Play-funnel tests run unchanged.
 // CustomPlayButton is the only in-graph importer of either module, so a full mock
@@ -85,7 +79,6 @@ import { getCachedGameDetail } from "../utils/cachedGameDetailStore";
 import { setRommConnectionState, reportServerReachable } from "../utils/connectionState";
 import { setLaunchOptionsConfirmed } from "../utils/steamShortcuts";
 import { markLaunchSkipped, consumeLaunchSkip } from "../utils/launchGate";
-import { getMigrationState } from "../utils/migrationStore";
 import { getActiveSessionRomId } from "../utils/sessionManager";
 import { isAppRunning } from "../utils/runningApps";
 import { showOfflineDriftModal } from "../components/OfflineDriftModal";
@@ -528,6 +521,121 @@ describe("CustomPlayButton — pause/resume on active download (#1124)", () => {
   });
 });
 
+describe("CustomPlayButton — waiting for the server (archive preparation)", () => {
+  const START = 1_700_000_000;
+
+  beforeEach(() => {
+    vi.mocked(getCachedGameDetail).mockReset();
+    vi.mocked(backend.startDownload).mockResolvedValue({ success: true, message: "" });
+    vi.mocked(backend.getDownloadQueue).mockResolvedValue({ downloads: [] });
+    vi.setSystemTime(new Date((START + 134) * 1000));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("shows the waiting state instead of byte progress, keeps the actions, then returns to progress", async () => {
+    mockCachedDetail({ rom_id: 42, installed: false });
+    const { findByText, findByLabelText, queryByText } = render(<CustomPlayButton appId={100} />);
+    const downloadBtn = await findByText("Download");
+    await act(async () => {
+      downloadBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const frame = {
+      rom_id: 42,
+      rom_name: "Test ROM",
+      platform_name: "Switch",
+      file_name: "game.zip",
+      status: "downloading",
+      progress: 0,
+      bytes_downloaded: 0,
+      total_bytes: 0,
+    };
+
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", {
+        ...frame,
+        phase: "waiting",
+        phase_since: START,
+        attempt: 1,
+        max_attempts: 3,
+      });
+    });
+    expect(await findByText("Waiting for RomM… 2m 14s")).toBeInTheDocument();
+    // Pause/Cancel stay reachable (the actions chevron), even though no byte has arrived.
+    expect(await findByLabelText("Download actions")).toBeInTheDocument();
+
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", {
+        ...frame,
+        progress: 0.5,
+        bytes_downloaded: 512,
+        total_bytes: 1024,
+        resumable: true,
+      });
+    });
+    expect(await findByText("0.5 / 1.0 KB")).toBeInTheDocument();
+    expect(queryByText(/Waiting for RomM/)).toBeNull();
+  });
+});
+
+describe("CustomPlayButton — queued download", () => {
+  beforeEach(() => {
+    vi.mocked(getCachedGameDetail).mockReset();
+    vi.mocked(backend.startDownload).mockResolvedValue({ success: true, message: "" });
+    vi.mocked(backend.getDownloadQueue).mockResolvedValue({ downloads: [] });
+  });
+
+  const frame = {
+    rom_id: 42,
+    rom_name: "Test ROM",
+    platform_name: "Switch",
+    file_name: "game.zip",
+    progress: 0,
+    bytes_downloaded: 0,
+    total_bytes: 15_977_000_000,
+  };
+
+  it("says In Queue, not 0.00 / 14.88 GB, while another download holds the slot, then shows progress", async () => {
+    mockCachedDetail({ rom_id: 42, installed: false });
+    const { findByText, queryByText } = render(<CustomPlayButton appId={100} />);
+    const downloadBtn = await findByText("Download");
+    await act(async () => {
+      downloadBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", { ...frame, status: "queued" });
+    });
+    expect(await findByText("In Queue")).toBeInTheDocument();
+    expect(queryByText(/GB/)).toBeNull();
+
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", {
+        ...frame,
+        status: "downloading",
+        bytes_downloaded: 1_000_000_000,
+        progress: 0.06,
+      });
+    });
+    expect(await findByText(/0\.93 \/ 14\.88 GB/)).toBeInTheDocument();
+    expect(queryByText("In Queue")).toBeNull();
+  });
+
+  it("rehydrates a queued download with the In Queue label", async () => {
+    mockCachedDetail({ rom_id: 42, installed: false });
+    vi.mocked(backend.getDownloadQueue).mockResolvedValue({
+      downloads: [{ ...frame, status: "queued", resumable: false }],
+    });
+    const { findByText } = render(<CustomPlayButton appId={100} />);
+    expect(await findByText("In Queue")).toBeInTheDocument();
+  });
+});
+
 describe("CustomPlayButton — interrupted download (durable queue)", () => {
   beforeEach(() => {
     vi.mocked(getCachedGameDetail).mockReset();
@@ -796,6 +904,41 @@ describe("CustomPlayButton — pre-launch savefiles_in_content_dir benign skip (
   });
 });
 
+describe("CustomPlayButton — save sync not implemented yet launches without a warning", () => {
+  beforeEach(() => {
+    vi.mocked(getCachedGameDetail).mockReset();
+    vi.mocked(toaster.toast).mockReset();
+    vi.mocked(backend.isSaveTrackingConfigured).mockResolvedValue({ configured: true, active_slot: "default" });
+    vi.mocked(backend.checkCoreChange).mockResolvedValue({ changed: false });
+    vi.mocked(backend.probeReachability).mockResolvedValue({ online: true });
+    vi.stubGlobal("SteamClient", { Apps: { RunGame: vi.fn() } });
+    vi.stubGlobal("appStore", {
+      GetAppOverviewByAppID: vi.fn(() => ({ GetGameID: () => "gid-1" })),
+      allApps: [],
+    });
+  });
+
+  it("a not_implemented pre-launch sync is a benign skip: the game launches, no toast, no fallback confirm", async () => {
+    vi.mocked(getCachedGameDetail).mockResolvedValue({ found: true, rom_id: 42, rom_name: "Test ROM", installed: true });
+    vi.mocked(backend.preLaunchSync).mockResolvedValue({
+      success: false,
+      reason: "not_implemented",
+      message: "Save sync is not implemented yet (planned for 0.55.0).",
+    });
+    const { findByText } = render(<CustomPlayButton appId={100} />);
+    const playBtn = await findByText("Play");
+    await act(async () => {
+      playBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(vi.mocked(SteamClient.Apps.RunGame)).toHaveBeenCalledWith("gid-1", "", -1, 100);
+    expect(vi.mocked(toaster.toast)).not.toHaveBeenCalled();
+  });
+});
+
 // #1148 round 2: the Play button is the sibling of the launch interceptor's
 // already-running guard in `handlePlay`. Since #1313 the button renders Resume
 // (not Play) whenever running is detected at/after mount, so this guard is now
@@ -976,11 +1119,6 @@ describe("CustomPlayButton — pre-launch failure shapes without an errors array
     {
       reason: "device_not_registered",
       message: "Device is not registered with RomM. Open the Saves tab to set it up.",
-    },
-    { reason: "save_sort_changed", message: "RetroArch save sorting changed — migrate saves in Settings first" },
-    {
-      reason: "blocked_by_migration",
-      message: "Pending RetroDECK migration. Open the plugin QAM to migrate or dismiss.",
     },
   ];
 
@@ -1314,9 +1452,8 @@ describe("CustomPlayButton — shared launch gate (ADR-0015)", () => {
     // module-level state) so a mark in one test never silently affects the next.
     consumeLaunchSkip(100);
 
-    // Gate predecessors default to "pass": no migration, tracking configured,
+    // Gate predecessors default to "pass": tracking configured,
     // no core change. Each test overrides the branch it exercises.
-    vi.mocked(getMigrationState).mockReturnValue({ pending: false });
     vi.mocked(backend.isSaveTrackingConfigured).mockResolvedValue({ configured: true, active_slot: "default" });
     vi.mocked(backend.checkCoreChange).mockResolvedValue({ changed: false });
     vi.mocked(backend.preLaunchSync).mockResolvedValue({ success: true, message: "", synced: 0, conflicts: [] });
@@ -1334,7 +1471,7 @@ describe("CustomPlayButton — shared launch gate (ADR-0015)", () => {
     const playBtn = await findByText("Play");
     await act(async () => {
       playBtn.click();
-      // Drain the gate chain (migration → tracking → core → reachability →
+      // Drain the gate chain (tracking → core → reachability →
       // sync/drift → verdict → modal → dispatch).
       await Promise.resolve();
       await Promise.resolve();
@@ -1540,19 +1677,6 @@ describe("CustomPlayButton — shared launch gate (ADR-0015)", () => {
     expect(vi.mocked(SteamClient.Apps.RunGame)).not.toHaveBeenCalled();
   });
 
-  it("migration pending → blocks: no sync, no modal, no launch", async () => {
-    vi.mocked(getMigrationState).mockReturnValue({ pending: true });
-    vi.mocked(backend.probeReachability).mockResolvedValue({ online: true });
-
-    await clickPlay();
-
-    // The migration block short-circuits the funnel before any network step.
-    expect(vi.mocked(backend.probeReachability)).not.toHaveBeenCalled();
-    expect(vi.mocked(backend.preLaunchSync)).not.toHaveBeenCalled();
-    expect(vi.mocked(SteamClient.Apps.RunGame)).not.toHaveBeenCalled();
-    expect(vi.mocked(markLaunchSkipped)).not.toHaveBeenCalled();
-  });
-
   it("tracking-setup abort → silent bail back to play, no launch", async () => {
     vi.mocked(backend.probeReachability).mockResolvedValue({ online: true });
     // Unconfigured tracking whose setup needs a user choice (server has saves)
@@ -1748,7 +1872,6 @@ describe("CustomPlayButton — pre-launch relaunch re-confirm (#1150)", () => {
     consumeLaunchSkip(100);
     // Allow-path gate predecessors: online, tracking configured, no core change,
     // clean pre-launch sync → the gate returns "allow" → dispatchLaunch runs.
-    vi.mocked(getMigrationState).mockReturnValue({ pending: false });
     vi.mocked(backend.isSaveTrackingConfigured).mockResolvedValue({ configured: true, active_slot: "default" });
     vi.mocked(backend.checkCoreChange).mockResolvedValue({ changed: false });
     vi.mocked(backend.probeReachability).mockResolvedValue({ online: true });

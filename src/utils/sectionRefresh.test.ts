@@ -2,9 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Dispatch, SetStateAction } from "react";
 import {
   refreshActiveSlotInBackground,
-  refreshBiosInBackground,
   refreshCoreInfoInBackground,
-  refreshAchievementsInBackground,
 } from "./sectionRefresh";
 import * as backend from "../api/backend";
 import { libretroEmu } from "../test-utils/coreFixtures";
@@ -13,13 +11,6 @@ import type { EmulatorOption } from "../types";
 interface ActiveSlotState {
   activeSlot: string | null;
   unrelated: number;
-}
-
-interface BiosState {
-  biosNeeded: boolean;
-  biosStatus: "ok" | "partial" | "missing" | null;
-  biosLabel: string;
-  unrelated: string;
 }
 
 interface CoreState {
@@ -32,18 +23,12 @@ interface CoreState {
   unrelated: string;
 }
 
-interface AchievementState {
-  achievementEarned: number;
-  achievementTotal: number;
-  unrelated: boolean;
-}
-
 const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /**
  * Build a promise that resolves only when the returned `resolve` is called.
  * Lets a test simulate the "long-running fetch" window (e.g. the 5s
- * `timeoutMs` race inside `getBiosStatus`) and flip a `cancelled` flag
+ * `timeoutMs` race inside `getPlatformCoreInfo`) and flip a `cancelled` flag
  * mid-await — proving the helper re-reads the closure after each await
  * instead of capturing a stale boolean snapshot.
  */
@@ -131,99 +116,6 @@ describe("refreshActiveSlotInBackground", () => {
       activeSlot: null,
       unrelated: 1,
     });
-  });
-});
-
-describe("refreshBiosInBackground", () => {
-  beforeEach(() => vi.restoreAllMocks());
-
-  it("merges the projected BIOS fields when not cancelled and payload present", async () => {
-    vi.mocked(backend.getBiosStatus).mockResolvedValueOnce({
-      bios_status: {
-        needs_bios: true,
-        server_count: 1,
-        local_count: 1,
-      },
-      bios_level: "ok",
-      bios_label: "BIOS OK",
-    } as unknown as Awaited<ReturnType<typeof backend.getBiosStatus>>);
-
-    const setter = vi.fn<(updater: (prev: BiosState) => BiosState) => void>();
-    refreshBiosInBackground(1, () => false, setter as unknown as Dispatch<SetStateAction<BiosState>>);
-    await flushMicrotasks();
-
-    expect(setter).toHaveBeenCalledOnce();
-    const next = setter.mock.calls[0]![0]({
-      biosNeeded: false,
-      biosStatus: null,
-      biosLabel: "",
-      unrelated: "keep",
-    });
-    expect(next.biosNeeded).toBe(true);
-    expect(next.biosLabel).toBe("BIOS OK");
-    expect(next.unrelated).toBe("keep");
-  });
-
-  it("skips the setter when cancelled at call time", async () => {
-    vi.mocked(backend.getBiosStatus).mockResolvedValueOnce({
-      bios_status: { needs_bios: true },
-      bios_level: "ok",
-      bios_label: "ok",
-    } as unknown as Awaited<ReturnType<typeof backend.getBiosStatus>>);
-    const setter = vi.fn();
-    refreshBiosInBackground(1, () => true, setter);
-    await flushMicrotasks();
-    expect(setter).not.toHaveBeenCalled();
-  });
-
-  it("re-reads the cancelled closure after the await (regression — was boolean snapshot)", async () => {
-    // Regression test for #725: a `boolean` snapshot was captured at call
-    // time, so flipping `cancelled` during the 5s `timeoutMs` race in
-    // `getBiosStatus` did not prevent a setter call on an unmounted component.
-    const d = deferred<unknown>();
-    vi.mocked(backend.getBiosStatus).mockReturnValueOnce(
-      d.promise as unknown as ReturnType<typeof backend.getBiosStatus>,
-    );
-
-    let cancelled = false;
-    const setter = vi.fn();
-    refreshBiosInBackground(1, () => cancelled, setter);
-
-    cancelled = true;
-    d.resolve({
-      bios_status: { needs_bios: true },
-      bios_level: "ok",
-      bios_label: "ok",
-    });
-    await flushMicrotasks();
-
-    expect(setter).not.toHaveBeenCalled();
-  });
-
-  it("skips the setter when bios_status is null", async () => {
-    vi.mocked(backend.getBiosStatus).mockResolvedValueOnce({
-      bios_status: null,
-      bios_level: null,
-      bios_label: null,
-    } as unknown as Awaited<ReturnType<typeof backend.getBiosStatus>>);
-    const setter = vi.fn();
-    refreshBiosInBackground(1, () => false, setter);
-    await flushMicrotasks();
-    expect(setter).not.toHaveBeenCalled();
-  });
-
-  it("logs the error and skips the setter when the fetch rejects", async () => {
-    vi.mocked(backend.getBiosStatus).mockRejectedValueOnce(new Error("network"));
-    vi.mocked(backend.debugLog).mockResolvedValue(undefined);
-    const setter = vi.fn();
-    refreshBiosInBackground(1, () => false, setter);
-    await flushMicrotasks();
-
-    expect(setter).not.toHaveBeenCalled();
-    // Non-vacuous catch assertion: the `.catch` calls debugLog with the error.
-    expect(vi.mocked(backend.debugLog)).toHaveBeenCalledWith(
-      expect.stringContaining("Background BIOS status fetch error"),
-    );
   });
 });
 
@@ -317,85 +209,6 @@ describe("refreshCoreInfoInBackground", () => {
     // Non-vacuous catch assertion: the `.catch` calls debugLog with the error.
     expect(vi.mocked(backend.debugLog)).toHaveBeenCalledWith(
       expect.stringContaining("Background core info fetch error"),
-    );
-  });
-});
-
-describe("refreshAchievementsInBackground", () => {
-  beforeEach(() => vi.restoreAllMocks());
-
-  it("applies earned/total when success=true", async () => {
-    vi.mocked(backend.getAchievementProgress).mockResolvedValueOnce({
-      success: true,
-      earned: 12,
-      total: 30,
-    } as unknown as Awaited<ReturnType<typeof backend.getAchievementProgress>>);
-
-    const setter = vi.fn<(updater: (prev: AchievementState) => AchievementState) => void>();
-    refreshAchievementsInBackground(1, () => false, setter as unknown as Dispatch<SetStateAction<AchievementState>>);
-    await flushMicrotasks();
-
-    expect(setter).toHaveBeenCalledOnce();
-    const next = setter.mock.calls[0]![0]({
-      achievementEarned: 0,
-      achievementTotal: 0,
-      unrelated: true,
-    });
-    expect(next).toEqual({ achievementEarned: 12, achievementTotal: 30, unrelated: true });
-  });
-
-  it("skips the setter when success=false", async () => {
-    vi.mocked(backend.getAchievementProgress).mockResolvedValueOnce({
-      success: false,
-      earned: 0,
-      total: 0,
-    } as unknown as Awaited<ReturnType<typeof backend.getAchievementProgress>>);
-    const setter = vi.fn();
-    refreshAchievementsInBackground(1, () => false, setter);
-    await flushMicrotasks();
-    expect(setter).not.toHaveBeenCalled();
-  });
-
-  it("skips the setter when cancelled at call time", async () => {
-    vi.mocked(backend.getAchievementProgress).mockResolvedValueOnce({
-      success: true,
-      earned: 1,
-      total: 2,
-    } as unknown as Awaited<ReturnType<typeof backend.getAchievementProgress>>);
-    const setter = vi.fn();
-    refreshAchievementsInBackground(1, () => true, setter);
-    await flushMicrotasks();
-    expect(setter).not.toHaveBeenCalled();
-  });
-
-  it("re-reads the cancelled closure after the await (cancelled mid-await)", async () => {
-    const d = deferred<unknown>();
-    vi.mocked(backend.getAchievementProgress).mockReturnValueOnce(
-      d.promise as unknown as ReturnType<typeof backend.getAchievementProgress>,
-    );
-
-    let cancelled = false;
-    const setter = vi.fn();
-    refreshAchievementsInBackground(1, () => cancelled, setter);
-
-    cancelled = true;
-    d.resolve({ success: true, earned: 1, total: 2 });
-    await flushMicrotasks();
-
-    expect(setter).not.toHaveBeenCalled();
-  });
-
-  it("logs the error and skips the setter when the fetch rejects", async () => {
-    vi.mocked(backend.getAchievementProgress).mockRejectedValueOnce(new Error("network"));
-    vi.mocked(backend.debugLog).mockResolvedValue(undefined);
-    const setter = vi.fn();
-    refreshAchievementsInBackground(1, () => false, setter);
-    await flushMicrotasks();
-
-    expect(setter).not.toHaveBeenCalled();
-    // Non-vacuous catch assertion: the `.catch` calls debugLog with the error.
-    expect(vi.mocked(backend.debugLog)).toHaveBeenCalledWith(
-      expect.stringContaining("Background achievement progress fetch error"),
     );
   });
 });

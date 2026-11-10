@@ -1,6 +1,6 @@
 /**
- * Exercises index.tsx's `download_complete` and `migration_relaunch_options`
- * listeners through the @decky/api event harness. The plugin factory registers
+ * Exercises index.tsx's `download_complete`
+ * listener through the @decky/api event harness. The plugin factory registers
  * the listeners on the in-memory bus; tests dispatch events via emitDeckyEvent
  * and assert the launch-options confirm-poll fires for the payload's appId.
  *
@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { act } from "@testing-library/react";
 import { toaster } from "@decky/api";
-import { emitDeckyEvent, deckyEventListenerCount } from "./test-utils/decky-api-mock";
+import { emitDeckyEvent } from "./test-utils/decky-api-mock";
 import { getSettingsResetNotice, getAllPlaytime, getAppIdRomIdMap, getInstalledRelaunchOptions } from "./api/backend";
 import { getSettingsResetState, setSettingsResetState } from "./utils/settingsResetStore";
 import { recordSyncCreated, resetSyncDelta } from "./utils/syncDeltaStore";
@@ -245,71 +245,6 @@ describe("index.tsx — sync_stale listener", () => {
 
     expect(removeShortcut).not.toHaveBeenCalled();
     plugin.onDismount();
-  });
-});
-
-describe("index.tsx — migration_relaunch_options listener", () => {
-  beforeEach(() => {
-    setLaunchOptionsConfirmed.mockClear();
-    setLaunchOptionsConfirmed.mockResolvedValue(true);
-    logError.mockClear();
-  });
-
-  it("confirm-sets launch options for each migrated item", async () => {
-    const plugin = pluginFactory();
-
-    act(() => {
-      emitDeckyEvent<[{ items: { app_id: number; launch_options: string }[] }]>("migration_relaunch_options", {
-        items: [
-          { app_id: 100, launch_options: 'flatpak run net.retrodeck.retrodeck "/new/a.bin"' },
-          { app_id: 200, launch_options: 'flatpak run net.retrodeck.retrodeck "/new/b.bin"' },
-        ],
-      });
-    });
-    await flush();
-
-    expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(100, 'flatpak run net.retrodeck.retrodeck "/new/a.bin"');
-    expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(200, 'flatpak run net.retrodeck.retrodeck "/new/b.bin"');
-    plugin.onDismount();
-  });
-
-  it("ignores an empty items array", async () => {
-    const plugin = pluginFactory();
-
-    act(() => {
-      emitDeckyEvent<[{ items: { app_id: number; launch_options: string }[] }]>("migration_relaunch_options", {
-        items: [],
-      });
-    });
-    await flush();
-
-    expect(setLaunchOptionsConfirmed).not.toHaveBeenCalled();
-    plugin.onDismount();
-  });
-
-  it("surfaces a logError when setLaunchOptionsConfirmed rejects for an item", async () => {
-    setLaunchOptionsConfirmed.mockRejectedValue(new Error("set failed"));
-    const plugin = pluginFactory();
-
-    act(() => {
-      emitDeckyEvent<[{ items: { app_id: number; launch_options: string }[] }]>("migration_relaunch_options", {
-        items: [{ app_id: 100, launch_options: 'flatpak run net.retrodeck.retrodeck "/new/a.bin"' }],
-      });
-    });
-    await flush();
-
-    expect(logError).toHaveBeenCalledWith(
-      expect.stringContaining("migration_relaunch_options: failed to set launch options for appId 100"),
-    );
-    plugin.onDismount();
-  });
-
-  it("removes the migration_relaunch_options listener on unmount", () => {
-    const plugin = pluginFactory();
-    expect(deckyEventListenerCount("migration_relaunch_options")).toBe(1);
-
-    plugin.onDismount();
-    expect(deckyEventListenerCount("migration_relaunch_options")).toBe(0);
   });
 });
 

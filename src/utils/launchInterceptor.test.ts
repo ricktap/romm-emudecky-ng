@@ -22,7 +22,6 @@ vi.mock("../patches/gameDetailPatch", () => ({
 }));
 
 vi.mock("../api/backend", () => ({
-  refreshMigrationState: vi.fn(),
   getInstalledRom: vi.fn(),
   getCachedGameDetail: vi.fn(),
   isSaveTrackingConfigured: vi.fn(),
@@ -61,15 +60,6 @@ vi.mock("./sessionManager", () => ({
 
 vi.mock("./runningApps", () => ({
   isAppRunning: vi.fn(() => false),
-}));
-
-vi.mock("./migrationStore", () => ({
-  getMigrationState: vi.fn(() => ({ pending: false })),
-  setMigrationStatus: vi.fn(),
-}));
-
-vi.mock("./saveSortMigrationStore", () => ({
-  setSaveSortMigrationStatus: vi.fn(),
 }));
 
 vi.mock("../components/SyncConflictModal", () => ({
@@ -139,10 +129,6 @@ describe("launchInterceptor — full funnel watcher", () => {
     });
 
     vi.mocked(gameDetailPatch.isRomMAppId).mockReturnValue(true);
-    vi.mocked(backend.refreshMigrationState).mockResolvedValue({
-      retrodeck: { pending: false },
-      save_sort: { pending: false },
-    } as unknown as Awaited<ReturnType<typeof backend.refreshMigrationState>>);
     // Default: installed ROM so the funnel runs.
     vi.mocked(backend.getInstalledRom).mockResolvedValue({
       rom_id: 42,
@@ -492,18 +478,15 @@ describe("launchInterceptor — full funnel watcher", () => {
       expect(runGameMock()).not.toHaveBeenCalled();
     });
 
-    it("migration_pending block → migration toast, no relaunch", async () => {
-      vi.mocked(launchGate.runLaunchGate).mockResolvedValue({ decision: "block", reason: "migration_pending" });
+    it("not_installed block → no toast, no relaunch", async () => {
+      vi.mocked(launchGate.runLaunchGate).mockResolvedValue({ decision: "block", reason: "not_installed" });
 
       registerLaunchInterceptor();
       const handler = captureHandler();
       handler(77, "1234", "LaunchApp", 0);
       await flush();
 
-      expect(toaster.toast).toHaveBeenCalledWith({
-        title: "EmuDecky RomM Manager",
-        body: "Pending RetroDECK migration. Open the plugin QAM to migrate or dismiss.",
-      });
+      expect(toaster.toast).not.toHaveBeenCalled();
       expect(runGameMock()).not.toHaveBeenCalled();
     });
 
@@ -701,11 +684,6 @@ describe("launchInterceptor — full funnel watcher", () => {
       return captured;
     }
 
-    it("migrationPending reads the migration store", async () => {
-      const ops = await captureOps();
-      expect(ops.migrationPending()).toBe(false);
-    });
-
     it("checkReachability: online passes through; a throw logs and treats as offline", async () => {
       const ops = await captureOps();
 
@@ -757,6 +735,14 @@ describe("launchInterceptor — full funnel watcher", () => {
         reason: "savefiles_in_content_dir",
       });
       expect(await ops.preLaunchSync()).toEqual({ success: true, message: "skip" });
+
+      // Save sync not implemented yet (0.55.0): nothing to sync, never a failure.
+      vi.mocked(backend.preLaunchSync).mockResolvedValueOnce({
+        success: false,
+        message: "Save sync is not implemented yet",
+        reason: "not_implemented",
+      });
+      expect(await ops.preLaunchSync()).toEqual({ success: true, message: "Save sync is not implemented yet" });
 
       const conflicts = [conflict()];
       vi.mocked(backend.preLaunchSync).mockResolvedValueOnce({ success: false, message: "c", conflicts });

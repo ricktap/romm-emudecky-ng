@@ -30,10 +30,27 @@ export interface DownloadItem {
    * Pause only when this is true; Resume of a stopped download is always offered.
    */
   resumable: boolean;
-  /** Why an `interrupted` download stopped: `server_unreachable`, `auth_failed`, `disk_full`, `restart`. */
+  /**
+   * Why an `interrupted` download stopped: `server_unreachable`, `timeout`, `auth_failed`, `disk_full`,
+   * `restart`, or `needs_recovery` (a partial that cannot be verified; Resume then restarts it).
+   */
   reason?: string;
   error?: string;
+  /**
+   * Live transfer phase while `downloading` and no byte has arrived: `waiting` (request out, no response
+   * headers yet — for a multipart ROM RomM may be preparing the archive) or `retrying` (backing off).
+   * Absent while bytes flow.
+   */
+  phase?: DownloadPhase;
+  /** Epoch seconds when the phase began; the UI counts elapsed time locally from it. */
+  phase_since?: number;
+  attempt?: number;
+  max_attempts?: number;
+  /** Back-off before the next attempt, in seconds (`retrying` only). */
+  retry_delay_s?: number;
 }
+
+export type DownloadPhase = "waiting" | "retrying";
 
 export interface DownloadProgressEvent {
   rom_id: number;
@@ -48,6 +65,12 @@ export interface DownloadProgressEvent {
   resumable?: boolean;
   /** Present on `interrupted` frames: why the download stopped. */
   reason?: string;
+  /** Live phase fields, present only while waiting for the server (see `DownloadItem`). */
+  phase?: DownloadPhase;
+  phase_since?: number;
+  attempt?: number;
+  max_attempts?: number;
+  retry_delay_s?: number;
 }
 
 export interface DownloadCompleteEvent {

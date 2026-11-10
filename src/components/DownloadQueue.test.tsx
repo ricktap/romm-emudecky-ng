@@ -21,6 +21,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
+import { toaster } from "@decky/api";
 import { DownloadQueue } from "./DownloadQueue";
 import * as backend from "../api/backend";
 import { setDownloads, getDownloadState } from "../utils/downloadStore";
@@ -276,7 +277,7 @@ describe("DownloadQueue", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(500);
       });
-      expect(container.querySelector('[data-testid="dl-caption"]')?.textContent).toBe("Queued (Genesis)");
+      expect(container.querySelector('[data-testid="dl-caption"]')?.textContent).toBe("Queued (Genesis) — In Queue");
     });
 
     it("if no cleared rom_id matches, cleared Set stays the same instance (no needless re-set)", async () => {
@@ -347,6 +348,127 @@ describe("DownloadQueue", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Waiting for RomM (archive preparation) — no bytes yet
+  // ---------------------------------------------------------------------------
+  describe("waiting for the server", () => {
+    const START = 1_700_000_000; // epoch seconds
+
+    beforeEach(() => {
+      vi.setSystemTime(new Date((START + 134) * 1000));
+    });
+
+    function waitingItem(overrides: Partial<DownloadItem> = {}): DownloadItem {
+      return makeItem({
+        rom_id: 9,
+        rom_name: "Mario Kart",
+        status: "downloading",
+        bytes_downloaded: 0,
+        total_bytes: 0,
+        phase: "waiting",
+        phase_since: START,
+        attempt: 1,
+        max_attempts: 3,
+        ...overrides,
+      });
+    }
+
+    it("shows an honest, distinct waiting state with elapsed time and no invented percentage", async () => {
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({ downloads: [waitingItem()] });
+      const { container, getByTestId, queryByTestId } = render(<DownloadQueue onBack={() => {}} />);
+      await flushMount();
+      expect(getByTestId("dl-waiting-text").textContent).toBe(
+        "Waiting for RomM to respond. A download archive may be preparing…",
+      );
+      expect(getByTestId("dl-waiting-detail").textContent).toBe("Elapsed: 2m 14s");
+      // not byte progress: no byte counter, and the bar is indeterminate
+      expect(queryByTestId("dl-bytes")).toBeNull();
+      expect(container.querySelector('[data-testid="progress-indeterminate"]')?.textContent).toBe("true");
+      expect(container.textContent).not.toMatch(/%/);
+    });
+
+    it("counts elapsed time locally without asking the server again", async () => {
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({ downloads: [waitingItem()] });
+      const { getByTestId } = render(<DownloadQueue onBack={() => {}} />);
+      await flushMount();
+      const fetches = vi.mocked(backend.getDownloadQueue).mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(getByTestId("dl-waiting-detail").textContent).toBe("Elapsed: 2m 19s");
+      expect(vi.mocked(backend.getDownloadQueue).mock.calls.length).toBe(fetches);
+      expect(backend.startDownload).not.toHaveBeenCalled();
+    });
+
+    it("keeps Pause and Cancel available while waiting", async () => {
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({ downloads: [waitingItem()] });
+      const { container } = render(<DownloadQueue onBack={() => {}} />);
+      await flushMount();
+      await act(async () => {
+        fireEvent.click(buttonByText(container, "Pause Mario Kart")!);
+        await Promise.resolve();
+      });
+      expect(backend.pauseDownload).toHaveBeenCalledWith(9);
+      await act(async () => {
+        fireEvent.click(buttonByText(container, "Cancel Mario Kart")!);
+        await Promise.resolve();
+      });
+      expect(backend.cancelDownload).toHaveBeenCalledWith(9);
+    });
+
+    it("shows the attempt and the back-off while retrying", async () => {
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({
+        downloads: [waitingItem({ phase: "retrying", attempt: 2, retry_delay_s: 5, phase_since: START + 132 })],
+      });
+      const { getByTestId } = render(<DownloadQueue onBack={() => {}} />);
+      await flushMount();
+      expect(getByTestId("dl-waiting-text").textContent).toBe("Connection problem — retrying");
+      expect(getByTestId("dl-waiting-detail").textContent).toBe("Attempt 2 of 3 in 3s");
+    });
+
+    it("switches to the normal byte progress as soon as a frame without a phase arrives", async () => {
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({ downloads: [waitingItem()] });
+      const { getByTestId, queryByTestId } = render(<DownloadQueue onBack={() => {}} />);
+      await flushMount();
+      expect(queryByTestId("dl-waiting")).not.toBeNull();
+      await act(async () => {
+        setDownloads([
+          waitingItem({ phase: undefined, phase_since: undefined, bytes_downloaded: 512, total_bytes: 1024, resumable: true }),
+        ]);
+        await vi.advanceTimersByTimeAsync(600);
+      });
+      expect(queryByTestId("dl-waiting")).toBeNull();
+      expect(getByTestId("dl-bytes").textContent).toBe("512 B / 1.0 KB");
+    });
+
+    it("a partial that cannot be verified offers Restart instead of Resume", async () => {
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({
+        downloads: [waitingItem({ status: "interrupted", reason: "needs_recovery", phase: undefined })],
+      });
+      const { container } = render(<DownloadQueue onBack={() => {}} />);
+      await flushMount();
+      expect(container.querySelector('[data-testid="dl-caption"]')?.textContent).toContain("restart needed");
+      expect(buttonByText(container, "Resume Mario Kart")).toBeNull();
+      await act(async () => {
+        fireEvent.click(buttonByText(container, "Restart Mario Kart")!);
+        await Promise.resolve();
+      });
+      expect(backend.resumeDownload).toHaveBeenCalledWith(9);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Queued behind another download
+  // ---------------------------------------------------------------------------
+  it("marks a download that waits for the transfer slot as In Queue", async () => {
+    vi.mocked(backend.getDownloadQueue).mockResolvedValue({
+      downloads: [makeItem({ rom_id: 3, rom_name: "Second", status: "queued", bytes_downloaded: 0 })],
+    });
+    const { container } = render(<DownloadQueue onBack={() => {}} />);
+    await flushMount();
+    expect(container.querySelector('[data-testid="dl-caption"]')?.textContent).toContain("In Queue");
+  });
+
+  // ---------------------------------------------------------------------------
   // handlePause / handleResume (#1124)
   // ---------------------------------------------------------------------------
   describe("pause / resume", () => {
@@ -396,6 +518,27 @@ describe("DownloadQueue", () => {
         await Promise.resolve();
       });
       expect(backend.resumeDownload).toHaveBeenCalledWith(90);
+    });
+
+    it("a refused resume is shown as a toast with the backend's reason instead of vanishing", async () => {
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({
+        downloads: [makeItem({ rom_id: 90, rom_name: "Kirby", status: "interrupted", resumable: true })],
+      });
+      vi.mocked(backend.resumeDownload).mockResolvedValue({
+        success: false,
+        reason: "server_unreachable",
+        message: "Could not reach the RomM server",
+      });
+      const { container } = render(<DownloadQueue onBack={() => {}} />);
+      await flushMount();
+      vi.mocked(toaster.toast).mockClear();
+      await act(async () => {
+        fireEvent.click(buttonByText(container, "Resume Kirby")!);
+        await Promise.resolve();
+      });
+      expect(toaster.toast).toHaveBeenCalledWith(
+        expect.objectContaining({ body: "Could not reach the RomM server" }),
+      );
     });
   });
 

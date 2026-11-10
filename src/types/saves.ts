@@ -18,6 +18,18 @@ export interface SaveSyncSettings {
  *  `SAVE_SYNC_IN_CONTENT_DIR_REASON`. */
 export const SAVEFILES_IN_CONTENT_DIR_REASON = "savefiles_in_content_dir";
 
+/** The `reason` of a callable the backend has not ported yet (save sync until 0.55.0, firmware until 0.45.0). */
+export const NOT_IMPLEMENTED_REASON = "not_implemented";
+
+/**
+ * A pre-launch sync answer that means "there is nothing to sync here" rather than "syncing failed": the game
+ * launches silently, with no fallback-launch confirm. Both cases are benign skips; every other failure must
+ * still surface (the launch must not fail open onto stale saves, #1050).
+ */
+export function isBenignSyncSkip(reason: string | undefined): boolean {
+  return reason === SAVEFILES_IN_CONTENT_DIR_REASON || reason === NOT_IMPLEMENTED_REASON;
+}
+
 export interface SyncConflict {
   type: "sync_conflict";
   rom_id: number;

@@ -47,6 +47,7 @@ coverage.json
 # Frontend test coverage
 coverage/
 
-# Rust backend build output (rust branch)
+# Native backend build output
 backend/target/
 backend/out/
+*.profraw

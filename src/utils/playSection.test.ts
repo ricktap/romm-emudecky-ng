@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { resolveSaveSyncLabel, applySaveSyncDisplay, extractBiosInfo, extractCoreInfo, timeoutMs } from "./playSection";
+import { resolveSaveSyncLabel, applySaveSyncDisplay, extractCoreInfo, timeoutMs } from "./playSection";
 import { libretroEmu } from "../test-utils/coreFixtures";
 import type { CoreInfo, SaveStatus, SaveSyncDisplay } from "../types";
 
@@ -75,24 +75,6 @@ describe("applySaveSyncDisplay", () => {
       status: "none",
       label: "No saves",
     });
-  });
-});
-
-describe("extractBiosInfo", () => {
-  it("projects the pre-computed level/label into the BIOS-only play-section fields (no core fields, #923)", () => {
-    const result = extractBiosInfo("ok", "BIOS OK");
-    expect(result.biosNeeded).toBe(true);
-    expect(result.biosStatus).toBe("ok");
-    expect(result.biosLabel).toBe("BIOS OK");
-    // Core fields no longer ride the BIOS payload — they come from extractCoreInfo.
-    expect(result).not.toHaveProperty("activeCoreLabel");
-    expect(result).not.toHaveProperty("availableCores");
-  });
-
-  it("coerces null label to empty string", () => {
-    const result = extractBiosInfo(null, null);
-    expect(result.biosLabel).toBe("");
-    expect(result.biosStatus).toBeNull();
   });
 });
 

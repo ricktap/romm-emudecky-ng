@@ -27,6 +27,8 @@ export function isStoppedStatus(status: string): status is Extract<DownloadStatu
 
 const REASON_LABELS: Record<string, string> = {
   server_unreachable: "server unreachable",
+  timeout: "server did not respond",
+  needs_recovery: "restart needed",
   auth_failed: "sign-in required",
   disk_full: "disk full",
   restart: "plugin restarted",
@@ -38,9 +40,18 @@ export function interruptedLabel(reason?: string | null): string {
   return detail ? `Interrupted — ${detail}` : "Interrupted";
 }
 
-/** Caption suffix for a stopped download in the queue list ("" for any other status). */
+/** Caption suffix for a download that is stopped or still waiting for the transfer slot ("" otherwise). */
 export function stoppedCaptionSuffix(status: string, reason?: string | null): string {
+  if (status === "queued") return " — In Queue";
   if (status === "paused") return " — Paused";
   if (status === "interrupted") return ` — ${interruptedLabel(reason)}`;
   return "";
+}
+
+/**
+ * Label of the Resume control. A partial that cannot be verified is never continued: the user's
+ * Resume is an explicit restart of that download, so the button says so.
+ */
+export function resumeActionLabel(reason?: string | null): "Resume" | "Restart" {
+  return reason === "needs_recovery" ? "Restart" : "Resume";
 }

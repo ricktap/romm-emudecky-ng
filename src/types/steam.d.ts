@@ -3,6 +3,7 @@ declare var SteamClient: {
     AddShortcut(appName: string, exePath: string, startDir: string, launchArgs: string): Promise<number>;
     RemoveShortcut(appId: number): void;
     SetShortcutName(appId: number, name: string): void;
+    SetShortcutIcon(appId: number, path: string): void;
     SetShortcutExe(appId: number, exePath: string): void;
     SetShortcutStartDir(appId: number, startDir: string): void;
     SetAppLaunchOptions(appId: number, options: string): void;

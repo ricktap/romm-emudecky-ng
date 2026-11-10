@@ -1,6 +1,6 @@
 name: Tests
 
-# Every push to any branch runs the Python and frontend test suites. Nothing else.
+# Every push to any branch runs the Python, frontend and Rust backend test suites. Nothing else.
 on:
   push:
     branches: ["**"]
@@ -34,3 +34,31 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the pinned toolchain (backend/rust-toolchain.toml)
+        run: |
+          TOOLCHAIN=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component llvm-tools-preview
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: rust-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock', 'backend/rust-toolchain.toml') }}
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-llvm-cov
+      # Tests only, no lint/format gates (repo policy). Runs every unit +
+      # integration test (the integration tests spawn the real binary on a temp
+      # socket against a fake RomM) with coverage; fails on a test failure or
+      # below 80% line coverage.
+      - run: cargo llvm-cov --locked --summary-only --fail-under-lines 80
