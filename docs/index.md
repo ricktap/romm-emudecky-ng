@@ -17,15 +17,16 @@ library into Steam as Non-Steam shortcuts. Games launch through EmuDeck.
 1. **[Getting Started](user-guide/getting-started.md)** — Prerequisites, installation, and first-time setup
 2. **[Configuration](user-guide/configuration.md)** — Connection settings, SteamGridDB API key, Steam Input, debug
    options
-3. **[Syncing Your Library](user-guide/syncing-your-library.md)** — How sync works, per-platform toggles, collections,
+3. **[The RomM Library and the Quick Access Menu](user-guide/romm-library.md)** — Where everything is: QAM, full-screen library, game page
+4. **[Syncing Your Library](user-guide/syncing-your-library.md)** — How sync works, per-platform toggles, collections,
    artwork
-4. **[Managing Games](user-guide/managing-games.md)** — Game detail panel, downloading ROMs, uninstalling, refreshing
+5. **[Managing Games](user-guide/managing-games.md)** — Game detail panel, downloading ROMs, uninstalling, refreshing
    metadata
-5. **[Switch firmware and keys](user-guide/bios-management.md)** — Checking keys per emulator, choosing a firmware version, downloading, replacing a key
-6. **[EmuDeck Path Migration](user-guide/retrodeck-path-migration.md)** — Moving your EmuDeck installation between
+6. **[Switch firmware and keys](user-guide/bios-management.md)** — Checking keys per emulator, choosing a firmware version, downloading, replacing a key
+7. **[EmuDeck Path Migration](user-guide/retrodeck-path-migration.md)** — Moving your EmuDeck installation between
    storage locations
-7. **[Save Sync](user-guide/save-sync.md)** — Auto-sync, conflict resolution modes, manual sync, failed sync retries
-8. **[Troubleshooting](user-guide/troubleshooting.md)** — Common issues, fixes, Danger Zone explained
+8. **[Save Sync](user-guide/save-sync.md)** — Auto-sync, conflict resolution modes, manual sync, failed sync retries
+9. **[Troubleshooting](user-guide/troubleshooting.md)** — Common issues, fixes, Danger Zone explained
 
 ## Technical Reference
 

@@ -23,8 +23,8 @@ when you report it.
 **Symptom**: A game for a system that requires BIOS files (PlayStation, Saturn, Dreamcast, etc.) fails to launch or
 shows a black screen.
 
-**Fix**: Check the game's detail page — if the BIOS indicator is orange, you're missing required BIOS files. Go to the
-**System** page in the QAM and tap **Download All** for the relevant platform. See [BIOS Management](bios-management.md)
+**Fix**: Check the game's detail page — if the BIOS indicator is orange, you're missing required BIOS files. Open the
+**Systems & BIOS** tab of the RomM Library and download the files for the relevant platform. See [BIOS Management](bios-management.md)
 for details.
 
 ### ROM not downloaded
@@ -49,7 +49,7 @@ config file.
 
 ### Auto-sync is disabled
 
-**Fix**: Go to **Save Sync** in the QAM and make sure both "Sync before launch" and "Sync after exit" are toggled on.
+**Fix**: Go to **Settings** in the QAM (or the Settings tab of the RomM Library) and make sure both "Sync before launch" and "Sync after exit" are toggled on.
 
 ### Server unreachable
 

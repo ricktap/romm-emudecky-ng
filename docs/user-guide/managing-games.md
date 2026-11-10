@@ -269,7 +269,7 @@ available from the RomM Actions menu in the game detail panel.
 
 ## Download Queue
 
-The **Downloads** page (accessible from the main QAM panel) shows all active and completed downloads:
+The **Downloads** page (from the main QAM panel; the full queue is also the Downloads tab of the RomM Library) shows all active and completed downloads:
 
 - Active downloads with progress bars, plus pause/resume and cancel buttons (pause/resume only where the download is
   resumable — see [Pausing and Resuming a Download](#pausing-and-resuming-a-download))
