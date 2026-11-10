@@ -273,6 +273,14 @@ impl crate::services::ports::RommSavesApi for RommApi {
         self.http.send_json(Method::POST, "/api/saves/delete", &json!({"saves": save_ids})).await
     }
 
+    async fn save_summary(&self, rom_id: i64, device_id: Option<&str>) -> Result<Value, RommError> {
+        let mut path = format!("/api/saves/summary?rom_id={rom_id}");
+        if let Some(d) = device_id {
+            path.push_str(&format!("&device_id={}", quote(d, "")));
+        }
+        self.http.get_json(&path).await
+    }
+
     async fn negotiate(&self, device_id: &str, saves: &[Value]) -> Result<Value, RommError> {
         self.http.send_json(Method::POST, "/api/sync/negotiate", &json!({"device_id": device_id, "saves": saves})).await
     }

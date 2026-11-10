@@ -250,6 +250,8 @@ pub trait RommSavesApi: Send + Sync {
     async fn download_save(&self, save_id: i64, device_id: Option<&str>) -> Result<Vec<u8>, RommError>;
     async fn confirm_download(&self, save_id: i64, device_id: &str) -> Result<Value, RommError>;
     async fn delete_saves(&self, save_ids: &[i64]) -> Result<Value, RommError>;
+    /// `GET /api/saves/summary`: the slots of a ROM with their counts and newest save.
+    async fn save_summary(&self, rom_id: i64, device_id: Option<&str>) -> Result<Value, RommError>;
     async fn negotiate(&self, device_id: &str, saves: &[Value]) -> Result<Value, RommError>;
     async fn complete_session(&self, session_id: i64, completed: u32, failed: u32) -> Result<Value, RommError>;
     async fn register_device(&self, name: &str, platform: &str, client: &str, client_version: &str, hostname: Option<&str>) -> Result<Value, RommError>;

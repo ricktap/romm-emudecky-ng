@@ -25,7 +25,7 @@ fn list_methods_flag_prints_the_surface_without_any_environment() {
     let out = cmd.output().unwrap();
     assert!(out.status.success());
     let names: Vec<String> = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(names.len(), 109);
+    assert_eq!(names.len(), 112);
     assert_eq!(names, expected_names());
 }
 
@@ -52,17 +52,22 @@ async fn list_unknown_unported_arity_and_malformed() {
     let r = b.request("no_such_method", json!([])).await;
     assert_eq!(r["error"], json!({"message": "unknown method: no_such_method"}));
 
-    let unported = names.iter().find(|name| !romm_backend::app::PORTED_CALLABLES.contains(&name.as_str())).expect("an unported callable");
-    let r = b.request(unported, json!([])).await;
-    assert_eq!(r.get("error"), None);
-    assert_eq!(
-        r["result"],
-        json!({
-            "success": false,
-            "reason": "not_implemented",
-            "message": format!("not implemented in the Rust backend yet: {unported}"),
-        })
-    );
+    // Every callable is ported now (save sync landed in 0.55.0): the "not implemented" answer is kept for the next gap, so it
+    // is only exercised while one exists.
+    if let Some(unported) = names.iter().find(|name| !romm_backend::app::PORTED_CALLABLES.contains(&name.as_str())) {
+        let r = b.request(unported, json!([])).await;
+        assert_eq!(r.get("error"), None);
+        assert_eq!(
+            r["result"],
+            json!({
+                "success": false,
+                "reason": "not_implemented",
+                "message": format!("not implemented in the Rust backend yet: {unported}"),
+            })
+        );
+    } else {
+        assert_eq!(romm_backend::app::PORTED_CALLABLES.len(), names.len(), "no gaps and no stale entries");
+    }
 
     let r = b.request("get_settings", json!([1])).await;
     assert!(r["error"]["message"].as_str().unwrap().contains("positional arguments"));
