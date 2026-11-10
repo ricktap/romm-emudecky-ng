@@ -230,7 +230,7 @@ async fn status_translation() {
     assert!(matches!(&e401, RommError::Auth(m) if m.starts_with("HTTP 401: Unauthorized (GET ")));
     assert!(matches!(err(403).await, RommError::Forbidden(_)));
     assert!(matches!(err(404).await, RommError::NotFound { detail: None, .. }));
-    assert!(matches!(err(409).await, RommError::Api(_)));
+    assert!(matches!(err(409).await, RommError::Conflict(_)), "a refused write is its own kind (a save upload 409s on a stale slot)");
     assert!(matches!(err(422).await, RommError::Api(_)));
     let e429 = err(429).await;
     assert!(matches!(&e429, RommError::Server { status: 429, message } if message.starts_with("Rate limited")));
@@ -432,4 +432,78 @@ fn insecure_flag_selects_client() {
     assert!(std::ptr::eq(h.client(), &h.secure));
     settings.set("romm_allow_insecure_ssl", json!(true));
     assert!(std::ptr::eq(h.client(), &h.insecure));
+}
+
+#[tokio::test]
+async fn saves_api_uses_romms_endpoints_params_and_the_save_file_field() {
+    use crate::services::ports::{RommSavesApi, SaveUpload};
+    use wiremock::matchers::query_param;
+    let server = MockServer::start().await;
+    let api = RommApi::new(Arc::new(http(store(&server.uri(), Some("t"), Some(&server.uri())))));
+    Mock::given(method("GET")).and(path("/api/saves")).and(query_param("rom_id", "7")).and(query_param("device_id", "dev 1")).and(query_param("slot", "my slot")).and(header("authorization", "Bearer t"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{"id": 1}]))).expect(1).mount(&server).await;
+    assert_eq!(api.list_saves(7, Some("dev 1"), Some("my slot")).await.unwrap(), vec![json!({"id": 1})]);
+
+    server.reset().await;
+    Mock::given(method("POST")).and(path("/api/saves")).and(query_param("rom_id", "7")).and(query_param("emulator", "eden")).and(query_param("slot", "default")).and(query_param("autocleanup", "true")).and(query_param("autocleanup_limit", "5"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 9}))).expect(1).mount(&server).await;
+    let up = SaveUpload { rom_id: 7, file_name: "01008CF01BAAC000.zip".into(), data: b"ZIPBYTES".to_vec(), emulator: "eden".into(), device_id: None, slot: Some("default".into()), overwrite: false, autocleanup_limit: Some(5), save_id: None };
+    assert_eq!(api.upload_save(up).await.unwrap(), json!({"id": 9}));
+    let req = &server.received_requests().await.unwrap()[0];
+    let body = String::from_utf8_lossy(&req.body).to_string();
+    assert!(body.contains("name=\"saveFile\"") && body.contains("filename=\"01008CF01BAAC000.zip\"") && body.contains("ZIPBYTES"), "{body}");
+    assert!(!req.url.query().unwrap().contains("overwrite"), "an automatic upload never overwrites");
+}
+
+#[tokio::test]
+async fn an_explicit_overwrite_and_a_put_use_the_right_verb_and_flags_and_a_409_is_a_conflict() {
+    use crate::services::ports::{RommSavesApi, SaveUpload};
+    use wiremock::matchers::query_param;
+    let server = MockServer::start().await;
+    let api = RommApi::new(Arc::new(http(store(&server.uri(), Some("t"), Some(&server.uri())))));
+    let up = |overwrite, save_id| SaveUpload { rom_id: 7, file_name: "a\r\n\"b.zip".into(), data: vec![1], emulator: "eden".into(), device_id: Some("d".into()), slot: None, overwrite, autocleanup_limit: Some(3), save_id };
+    Mock::given(method("PUT")).and(path("/api/saves/42")).and(query_param("overwrite", "true")).respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 42}))).expect(1).mount(&server).await;
+    assert_eq!(api.upload_save(up(true, Some(42))).await.unwrap(), json!({"id": 42}));
+    let req = &server.received_requests().await.unwrap()[0];
+    assert!(!req.url.query().unwrap().contains("autocleanup"), "a PUT updates in place, no retention cap");
+    assert!(String::from_utf8_lossy(&req.body).contains("filename=\"ab.zip\""), "the file name is stripped of line breaks and quotes");
+
+    server.reset().await;
+    Mock::given(method("POST")).and(path("/api/saves")).respond_with(ResponseTemplate::new(409)).expect(1).mount(&server).await;
+    assert!(matches!(api.upload_save(up(false, None)).await, Err(RommError::Conflict(_))), "never retried, mapped to Conflict");
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn download_confirm_delete_negotiate_and_devices_hit_their_endpoints() {
+    use crate::services::ports::RommSavesApi;
+    use wiremock::matchers::{body_json, query_param};
+    let server = MockServer::start().await;
+    let api = RommApi::new(Arc::new(http(store(&server.uri(), Some("t"), Some(&server.uri())))));
+    Mock::given(method("GET")).and(path("/api/saves/5/content")).and(query_param("device_id", "d")).and(query_param("optimistic", "true")).respond_with(ResponseTemplate::new(200).set_body_bytes(b"data".to_vec())).expect(1).mount(&server).await;
+    assert_eq!(api.download_save(5, Some("d")).await.unwrap(), b"data".to_vec());
+    Mock::given(method("POST")).and(path("/api/saves/5/downloaded")).and(body_json(json!({"device_id": "d"}))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
+    api.confirm_download(5, "d").await.unwrap();
+    Mock::given(method("POST")).and(path("/api/saves/delete")).and(body_json(json!({"saves": [1, 2]}))).respond_with(ResponseTemplate::new(200).set_body_json(json!({"deleted": 2}))).expect(1).mount(&server).await;
+    assert_eq!(api.delete_saves(&[1, 2]).await.unwrap()["deleted"], 2);
+    Mock::given(method("POST")).and(path("/api/sync/negotiate")).and(body_json(json!({"device_id": "d", "saves": []}))).respond_with(ResponseTemplate::new(200).set_body_json(json!({"session_id": 3}))).expect(1).mount(&server).await;
+    assert_eq!(api.negotiate("d", &[]).await.unwrap()["session_id"], 3);
+    Mock::given(method("POST")).and(path("/api/sync/sessions/3/complete")).and(body_json(json!({"operations_completed": 1, "operations_failed": 0}))).respond_with(ResponseTemplate::new(204)).expect(1).mount(&server).await;
+    api.complete_session(3, 1, 0).await.unwrap();
+    Mock::given(method("POST")).and(path("/api/devices")).and(body_json(json!({"name": "n", "platform": "linux", "client": "c", "client_version": "1", "hostname": "h"}))).respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "dev"}))).expect(1).mount(&server).await;
+    assert_eq!(api.register_device("n", "linux", "c", "1", Some("h")).await.unwrap()["id"], "dev");
+    Mock::given(method("GET")).and(path("/api/devices")).respond_with(ResponseTemplate::new(200).set_body_json(json!([{"id": "dev"}]))).expect(1).mount(&server).await;
+    assert_eq!(api.list_devices().await.unwrap().len(), 1);
+    Mock::given(method("PUT")).and(path("/api/devices/dev%2Fx")).and(body_json(json!({"name": "new"}))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
+    api.update_device("dev/x", &json!({"name": "new"})).await.unwrap();
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn a_save_download_beyond_the_limit_is_refused() {
+    let server = MockServer::start().await;
+    let h = http(store(&server.uri(), Some("t"), Some(&server.uri())));
+    Mock::given(method("GET")).and(path("/api/saves/1/content")).respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; 100])).mount(&server).await;
+    assert!(h.get_bytes("/api/saves/1/content", 50).await.is_err());
+    assert_eq!(h.get_bytes("/api/saves/1/content", 100).await.unwrap().len(), 100);
 }

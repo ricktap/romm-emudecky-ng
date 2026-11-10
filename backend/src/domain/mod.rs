@@ -25,6 +25,7 @@ pub mod steam_input;
 pub mod switch_firmware;
 pub mod save_archive;
 pub mod sync_action;
+pub mod rom_save_state;
 pub mod switch_save;
 pub mod sgdb_artwork;
 

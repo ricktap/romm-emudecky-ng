@@ -226,6 +226,37 @@ pub trait RommRomApi: Send + Sync {
     ) -> anyhow::Result<TransferOutcome>;
 }
 
+/// One save upload (`POST /api/saves`, or `PUT /api/saves/<id>` when `save_id` is set).
+#[derive(Debug, Clone)]
+pub struct SaveUpload {
+    pub rom_id: i64,
+    pub file_name: String,
+    pub data: Vec<u8>,
+    pub emulator: String,
+    pub device_id: Option<String>,
+    pub slot: Option<String>,
+    /// `overwrite=true`: only from an explicit keep-local resolution.
+    pub overwrite: bool,
+    pub autocleanup_limit: Option<u32>,
+    pub save_id: Option<i64>,
+}
+
+/// RomM's save, sync-session and device endpoints (ADR-0016/0017: detection is the client's; `negotiate` is transport).
+#[async_trait]
+pub trait RommSavesApi: Send + Sync {
+    async fn list_saves(&self, rom_id: i64, device_id: Option<&str>, slot: Option<&str>) -> Result<Vec<Value>, RommError>;
+    /// A `409` is [`RommError::Conflict`] (the slot has a newer save since this device last synced).
+    async fn upload_save(&self, upload: SaveUpload) -> Result<Value, RommError>;
+    async fn download_save(&self, save_id: i64, device_id: Option<&str>) -> Result<Vec<u8>, RommError>;
+    async fn confirm_download(&self, save_id: i64, device_id: &str) -> Result<Value, RommError>;
+    async fn delete_saves(&self, save_ids: &[i64]) -> Result<Value, RommError>;
+    async fn negotiate(&self, device_id: &str, saves: &[Value]) -> Result<Value, RommError>;
+    async fn complete_session(&self, session_id: i64, completed: u32, failed: u32) -> Result<Value, RommError>;
+    async fn register_device(&self, name: &str, platform: &str, client: &str, client_version: &str, hostname: Option<&str>) -> Result<Value, RommError>;
+    async fn list_devices(&self) -> Result<Vec<Value>, RommError>;
+    async fn update_device(&self, device_id: &str, fields: &Value) -> Result<Value, RommError>;
+}
+
 /// RomM's firmware inventory (`GET /api/firmware`).
 #[async_trait]
 pub trait RommFirmwareApi: Send + Sync {
@@ -567,6 +598,33 @@ pub trait VersionRepo: Send + Sync {
     async fn member(&self, rom_id: i64) -> anyhow::Result<Option<Value>>;
     /// Conditional, narrow binding move; a server-only row is inserted, never replaced.
     async fn bind_version(&self, expected: &VersionGroup, target: i64, server: Option<Value>, now: &str) -> anyhow::Result<Value>;
+}
+
+/// The per-ROM save-sync aggregate: slot configuration and per-file baselines (`rom_save_states` + `rom_save_files`).
+#[async_trait]
+pub trait SaveStateRepo: Send + Sync {
+    async fn get(&self, rom_id: i64) -> anyhow::Result<Option<crate::domain::rom_save_state::RomSaveState>>;
+    /// Replace the ROM's state and its file baselines in one transaction. The ROM must have a `roms` row (foreign key).
+    async fn save(&self, rom_id: i64, state: &crate::domain::rom_save_state::RomSaveState) -> anyhow::Result<()>;
+    async fn delete(&self, rom_id: i64) -> anyhow::Result<()>;
+    /// Whether anything is tracked: a file baseline or a non-empty slot listing.
+    async fn tracked(&self, rom_id: i64) -> anyhow::Result<bool>;
+    /// Every ROM with a state row, for the bulk sync.
+    async fn rom_ids(&self) -> anyhow::Result<Vec<i64>>;
+}
+
+/// The Switch title ID a ROM's saves belong to (`rom_title_ids`), with where it came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredTitle {
+    pub title_id: String,
+    pub source: String,
+}
+
+#[async_trait]
+pub trait TitleIdRepo: Send + Sync {
+    async fn get(&self, rom_id: i64) -> anyhow::Result<Option<StoredTitle>>;
+    async fn set(&self, rom_id: i64, title_id: &str, source: &str) -> anyhow::Result<()>;
+    async fn clear(&self, rom_id: i64) -> anyhow::Result<()>;
 }
 
 /// Step 5 supplies standalone save providers here. No guessed save paths.

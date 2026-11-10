@@ -221,3 +221,85 @@ impl crate::services::ports::RommFirmwareApi for RommApi {
         self.http.download(&path, dest, mode, hooks).await
     }
 }
+
+#[async_trait]
+impl crate::services::ports::RommSavesApi for RommApi {
+    async fn list_saves(&self, rom_id: i64, device_id: Option<&str>, slot: Option<&str>) -> Result<Vec<Value>, RommError> {
+        let mut path = format!("/api/saves?rom_id={rom_id}");
+        if let Some(d) = device_id {
+            path.push_str(&format!("&device_id={}", quote(d, "")));
+        }
+        if let Some(s) = slot {
+            path.push_str(&format!("&slot={}", quote(s, "")));
+        }
+        Ok(self.http.get_json(&path).await?.as_array().cloned().unwrap_or_default())
+    }
+
+    async fn upload_save(&self, up: crate::services::ports::SaveUpload) -> Result<Value, RommError> {
+        let mut params = format!("rom_id={}&emulator={}", up.rom_id, quote(&up.emulator, ""));
+        if let Some(d) = &up.device_id {
+            params.push_str(&format!("&device_id={}", quote(d, "")));
+        }
+        if let Some(s) = &up.slot {
+            params.push_str(&format!("&slot={}", quote(s, "")));
+        }
+        if up.overwrite {
+            params.push_str("&overwrite=true");
+        }
+        if let Some(id) = up.save_id {
+            return self.http.upload_save_file(Method::PUT, &format!("/api/saves/{id}?{params}"), &up.file_name, up.data).await;
+        }
+        // POST is the only call that stacks versions (PUT updates in place). RomM's autocleanup is off by default, so a
+        // retained-version cap needs the flag as well as the limit.
+        if let Some(limit) = up.autocleanup_limit {
+            params.push_str(&format!("&autocleanup=true&autocleanup_limit={limit}"));
+        }
+        self.http.upload_save_file(Method::POST, &format!("/api/saves?{params}"), &up.file_name, up.data).await
+    }
+
+    async fn download_save(&self, save_id: i64, device_id: Option<&str>) -> Result<Vec<u8>, RommError> {
+        let mut path = format!("/api/saves/{save_id}/content");
+        if let Some(d) = device_id {
+            path.push_str(&format!("?device_id={}&optimistic=true", quote(d, "")));
+        }
+        self.http.get_bytes(&path, 1 << 30).await
+    }
+
+    async fn confirm_download(&self, save_id: i64, device_id: &str) -> Result<Value, RommError> {
+        self.http.send_json(Method::POST, &format!("/api/saves/{save_id}/downloaded"), &json!({"device_id": device_id})).await
+    }
+
+    async fn delete_saves(&self, save_ids: &[i64]) -> Result<Value, RommError> {
+        self.http.send_json(Method::POST, "/api/saves/delete", &json!({"saves": save_ids})).await
+    }
+
+    async fn negotiate(&self, device_id: &str, saves: &[Value]) -> Result<Value, RommError> {
+        self.http.send_json(Method::POST, "/api/sync/negotiate", &json!({"device_id": device_id, "saves": saves})).await
+    }
+
+    async fn complete_session(&self, session_id: i64, completed: u32, failed: u32) -> Result<Value, RommError> {
+        self.http
+            .send_json(
+                Method::POST,
+                &format!("/api/sync/sessions/{session_id}/complete"),
+                &json!({"operations_completed": completed, "operations_failed": failed}),
+            )
+            .await
+    }
+
+    async fn register_device(&self, name: &str, platform: &str, client: &str, client_version: &str, hostname: Option<&str>) -> Result<Value, RommError> {
+        let mut payload = json!({"name": name, "platform": platform, "client": client, "client_version": client_version});
+        if let Some(h) = hostname {
+            payload["hostname"] = json!(h);
+        }
+        self.http.send_json(Method::POST, "/api/devices", &payload).await
+    }
+
+    async fn list_devices(&self) -> Result<Vec<Value>, RommError> {
+        Ok(self.http.get_json("/api/devices").await?.as_array().cloned().unwrap_or_default())
+    }
+
+    async fn update_device(&self, device_id: &str, fields: &Value) -> Result<Value, RommError> {
+        self.http.send_json(Method::PUT, &format!("/api/devices/{}", quote(device_id, "")), fields).await
+    }
+}

@@ -87,6 +87,11 @@ pub const MIGRATIONS: &[(u32, &str, &str)] = &[
         "014_download_job_kinds.sql",
         include_str!("../../migrations/014_download_job_kinds.sql"),
     ),
+    (
+        15,
+        "015_rom_title_ids.sql",
+        include_str!("../../migrations/015_rom_title_ids.sql"),
+    ),
 ];
 
 /// Apply every migration newer than the database's `user_version`.
@@ -224,7 +229,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested").join(DB_FILENAME);
         let (db, version) = Db::open(&path).await.unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, 15);
         let mode: String = db
             .call(|c| c.pragma_query_value(None, "journal_mode", |r| r.get(0)))
             .await
@@ -247,7 +252,7 @@ mod tests {
         drop(db);
         // Re-open: nothing pending, version unchanged.
         let (_db, version) = Db::open(&path).await.unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, 15);
     }
 
     static BROKEN: &[(u32, &str, &str)] = &[
