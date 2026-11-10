@@ -1,15 +1,17 @@
-import { useState, useEffect, FC, Fragment, createElement } from "react";
-import { PanelSection, PanelSectionRow, ButtonItem, Field, DropdownItem, ConfirmModal, showModal } from "@decky/ui";
+import { useState, useEffect, FC, createElement } from "react";
+import { ConfirmModal, showModal } from "@decky/ui";
 import {
   getFirmwareStatus,
+  getPlatforms,
+  savePlatformSync,
   downloadAllFirmware,
   downloadRequiredFirmware,
   saveFirmwareVersion,
   replaceFirmwareKey,
 } from "../api/backend";
-import type { FirmwareStatus, KeyEmulatorState, KeyState, SwitchKeyFile } from "../types";
+import type { FirmwareStatus, KeyEmulatorState, KeyState, PlatformSyncSetting, SwitchKeyFile } from "../types";
+import { RmButton, RmCard, RmChoice, RmRow, RmStyles, RmToggle, RmValueRow } from "./rm";
 import { formatBytes } from "../utils/formatters";
-import { scrollToTop } from "../utils/scrollHelpers";
 import { detach } from "../utils/detach";
 
 const KEY_STATE_LABEL: Record<KeyState, string> = {
@@ -26,17 +28,21 @@ export function keyStateSummary(key: SwitchKeyFile): string {
 }
 
 interface SystemPageProps {
-  onBack: () => void;
+  onBack?: () => void;
 }
 
+const games = (n: number) => `${n} game${n === 1 ? "" : "s"}`;
+const isSwitch = (p: PlatformSyncSetting) => p.slug === "switch" || p.slug === "nintendo_switch";
+
 /**
- * Top-level QAM destination for the Switch firmware and keys RomM hosts: the key files with their state in every
- * installed emulator, and the firmware versions. The buttons put downloads in the shared download queue (progress,
- * pause and cancel are in the Downloads list). Downloads only fill gaps: an existing key file that differs from
- * RomM's is reported and kept, never replaced.
+ * The Systems & BIOS tab: one table row per platform (sync switch, BIOS state, emulator), and below it the Switch
+ * firmware and keys RomM hosts — the key files with their state in every installed emulator, and the firmware
+ * versions. The buttons put downloads in the shared download queue (progress, pause and cancel are in the Downloads
+ * tab). Downloads only fill gaps: an existing key file that differs from RomM's is reported and kept, never replaced.
  */
-export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
+export const SystemPage: FC<SystemPageProps> = () => {
   const [status, setStatus] = useState<FirmwareStatus | null>(null);
+  const [platforms, setPlatforms] = useState<PlatformSyncSetting[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [downloading, setDownloading] = useState(false);
@@ -61,6 +67,9 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- initial async data load on mount
     detach(refresh());
+    getPlatforms()
+      .then((r) => r?.success && setPlatforms(r.platforms))
+      .catch(() => undefined);
     // A finished firmware download (announced by the global listener) changes what is on disk.
     const onChanged = (e: Event) => {
       if ((e as CustomEvent<{ type?: string }>).detail?.type === "firmware") detach(refresh());
@@ -68,6 +77,18 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
     globalThis.addEventListener("romm_data_changed", onChanged);
     return () => globalThis.removeEventListener("romm_data_changed", onChanged);
   }, []);
+
+  const toggleSync = async (platform: PlatformSyncSetting, enabled: boolean) => {
+    setPlatforms((all) => all.map((p) => (p.id === platform.id ? { ...p, sync_enabled: enabled } : p)));
+    try {
+      const result = await savePlatformSync(platform.id, enabled);
+      if (!result?.success) throw new Error(result?.message);
+      setNote("Changes apply on the next sync");
+    } catch {
+      setPlatforms((all) => all.map((p) => (p.id === platform.id ? { ...p, sync_enabled: !enabled } : p)));
+      setNote("Could not save the platform setting");
+    }
+  };
 
   const chooseVersion = async (version: string) => {
     setNote("");
@@ -126,141 +147,171 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
 
   const keys = status?.keys ?? [];
   const firmware = status?.firmware ?? [];
+  const emulators = status?.emulators ?? [];
   const requiredMissing = keys.filter((k) => k.required && k.emulators.some((e) => e.state === "missing")).length;
   const onRomm = keys.filter((k) => k.on_romm).length + firmware.length;
+  const offline = Boolean(status?.server_offline);
+  const canDownload = status !== null && !offline && onRomm > 0;
+
+  // The Switch row's BIOS cell: a colour dot, one line of state and the first file name.
+  const switchBios = ((): { dot: string; text: string; file: string } => {
+    if (!status) return { dot: "rm-grey", text: loading ? "Checking…" : "Unknown", file: "" };
+    if (emulators.length === 0) return { dot: "rm-grey", text: "No Switch emulator found", file: "" };
+    if (requiredMissing > 0) return { dot: "rm-red", text: "Missing required keys", file: keys.find((k) => k.required)?.file_name ?? "" };
+    return { dot: "", text: "Ready", file: keys[0]?.file_name ?? "" };
+  })();
+
+  const rows: { key: string; platform: PlatformSyncSetting | null; name: string; sub: string; isSwitchRow: boolean }[] =
+    platforms.filter((p) => !isSwitch(p)).map((p) => ({ key: p.slug, platform: p, name: p.name, sub: games(p.rom_count), isSwitchRow: false }));
+  const switchPlatform = platforms.find(isSwitch) ?? null;
+  rows.push({
+    key: "switch",
+    platform: switchPlatform,
+    name: "Nintendo Switch",
+    sub: switchPlatform ? `${games(switchPlatform.rom_count)} · firmware and keys` : "Firmware and keys",
+    isSwitchRow: true,
+  });
 
   return (
-    <>
-      <PanelSection>
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            onClick={onBack}
-            // @ts-expect-error onFocus works at runtime; not in Decky's ButtonItem types
-            onFocus={scrollToTop}
-          >
-            Back
-          </ButtonItem>
-        </PanelSectionRow>
-      </PanelSection>
+    <div className="rm-root" style={{ background: "transparent" }}>
+      <RmStyles />
+      {loading && !status && <div className="rm-muted" style={{ padding: "8px 0" }}>Loading firmware status...</div>}
+      {error && <RmValueRow label="Error" sub={error} />}
+      {offline && <RmValueRow label="Server offline" sub="RomM is unreachable. Showing what is on this machine; downloads are unavailable." />}
+      {status && !loading && onRomm === 0 && !offline && (
+        <RmValueRow label="No Switch firmware on RomM" sub="Upload firmware and keys to RomM's bios/Switch folder." />
+      )}
 
-      <PanelSection title="Switch firmware and keys">
-        <PanelSectionRow>
-          <div style={{ fontSize: "11px", color: "#8f98a0", padding: "0 16px 4px" }}>
-            Keys are read from each emulator&apos;s own folder. A key file you already have is never replaced.
-          </div>
-        </PanelSectionRow>
+      <table className="rm-tbl" data-testid="systems-table">
+        <thead>
+          <tr>
+            <th>Platform</th>
+            <th>Sync</th>
+            <th>BIOS</th>
+            <th>Emulator</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.key} data-testid={`system-${r.key}`}>
+              <td>
+                <div style={{ fontWeight: 600, color: "#fff" }}>{r.name}</div>
+                <div className="rm-muted rm-small">{r.sub}</div>
+              </td>
+              <td>
+                {r.platform && (
+                  <RmToggle
+                    label={`Sync ${r.name}`}
+                    checked={r.platform.sync_enabled}
+                    onChange={(value) => detach(toggleSync(r.platform!, value))}
+                  />
+                )}
+              </td>
+              <td>
+                {r.isSwitchRow ? (
+                  <>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      <span className={`rm-dot ${switchBios.dot}`} />
+                      {switchBios.text}
+                    </span>
+                    <div className="rm-muted rm-small" style={{ marginLeft: 16 }}>{switchBios.file}</div>
+                  </>
+                ) : (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <span className="rm-dot rm-grey" />
+                    No BIOS check yet
+                  </span>
+                )}
+              </td>
+              <td className="rm-muted">
+                {r.isSwitchRow
+                  ? emulators.length > 0
+                    ? emulators.map((e) => e.label).join(", ")
+                    : status
+                      ? "Install Eden, yuzu or Ryujinx with EmuDeck first"
+                      : ""
+                  : ""}
+              </td>
+              <td style={{ textAlign: "right" }}>
+                {r.isSwitchRow && canDownload && requiredMissing > 0 && (
+                  <RmButton variant="sm primary" testId="download-required" disabled={downloading} onActivate={() => detach(runDownload(downloadRequiredFirmware))}>
+                    {downloading ? "Downloading..." : "Download BIOS"}
+                  </RmButton>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
-        {loading && (
-          <PanelSectionRow>
-            <Field label="Loading firmware status..." focusable />
-          </PanelSectionRow>
-        )}
-
-        {error && (
-          <PanelSectionRow>
-            <Field label="Error" description={error} focusable />
-          </PanelSectionRow>
-        )}
-
-        {status?.server_offline && (
-          <PanelSectionRow>
-            <Field
-              label="Server offline"
-              description="RomM is unreachable. Showing what is on this machine; downloads are unavailable." focusable />
-          </PanelSectionRow>
-        )}
-
-        {status && (status.emulators?.length ?? 0) === 0 && (
-          <PanelSectionRow>
-            <Field label="No Switch emulator found" description="Install Eden, yuzu or Ryujinx with EmuDeck first." focusable />
-          </PanelSectionRow>
-        )}
-
-        {status && !loading && onRomm === 0 && !status.server_offline && (
-          <PanelSectionRow>
-            <Field label="No Switch firmware on RomM" description="Upload firmware and keys to RomM's bios/Switch folder." focusable />
-          </PanelSectionRow>
-        )}
-
-        {note && (
-          <PanelSectionRow>
-            <Field label={note} focusable />
-          </PanelSectionRow>
-        )}
-      </PanelSection>
+      {note && <div className="rm-muted" style={{ marginTop: 14 }} data-testid="systems-note">{note}</div>}
 
       {status && keys.length > 0 && (
-        <PanelSection title={requiredMissing > 0 ? "Keys — required keys missing" : "Keys"}>
-          {keys.map((key) => (
-            <Fragment key={key.file_name}>
-              <PanelSectionRow>
-                <Field
+        <div style={{ marginTop: 18, maxWidth: 640 }}>
+          <RmCard title={requiredMissing > 0 ? "Switch keys — required keys missing" : "Switch keys"}>
+            {keys.map((key) => (
+              <div key={key.file_name}>
+                <RmValueRow
                   label={`${key.file_name}${key.required ? "" : " (optional)"}${key.on_romm ? "" : " — not on RomM"}`}
-                  description={keyStateSummary(key)} focusable />
-              </PanelSectionRow>
-              {key.on_romm &&
-                !status.server_offline &&
-                key.emulators
-                  .filter((e) => e.state === "differs")
-                  .map((e) => (
-                    <PanelSectionRow key={`${key.file_name}-${e.id}`}>
-                      <ButtonItem layout="below" onClick={() => askReplace(key, e)}>
-                        Replace {e.label}&apos;s {key.file_name} with RomM&apos;s
-                      </ButtonItem>
-                    </PanelSectionRow>
-                  ))}
-            </Fragment>
-          ))}
-        </PanelSection>
+                  sub={keyStateSummary(key)}
+                />
+                {key.on_romm &&
+                  !offline &&
+                  key.emulators
+                    .filter((e) => e.state === "differs")
+                    .map((e) => (
+                      <RmRow key={`${key.file_name}-${e.id}`} label={`${e.label}'s ${key.file_name} differs`}>
+                        <RmButton variant="sm ghost" testId={`replace-${key.file_name}-${e.id}`} onActivate={() => askReplace(key, e)}>
+                          Replace with RomM's
+                        </RmButton>
+                      </RmRow>
+                    ))}
+              </div>
+            ))}
+          </RmCard>
+        </div>
       )}
 
       {status && firmware.length > 0 && (
-        <PanelSection title="Firmware">
-          <PanelSectionRow>
-            <DropdownItem
-              label="Firmware version"
-              description="The version Download Required fetches"
-              rgOptions={[
-                { data: "", label: `Newest available (${firmware[0]?.version ?? ""})` },
-                ...firmware.map((fw) => ({ data: fw.version, label: fw.version })),
-              ]}
-              selectedOption={status.version_pinned ? (status.selected_version ?? "") : ""}
-              onChange={(option) => detach(chooseVersion(option.data as string))}
-            />
-          </PanelSectionRow>
-          {firmware.map((fw) => (
-            <PanelSectionRow key={fw.file_name}>
-              <Field
+        <div style={{ marginTop: 18, maxWidth: 640 }}>
+          <RmCard title="Switch firmware">
+            <RmRow label="Firmware version" sub="The version Download Required fetches">
+              <RmChoice
+                label="Firmware version"
+                value={status.version_pinned ? (status.selected_version ?? "") : ""}
+                options={[
+                  { data: "", label: `Newest available (${firmware[0]?.version ?? ""})` },
+                  ...firmware.map((fw) => ({ data: fw.version, label: fw.version })),
+                ]}
+                onChange={(version) => detach(chooseVersion(version))}
+              />
+            </RmRow>
+            {firmware.map((fw) => (
+              <RmValueRow
+                key={fw.file_name}
                 label={`${fw.version}${fw.selected ? " (selected)" : ""}`}
-                description={`${fw.size != null ? formatBytes(fw.size) : "size unknown"} — ${
-                  fw.downloaded ? "downloaded" : "not downloaded"
-                }`} focusable />
-            </PanelSectionRow>
-          ))}
-          <PanelSectionRow>
-            <div style={{ fontSize: "11px", color: "#8f98a0", padding: "0 16px 4px" }}>
-              Firmware is saved to {status.archive_dir}. Install it from Eden&apos;s or Ryujinx&apos;s own Install
-              Firmware menu.
-            </div>
-          </PanelSectionRow>
-        </PanelSection>
+                value={`${fw.size != null ? formatBytes(fw.size) : "size unknown"} — ${fw.downloaded ? "downloaded" : "not downloaded"}`}
+              />
+            ))}
+            <RmValueRow
+              label="Where it is saved"
+              sub={`${status.archive_dir ?? ""} — install it from Eden's or Ryujinx's own Install Firmware menu`}
+            />
+            {canDownload && (
+              <RmRow label="Download everything RomM has">
+                <RmButton variant="sm ghost" testId="download-all" disabled={downloading} onActivate={() => detach(runDownload(downloadAllFirmware))}>
+                  Download all
+                </RmButton>
+              </RmRow>
+            )}
+          </RmCard>
+        </div>
       )}
 
-      {status && !status.server_offline && onRomm > 0 && (
-        <PanelSection>
-          <PanelSectionRow>
-            <ButtonItem layout="below" disabled={downloading} onClick={() => detach(runDownload(downloadRequiredFirmware))}>
-              {downloading ? "Downloading..." : "Download Required"}
-            </ButtonItem>
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <ButtonItem layout="below" disabled={downloading} onClick={() => detach(runDownload(downloadAllFirmware))}>
-              {downloading ? "Downloading..." : "Download All"}
-            </ButtonItem>
-          </PanelSectionRow>
-        </PanelSection>
-      )}
-    </>
+      <p className="rm-muted" style={{ marginTop: 18 }}>
+        Keys are read from each emulator&apos;s own folder. A key file you already have is never replaced.
+      </p>
+    </div>
   );
 };

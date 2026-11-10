@@ -1,11 +1,5 @@
 // CATCH-REJECTION ASSERTION RULE: every catch block with a setX(...) side effect has its side effect asserted
 // (the surfaced error / note string), not just that the rejecting call happened.
-//
-// SystemPage catch sites (all asserted below):
-//   - refresh try/catch → setError(`Failed to fetch firmware status: ${e}`)
-//   - refresh failure branch → setError(result.message || fallback)
-//   - runDownload catch → setNote(`Download failed: ${e}`)
-//   - chooseVersion catch → setNote(`Could not save the firmware version: ${e}`)
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
@@ -14,49 +8,9 @@ import * as backend from "../api/backend";
 import { showModal } from "@decky/ui";
 import type { FirmwareStatus, SwitchKeyFile } from "../types";
 
-vi.mock("../utils/scrollHelpers", () => ({ scrollToTop: vi.fn() }));
-
-vi.mock("@decky/ui", async () => {
-  const { createElement: ce } = await import("react");
-  type AnyProps = Record<string, unknown> & { children?: unknown };
-  const passthrough = (tag: string) => (p: AnyProps) => ce(tag, {}, p.children as never);
-  return {
-    PanelSection: (p: AnyProps & { title?: unknown }) =>
-      ce(
-        "section",
-        { "data-testid": "panel-section" },
-        typeof p.title === "string" ? ce("h2", { "data-testid": "panel-title" }, p.title) : null,
-        p.children as never,
-      ),
-    PanelSectionRow: passthrough("div"),
-    ButtonItem: ({ children, onClick, disabled }: AnyProps & { onClick?: () => void; disabled?: boolean }) =>
-      ce("button", { onClick, disabled }, children as never),
-    DropdownItem: (
-      p: AnyProps & { selectedOption?: unknown; rgOptions?: { data: string; label: string }[]; onChange?: (o: { data: string }) => void },
-    ) =>
-      ce(
-        "select",
-        {
-          "data-testid": "version-select",
-          value: p.selectedOption as string,
-          onChange: (e: { target: { value: string } }) => p.onChange?.({ data: e.target.value }),
-        },
-        (p.rgOptions ?? []).map((o) => ce("option", { key: o.data, value: o.data }, o.label)),
-      ),
-    ConfirmModal: passthrough("div"),
-    showModal: vi.fn(),
-    Field: (p: AnyProps & { label?: unknown; description?: unknown }) =>
-      ce(
-        "div",
-        { "data-testid": "field" },
-        ce("span", { "data-testid": "field-label" }, p.label as never),
-        ce("span", { "data-testid": "field-desc" }, p.description as never),
-      ),
-  };
-});
-
 const flushAsync = () =>
   act(async () => {
+    await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
@@ -100,17 +54,91 @@ function status(overrides: Partial<FirmwareStatus> = {}): FirmwareStatus {
   };
 }
 
+
+const PLATFORMS = {
+  success: true,
+  platforms: [
+    { id: 1, name: "Nintendo Switch", slug: "switch", rom_count: 3, sync_enabled: true },
+    { id: 2, name: "Super Nintendo", slug: "snes", rom_count: 5, sync_enabled: false },
+  ],
+};
+
 async function renderPage(result: FirmwareStatus | Error) {
   if (result instanceof Error) vi.mocked(backend.getFirmwareStatus).mockRejectedValue(result);
   else vi.mocked(backend.getFirmwareStatus).mockResolvedValue(result);
-  const utils = render(<SystemPage onBack={() => {}} />);
+  vi.mocked(backend.getPlatforms).mockResolvedValue(PLATFORMS as never);
+  const utils = render(<SystemPage />);
   await flushAsync();
   return utils;
 }
 
-const texts = (c: HTMLElement, id: string) => Array.from(c.querySelectorAll(`[data-testid="${id}"]`)).map((e) => e.textContent);
-const buttonByText = (c: HTMLElement, text: string) =>
-  Array.from(c.querySelectorAll("button")).find((b) => b.textContent?.includes(text)) as HTMLButtonElement | undefined;
+/** Press a control and let the async handler finish (a second press within 250 ms counts once, so wait first). */
+async function press(el: Element | null | undefined) {
+  expect(el).toBeTruthy();
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 300));
+    fireEvent.click(el!);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+function lastOf<T>(items: T[]): T {
+  return items[items.length - 1]!;
+}
+
+describe("SystemPage — the table", () => {
+  beforeEach(() => {
+    vi.mocked(backend.savePlatformSync).mockReset().mockResolvedValue({ success: true, message: "" });
+    vi.mocked(backend.downloadRequiredFirmware).mockReset();
+    vi.mocked(backend.downloadAllFirmware).mockReset();
+    vi.mocked(backend.saveFirmwareVersion).mockReset();
+  });
+
+  it("has a row per platform plus the Switch row, with game counts", async () => {
+    const { getByTestId } = await renderPage(status());
+    expect(getByTestId("system-snes").textContent).toContain("Super Nintendo");
+    expect(getByTestId("system-snes").textContent).toContain("5 games");
+    expect(getByTestId("system-snes").textContent).toContain("No BIOS check yet");
+    expect(getByTestId("system-switch").textContent).toContain("3 games · firmware and keys");
+  });
+
+  it("the Switch row shows the emulators and 'Missing required keys' with its first required key file", async () => {
+    const { getByTestId } = await renderPage(status());
+    const row = getByTestId("system-switch").textContent!;
+    expect(row).toContain("Eden, Ryujinx");
+    expect(row).toContain("Missing required keys");
+    expect(row).toContain("prod.keys");
+  });
+
+  it("Ready when every required key is there; offers no Download BIOS then", async () => {
+    const { getByTestId, queryByTestId } = await renderPage(status({ keys: [key({ emulators: [{ id: "eden", label: "Eden", state: "matches" }] })] }));
+    expect(getByTestId("system-switch").textContent).toContain("Ready");
+    expect(queryByTestId("download-required")).toBeNull();
+  });
+
+  it("the sync switch saves the platform and says changes apply on the next sync; a failure undoes it", async () => {
+    const { getByLabelText, getByTestId } = await renderPage(status());
+    expect(getByLabelText("Sync Super Nintendo").className).not.toContain("rm-on");
+    await press(getByLabelText("Sync Super Nintendo"));
+    expect(backend.savePlatformSync).toHaveBeenCalledWith(2, true);
+    expect(getByTestId("systems-note").textContent).toBe("Changes apply on the next sync");
+    expect(getByLabelText("Sync Super Nintendo").className).toContain("rm-on");
+    vi.mocked(backend.savePlatformSync).mockRejectedValue(new Error("x"));
+    await press(getByLabelText("Sync Super Nintendo"));
+    expect(getByTestId("systems-note").textContent).toBe("Could not save the platform setting");
+    expect(getByLabelText("Sync Super Nintendo").className).toContain("rm-on");
+  });
+
+  it("lists the Switch row even when RomM has no Switch platform", async () => {
+    vi.mocked(backend.getFirmwareStatus).mockResolvedValue(status());
+    vi.mocked(backend.getPlatforms).mockResolvedValue({ success: true, platforms: [] } as never);
+    const { getByTestId } = render(<SystemPage />);
+    await flushAsync();
+    expect(getByTestId("system-switch").textContent).toContain("Firmware and keys");
+  });
+});
 
 describe("SystemPage — Switch firmware and keys", () => {
   beforeEach(() => {
@@ -123,243 +151,168 @@ describe("SystemPage — Switch firmware and keys", () => {
     const { container } = await renderPage(
       status({ keys: [key(), key({ file_name: "console.keys", required: false, on_romm: false, emulators: [] })] }),
     );
-    const labels = texts(container, "field-label");
-    expect(labels).toContain("prod.keys");
-    expect(labels).toContain("console.keys (optional) — not on RomM");
-    const descriptions = texts(container, "field-desc");
-    expect(descriptions).toContain("Eden: matches RomM · Ryujinx: differs from RomM — kept as is");
-    expect(descriptions).toContain("No Switch emulator found");
+    expect(container.textContent).toContain("prod.keys");
+    expect(container.textContent).toContain("console.keys (optional) — not on RomM");
+    expect(container.textContent).toContain("Eden: matches RomM · Ryujinx: differs from RomM — kept as is");
+    expect(container.textContent).toContain("No Switch emulator found");
   });
 
-  it("flags missing required keys in the section title", async () => {
-    const { container } = await renderPage(status());
-    expect(texts(container, "panel-title")).toContain("Keys — required keys missing");
-    const ok = await renderPage(status({ keys: [key()] }));
-    expect(texts(ok.container, "panel-title")).toContain("Keys");
+  it("flags missing required keys in the card title", async () => {
+    expect((await renderPage(status())).container.textContent).toContain("Switch keys — required keys missing");
   });
 
   it("lists firmware versions with the newest marked and the download state, and says where the archive goes", async () => {
     const { container } = await renderPage(status());
-    const labels = texts(container, "field-label");
-    expect(labels).toContain("23.0.1 (selected)");
-    expect(labels).toContain("9.2.0");
-    const descriptions = texts(container, "field-desc");
-    expect(descriptions).toContain("324.7 MB — not downloaded");
-    expect(descriptions).toContain("500 B — downloaded");
-    expect(container.textContent).toContain("saved to /sd/Emulation/bios/switch");
-    expect(container.textContent).toContain("Install Firmware menu");
+    expect(container.textContent).toContain("23.0.1 (selected)");
+    expect(container.textContent).toContain("not downloaded");
+    expect(container.textContent).toContain("9.2.0");
+    expect(container.textContent).toContain("/sd/Emulation/bios/switch");
   });
 
   it("shows an offline notice and no download buttons when RomM is unreachable", async () => {
-    const { container } = await renderPage(status({ server_offline: true, firmware: [] }));
-    expect(texts(container, "field-label")).toContain("Server offline");
-    expect(buttonByText(container, "Download Required")).toBeUndefined();
-    expect(buttonByText(container, "Download All")).toBeUndefined();
+    const { container, queryByTestId } = await renderPage(status({ server_offline: true }));
+    expect(container.textContent).toContain("Server offline");
+    expect(queryByTestId("download-required")).toBeNull();
+    expect(queryByTestId("download-all")).toBeNull();
   });
 
   it("says when no Switch emulator is installed", async () => {
-    const { container } = await renderPage(status({ emulators: [], keys: [key({ emulators: [] })] }));
-    expect(texts(container, "field-label")).toContain("No Switch emulator found");
+    const { container } = await renderPage(status({ emulators: [], keys: [] }));
+    expect(container.textContent).toContain("No Switch emulator found");
+    expect(container.textContent).toContain("Install Eden, yuzu or Ryujinx with EmuDeck first");
   });
 
   it("says when RomM has no Switch files", async () => {
-    const { container } = await renderPage(status({ keys: [key({ on_romm: false, emulators: [] })], firmware: [] }));
-    expect(texts(container, "field-label")).toContain("No Switch firmware on RomM");
+    const { container } = await renderPage(status({ keys: [], firmware: [] }));
+    expect(container.textContent).toContain("No Switch firmware on RomM");
   });
 
   it("surfaces a failed status as an error row (resolved failure and thrown)", async () => {
-    const failed = await renderPage({ success: false, message: "RomM said no" });
-    expect(texts(failed.container, "field-desc")).toContain("RomM said no");
-    const thrown = await renderPage(new Error("socket closed"));
-    expect(texts(thrown.container, "field-desc")).toContain("Failed to fetch firmware status: Error: socket closed");
+    expect((await renderPage({ success: false, message: "RomM said no" } as FirmwareStatus)).container.textContent).toContain("RomM said no");
+    expect((await renderPage(new Error("boom"))).container.textContent).toContain("Failed to fetch firmware status: Error: boom");
   });
 
-  it("Download Required queues the downloads and points to the Downloads list", async () => {
+  it("Download BIOS queues the required downloads and points to the Downloads tab", async () => {
     vi.mocked(backend.downloadRequiredFirmware).mockResolvedValue({ success: true, message: "Queued 2 downloads", queued: 2 });
-    const { container } = await renderPage(status());
-    await act(async () => {
-      fireEvent.click(buttonByText(container, "Download Required")!);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    const { getByTestId } = await renderPage(status());
+    await press(getByTestId("download-required"));
     expect(backend.downloadRequiredFirmware).toHaveBeenCalledWith("switch");
-    expect(texts(container, "field-label")).toContain("Queued 2 downloads — progress is in Downloads");
+    expect(getByTestId("systems-note").textContent).toBe("Queued 2 downloads — progress is in Downloads");
   });
 
-  it("shows the kept-keys message and a plain note when nothing was queued", async () => {
-    vi.mocked(backend.downloadAllFirmware).mockResolvedValue({
-      success: true,
-      message: "Nothing to download — everything is already in place · kept your own prod.keys (differs from RomM's)",
-      queued: 0,
-    });
-    const { container } = await renderPage(status());
-    await act(async () => {
-      fireEvent.click(buttonByText(container, "Download All")!);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(backend.downloadAllFirmware).toHaveBeenCalledWith("switch");
-    const labels = texts(container, "field-label");
-    expect(labels.some((l) => l?.startsWith("Nothing to download") && l.includes("kept your own prod.keys"))).toBe(true);
-    expect(labels.some((l) => l?.includes("progress is in Downloads"))).toBe(false);
+  it("Download all, plain notes when nothing was queued, and refused or thrown downloads as notes", async () => {
+    vi.mocked(backend.downloadAllFirmware).mockResolvedValue({ success: true, message: "Everything is already here" });
+    const { getByTestId } = await renderPage(status());
+    await press(getByTestId("download-all"));
+    expect(getByTestId("systems-note").textContent).toBe("Everything is already here");
+    vi.mocked(backend.downloadAllFirmware).mockResolvedValue({ success: false, message: "Server refused" });
+    await press(getByTestId("download-all"));
+    expect(getByTestId("systems-note").textContent).toBe("Server refused");
+    vi.mocked(backend.downloadAllFirmware).mockRejectedValue(new Error("net"));
+    await press(getByTestId("download-all"));
+    expect(getByTestId("systems-note").textContent).toBe("Download failed: Error: net");
   });
 
-  it("shows a refused download and a thrown one as notes", async () => {
-    vi.mocked(backend.downloadRequiredFirmware).mockResolvedValueOnce({ success: false, message: "RomM is unreachable" });
-    const { container } = await renderPage(status());
-    await act(async () => {
-      fireEvent.click(buttonByText(container, "Download Required")!);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(texts(container, "field-label")).toContain("RomM is unreachable");
-    vi.mocked(backend.downloadAllFirmware).mockRejectedValueOnce(new Error("io"));
-    await act(async () => {
-      fireEvent.click(buttonByText(container, "Download All")!);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(texts(container, "field-label")).toContain("Download failed: Error: io");
-  });
-
-  it("the version dropdown offers the newest-follows option plus every version and saves the choice", async () => {
-    vi.mocked(backend.saveFirmwareVersion).mockResolvedValue({ success: true });
-    const { container, getByTestId } = await renderPage(status());
-    const select = getByTestId("version-select") as HTMLSelectElement;
-    expect(Array.from(select.options).map((o) => o.textContent)).toEqual(["Newest available (23.0.1)", "23.0.1", "9.2.0"]);
-    expect(select.value).toBe(""); // following the newest, nothing pinned
-    const before = vi.mocked(backend.getFirmwareStatus).mock.calls.length;
-    await act(async () => {
-      fireEvent.change(select, { target: { value: "9.2.0" } });
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(backend.saveFirmwareVersion).toHaveBeenCalledWith("9.2.0");
-    expect(vi.mocked(backend.getFirmwareStatus).mock.calls.length).toBe(before + 1);
-    expect(container).toBeTruthy();
+  it("the version button offers the newest-follows option and every version, and saves the choice", async () => {
+    vi.mocked(backend.saveFirmwareVersion).mockResolvedValue({ success: true, message: "" });
+    const { getByTestId } = await renderPage(status());
+    expect(getByTestId("choice-Firmware version").textContent).toBe("Newest available (23.0.1)");
+    await press(getByTestId("choice-Firmware version"));
+    expect(backend.saveFirmwareVersion).toHaveBeenCalledWith("23.0.1");
   });
 
   it("shows the pinned version as selected and reports a failed save", async () => {
-    vi.mocked(backend.saveFirmwareVersion).mockResolvedValue({ success: false, message: "Save failed: disk full" });
-    const { container, getByTestId } = await renderPage(status({ version_pinned: true, selected_version: "9.2.0" }));
-    expect((getByTestId("version-select") as HTMLSelectElement).value).toBe("9.2.0");
-    await act(async () => {
-      fireEvent.change(getByTestId("version-select"), { target: { value: "" } });
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(backend.saveFirmwareVersion).toHaveBeenCalledWith("");
-    expect(texts(container, "field-label")).toContain("Save failed: disk full");
-    vi.mocked(backend.saveFirmwareVersion).mockRejectedValueOnce(new Error("socket"));
-    await act(async () => {
-      fireEvent.change(getByTestId("version-select"), { target: { value: "23.0.1" } });
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(texts(container, "field-label")).toContain("Could not save the firmware version: Error: socket");
+    vi.mocked(backend.saveFirmwareVersion).mockResolvedValue({ success: false, message: "Could not pin" });
+    const { getByTestId } = await renderPage(status({ version_pinned: true, selected_version: "9.2.0" }));
+    expect(getByTestId("choice-Firmware version").textContent).toBe("9.2.0");
+    await press(getByTestId("choice-Firmware version"));
+    expect(getByTestId("systems-note").textContent).toBe("Could not pin");
+    vi.mocked(backend.saveFirmwareVersion).mockRejectedValue(new Error("x"));
+    await press(getByTestId("choice-Firmware version"));
+    expect(getByTestId("systems-note").textContent).toBe("Could not save the firmware version: Error: x");
   });
 
   it("refreshes when a firmware download finishes (the global listener announces it)", async () => {
     await renderPage(status());
-    const before = vi.mocked(backend.getFirmwareStatus).mock.calls.length;
-    await act(async () => {
-      globalThis.dispatchEvent(new CustomEvent("romm_data_changed", { detail: { type: "save_sync" } }));
-      await Promise.resolve();
-    });
-    expect(vi.mocked(backend.getFirmwareStatus).mock.calls.length).toBe(before);
+    const calls = vi.mocked(backend.getFirmwareStatus).mock.calls.length;
     await act(async () => {
       globalThis.dispatchEvent(new CustomEvent("romm_data_changed", { detail: { type: "firmware" } }));
       await Promise.resolve();
+    });
+    expect(vi.mocked(backend.getFirmwareStatus).mock.calls.length).toBe(calls + 1);
+    await act(async () => {
+      globalThis.dispatchEvent(new CustomEvent("romm_data_changed", { detail: { type: "other" } }));
       await Promise.resolve();
     });
-    expect(vi.mocked(backend.getFirmwareStatus).mock.calls.length).toBe(before + 1);
+    expect(vi.mocked(backend.getFirmwareStatus).mock.calls.length).toBe(calls + 1);
   });
 });
 
 describe("SystemPage — replacing a key that differs from RomM's", () => {
   beforeEach(() => {
+    vi.mocked(showModal).mockClear();
     vi.mocked(backend.replaceFirmwareKey).mockReset();
-    vi.mocked(showModal).mockReset();
   });
+  const confirm = () => {
+    const el = lastOf(vi.mocked(showModal).mock.calls)[0] as { props: Record<string, unknown> };
+    return el.props;
+  };
 
   it("offers an explicit Replace button only for a key that differs, per emulator", async () => {
-    const { container } = await renderPage(status());
-    expect(buttonByText(container, "Replace Ryujinx's prod.keys with RomM's")).toBeDefined();
-    expect(buttonByText(container, "Replace Eden's prod.keys")).toBeUndefined(); // Eden matches
-    expect(buttonByText(container, "title.keys with RomM's")).toBeUndefined(); // missing is a download, not a replace
+    const { getByTestId, queryByTestId } = await renderPage(status());
+    expect(getByTestId("replace-prod.keys-ryujinx")).toBeTruthy();
+    expect(queryByTestId("replace-prod.keys-eden")).toBeNull();
   });
 
   it("offers nothing for a key RomM does not have, and nothing while RomM is offline", async () => {
-    const notOnRomm = await renderPage(status({ keys: [key({ on_romm: false, firmware_id: null })] }));
-    expect(buttonByText(notOnRomm.container, "Replace")).toBeUndefined();
-    const offline = await renderPage(status({ server_offline: true }));
-    expect(buttonByText(offline.container, "Replace")).toBeUndefined();
+    expect((await renderPage(status({ keys: [key({ on_romm: false })] }))).queryByTestId("replace-prod.keys-ryujinx")).toBeNull();
+    expect((await renderPage(status({ server_offline: true }))).queryByTestId("replace-prod.keys-ryujinx")).toBeNull();
   });
 
   it("asks first, naming the backup, and does nothing until the user confirms", async () => {
-    const { container } = await renderPage(status());
-    await act(async () => {
-      fireEvent.click(buttonByText(container, "Replace Ryujinx's prod.keys with RomM's")!);
-      await Promise.resolve();
-    });
-    expect(showModal).toHaveBeenCalledTimes(1);
-    const modal = vi.mocked(showModal).mock.calls[0]![0] as { props: Record<string, unknown> };
-    expect(modal.props.strTitle).toBe("Replace Ryujinx's prod.keys?");
-    expect(modal.props.strDescription).toContain("prod.keys.romm-backup");
-    expect(modal.props.strCancelButtonText).toBe("Keep mine");
+    const { getByTestId } = await renderPage(status());
+    await press(getByTestId("replace-prod.keys-ryujinx"));
+    const props = confirm();
+    expect(props.strTitle).toBe("Replace Ryujinx's prod.keys?");
+    expect(String(props.strDescription)).toContain("prod.keys.romm-backup");
     expect(backend.replaceFirmwareKey).not.toHaveBeenCalled();
   });
 
   it("confirming replaces the key for that emulator, shows the result and refreshes", async () => {
-    vi.mocked(backend.replaceFirmwareKey).mockResolvedValue({
-      success: true,
-      message: "Replaced Ryujinx's prod.keys with RomM's. Your old file is kept as prod.keys.romm-backup.",
-    });
-    const { container } = await renderPage(status());
+    vi.mocked(backend.replaceFirmwareKey).mockResolvedValue({ success: true, message: "Replaced prod.keys" });
+    const { getByTestId } = await renderPage(status());
+    const calls = vi.mocked(backend.getFirmwareStatus).mock.calls.length;
+    await press(getByTestId("replace-prod.keys-ryujinx"));
     await act(async () => {
-      fireEvent.click(buttonByText(container, "Replace Ryujinx's prod.keys with RomM's")!);
-      await Promise.resolve();
-    });
-    const before = vi.mocked(backend.getFirmwareStatus).mock.calls.length;
-    const modal = vi.mocked(showModal).mock.calls[0]![0] as { props: { onOK: () => void } };
-    await act(async () => {
-      modal.props.onOK();
+      (confirm().onOK as () => void)();
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
     });
     expect(backend.replaceFirmwareKey).toHaveBeenCalledWith(3, "ryujinx");
-    expect(texts(container, "field-label")).toContain(
-      "Replaced Ryujinx's prod.keys with RomM's. Your old file is kept as prod.keys.romm-backup.",
-    );
-    expect(vi.mocked(backend.getFirmwareStatus).mock.calls.length).toBe(before + 1);
+    expect(getByTestId("systems-note").textContent).toBe("Replaced prod.keys");
+    expect(vi.mocked(backend.getFirmwareStatus).mock.calls.length).toBe(calls + 1);
   });
 
   it("shows a refused replacement and a thrown one as notes without refreshing", async () => {
-    vi.mocked(backend.replaceFirmwareKey).mockResolvedValueOnce({ success: false, message: "did not match the checksum RomM reports; your file was not changed" });
-    const { container } = await renderPage(status());
-    const confirm = async () => {
-      await act(async () => {
-        fireEvent.click(buttonByText(container, "Replace Ryujinx's prod.keys with RomM's")!);
-        await Promise.resolve();
-      });
-      const calls = vi.mocked(showModal).mock.calls;
-      const modal = calls[calls.length - 1]![0] as { props: { onOK: () => void } };
-      await act(async () => {
-        modal.props.onOK();
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-    };
-    await confirm();
-    expect(texts(container, "field-label").some((l) => l?.includes("your file was not changed"))).toBe(true);
-    vi.mocked(backend.replaceFirmwareKey).mockRejectedValueOnce(new Error("socket"));
-    await confirm();
-    expect(texts(container, "field-label")).toContain("Could not replace the key: Error: socket");
+    const { getByTestId } = await renderPage(status());
+    const calls = vi.mocked(backend.getFirmwareStatus).mock.calls.length;
+    await press(getByTestId("replace-prod.keys-ryujinx"));
+    vi.mocked(backend.replaceFirmwareKey).mockResolvedValue({ success: false, message: "Checksum mismatch" });
+    await act(async () => {
+      (confirm().onOK as () => void)();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getByTestId("systems-note").textContent).toBe("Checksum mismatch");
+    vi.mocked(backend.replaceFirmwareKey).mockRejectedValue(new Error("disk"));
+    await act(async () => {
+      (confirm().onOK as () => void)();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getByTestId("systems-note").textContent).toBe("Could not replace the key: Error: disk");
+    expect(vi.mocked(backend.getFirmwareStatus).mock.calls.length).toBe(calls);
   });
 });
 
@@ -369,12 +322,13 @@ describe("keyStateSummary", () => {
       keyStateSummary(
         key({
           emulators: [
-            { id: "eden", label: "Eden", state: "present" },
-            { id: "yuzu", label: "yuzu", state: "missing" },
+            { id: "a", label: "A", state: "matches" },
+            { id: "b", label: "B", state: "present" },
+            { id: "c", label: "C", state: "missing" },
           ],
         }),
       ),
-    ).toBe("Eden: present · yuzu: missing");
+    ).toBe("A: matches RomM · B: present · C: missing");
     expect(keyStateSummary(key({ emulators: [] }))).toBe("No Switch emulator found");
   });
 });

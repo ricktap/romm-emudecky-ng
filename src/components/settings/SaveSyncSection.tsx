@@ -1,22 +1,14 @@
 /**
- * Save-sync toggles — master enable, sync-before-launch, sync-after-exit,
- * default save slot editor, history-limit dropdown, and the "Sync All" button.
- * Pure renderer: parent owns SaveSyncSettings, deviceInfo, and the sync status.
+ * Save-sync settings card — master enable, sync-before-launch, sync-after-exit,
+ * default save slot, history limit and "Sync all". Pure renderer: the parent
+ * owns SaveSyncSettings, deviceInfo and the sync status.
  */
 
 import { FC } from "react";
-import {
-  PanelSection,
-  PanelSectionRow,
-  ButtonItem,
-  DialogButton,
-  Field,
-  DropdownItem,
-  showModal,
-  ToggleField,
-} from "@decky/ui";
+import { showModal } from "@decky/ui";
 import type { SaveSyncSettings as SaveSyncSettingsType } from "../../types";
 import { TextInputModal } from "./TextInputModal";
+import { RmButton, RmCard, RmChoice, RmRow, RmToggle, RmValueRow } from "../rm";
 
 interface SaveSyncSectionProps {
   saveSyncSettings: SaveSyncSettingsType | null;
@@ -31,6 +23,13 @@ interface SaveSyncSectionProps {
   onSyncAll: () => void;
 }
 
+const HISTORY_LIMITS = [
+  { data: "5", label: "5" },
+  { data: "10", label: "10" },
+  { data: "20", label: "20" },
+  { data: "50", label: "50" },
+];
+
 export const SaveSyncSection: FC<SaveSyncSectionProps> = ({
   saveSyncSettings,
   saveSyncToggleKey,
@@ -44,108 +43,76 @@ export const SaveSyncSection: FC<SaveSyncSectionProps> = ({
   onSyncAll,
 }) => {
   const saveSyncEnabled = saveSyncSettings?.save_sync_enabled ?? false;
-
+  if (!saveSyncSettings) {
+    return (
+      <RmCard title="Save sync">
+        <RmValueRow label="Loading..." />
+      </RmCard>
+    );
+  }
   return (
-    <PanelSection title="Save Sync">
-      {saveSyncSettings ? (
+    <RmCard title="Save sync">
+      <RmRow label="Save sync" sub="Keep saves on RomM, shared between your devices">
+        <RmToggle key={saveSyncToggleKey} label="Save sync" checked={saveSyncEnabled} onChange={onToggleSaveSync} />
+      </RmRow>
+      {!saveSyncEnabled && <RmValueRow label="Save sync is off" sub="Turn it on to set the options below" />}
+      {saveSyncEnabled && (
         <>
-          <PanelSectionRow>
-            <ToggleField
-              key={saveSyncToggleKey}
-              label="Enable Save Sync"
-              description="Sync RetroArch saves between this device and RomM server"
-              checked={saveSyncEnabled}
-              onChange={onToggleSaveSync}
+          {deviceInfo && <RmValueRow label="This device" value={`"${deviceInfo.device_name}"`} />}
+          <RmRow label="Download newer saves before launch">
+            <RmToggle
+              label="Sync before launch"
+              checked={saveSyncSettings.sync_before_launch}
+              onChange={(value) => onSettingChange({ sync_before_launch: value })}
             />
-          </PanelSectionRow>
-          {!saveSyncEnabled && (
-            <PanelSectionRow>
-              <Field label="Save sync is disabled" description="Enable above to configure sync settings" focusable />
-            </PanelSectionRow>
-          )}
-          {saveSyncEnabled && (
-            <>
-              {deviceInfo && (
-                <PanelSectionRow>
-                  <Field label="Device" description={`Registered as "${deviceInfo.device_name}"`} focusable />
-                </PanelSectionRow>
-              )}
-              <PanelSectionRow>
-                <ToggleField
-                  label="Sync before launch"
-                  description="Download newer saves from server before starting a game"
-                  checked={saveSyncSettings.sync_before_launch}
-                  onChange={(value) => onSettingChange({ sync_before_launch: value })}
-                />
-              </PanelSectionRow>
-              <PanelSectionRow>
-                <ToggleField
-                  label="Sync after exit"
-                  description="Upload changed saves to server after closing a game"
-                  checked={saveSyncSettings.sync_after_exit}
-                  onChange={(value) => onSettingChange({ sync_after_exit: value })}
-                />
-              </PanelSectionRow>
-              <PanelSectionRow>
-                <Field
-                  label="Default Save Slot"
-                  description={`${saveSyncSettings.default_slot || "(no slot)"} — applies to new games and games without a per-game slot override`}
-                >
-                  <DialogButton
-                    style={{ minWidth: "auto", width: "auto" }}
-                    onClick={() =>
-                      showModal(
-                        <TextInputModal
-                          label="Default Save Slot"
-                          value={saveSyncSettings.default_slot ?? ""}
-                          onSubmit={onDefaultSlotSubmit}
-                        />,
-                      )
-                    }
-                  >
-                    Edit
-                  </DialogButton>
-                </Field>
-              </PanelSectionRow>
+          </RmRow>
+          <RmRow label="Upload saves after exit">
+            <RmToggle
+              label="Sync after exit"
+              checked={saveSyncSettings.sync_after_exit}
+              onChange={(value) => onSettingChange({ sync_after_exit: value })}
+            />
+          </RmRow>
+          <RmRow label="Default save slot" sub="For new games and games without their own slot">
+            <span style={{ display: "flex", gap: 8 }}>
+              <RmButton
+                variant="sm ghost"
+                testId="edit-default-slot"
+                onActivate={() =>
+                  showModal(
+                    <TextInputModal
+                      label="Default Save Slot"
+                      value={saveSyncSettings.default_slot ?? ""}
+                      onSubmit={onDefaultSlotSubmit}
+                    />,
+                  )
+                }
+              >
+                {saveSyncSettings.default_slot || "(no slot)"}
+              </RmButton>
               {saveSyncSettings.default_slot !== "default" && (
-                <PanelSectionRow>
-                  <ButtonItem layout="below" onClick={onResetDefaultSlot}>
-                    Reset to default
-                  </ButtonItem>
-                </PanelSectionRow>
+                <RmButton variant="sm ghost" testId="reset-default-slot" onActivate={onResetDefaultSlot}>
+                  Reset
+                </RmButton>
               )}
-              <PanelSectionRow>
-                <DropdownItem
-                  label="Save History Limit"
-                  description="Max save versions kept per slot on the server"
-                  rgOptions={[
-                    { data: 5, label: "5" },
-                    { data: 10, label: "10 (Default)" },
-                    { data: 20, label: "20" },
-                    { data: 50, label: "50" },
-                  ]}
-                  selectedOption={saveSyncSettings.autocleanup_limit}
-                  onChange={(option) => onSettingChange({ autocleanup_limit: option.data as number })}
-                />
-              </PanelSectionRow>
-              <PanelSectionRow>
-                <ButtonItem layout="below" onClick={onSyncAll} disabled={syncing}>
-                  {syncing ? "Syncing..." : "Sync All Saves Now"}
-                </ButtonItem>
-              </PanelSectionRow>
-              {syncStatus && (
-                <PanelSectionRow>
-                  <Field label={syncStatus} focusable />
-                </PanelSectionRow>
-              )}
-            </>
-          )}
+            </span>
+          </RmRow>
+          <RmRow label="Versions kept per slot" sub="Older versions on the server are removed">
+            <RmChoice
+              label="Save history limit"
+              value={String(saveSyncSettings.autocleanup_limit)}
+              options={HISTORY_LIMITS}
+              onChange={(value) => onSettingChange({ autocleanup_limit: Number(value) })}
+            />
+          </RmRow>
+          <RmRow label="Sync all saves now">
+            <RmButton variant="sm ghost" testId="sync-all-saves" disabled={syncing} onActivate={onSyncAll}>
+              {syncing ? "Syncing..." : "Sync now"}
+            </RmButton>
+          </RmRow>
+          {syncStatus && <RmValueRow label={syncStatus} />}
         </>
-      ) : (
-        <PanelSectionRow>
-          <Field label="Loading..." focusable />
-        </PanelSectionRow>
       )}
-    </PanelSection>
+    </RmCard>
   );
 };

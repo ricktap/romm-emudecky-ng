@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, FC, Fragment } from "react";
+import { useState, useEffect, useRef, FC } from "react";
 import { toaster } from "@decky/api";
-import { PanelSection, PanelSectionRow, ButtonItem, Field, Navigation, ProgressBar } from "@decky/ui";
+import { Navigation } from "@decky/ui";
 import {
   getDownloadQueue,
   cancelDownload,
@@ -12,18 +12,19 @@ import {
 import { recordBytes, formatSpeed, formatEta } from "../utils/downloadSpeed";
 import { getDownloadState, setDownloads } from "../utils/downloadStore";
 import { formatBytes } from "../utils/formatters";
-import { scrollToTop } from "../utils/scrollHelpers";
 import { detach } from "../utils/detach";
 import {
   isStoppedStatus,
   isUnfinishedStatus,
   resumeActionLabel,
-  stoppedCaptionSuffix,
+  interruptedLabel,
 } from "../utils/downloadStatus";
 import { phaseLines, useNowMs } from "../utils/downloadPhase";
 import { callArgs, downloadKey } from "../utils/downloadKey";
 import type { DownloadItem } from "../types";
 import { openLibraryRoute } from "../utils/libraryRoute";
+import { Icon, RmButton, RmStyles } from "./rm";
+import { platformAbbrev, tintFor } from "../utils/libraryGrid";
 
 interface DownloadQueueProps {
   onBack: () => void;
@@ -200,174 +201,192 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack, compact }) => {
     (d) => !cleared.has(downloadKey(d)) && (d.status === "completed" || d.status === "failed" || d.status === "cancelled"),
   );
 
+  const queueCount = active.length;
+  const paused = pausable.length === 0 && stopped.length > 0;
+  const anyRunning = active.some((d) => d.status === "downloading");
+
+  /** `Downloading 62%`, `Queued`, `Paused · 40%`, `Interrupted — server unreachable`. */
+  const statusLabel = (d: DownloadItem): string => {
+    const pct = d.total_bytes > 0 ? Math.floor((d.bytes_downloaded / d.total_bytes) * 100) : 0;
+    switch (d.status) {
+      case "queued":
+        return "Queued";
+      case "downloading":
+        return `Downloading ${pct}%`;
+      case "extracting":
+        return "Extracting…";
+      case "paused":
+        return `Paused · ${pct}%`;
+      case "interrupted":
+        return interruptedLabel(d.reason);
+      default:
+        return d.status;
+    }
+  };
+  const detailLine = (d: DownloadItem): string => {
+    const size =
+      d.total_bytes > 0
+        ? `${formatBytes(d.bytes_downloaded)} / ${formatBytes(d.total_bytes)}`
+        : formatBytes(d.bytes_downloaded);
+    return [size + transferNote(d), d.platform_name].filter(Boolean).join(" · ");
+  };
+  /** The one control of a row: pause what runs, start now what waits, resume what stopped. */
+  const rowAction = (d: DownloadItem): { label: string; run: () => void } | null => {
+    if (d.status === "extracting") return null; // the unpack runs to completion
+    if (d.status === "downloading") {
+      return d.resumable || d.phase ? { label: "Pause", run: () => detach(handlePause(d)) } : null;
+    }
+    if (d.status === "queued") {
+      return anyRunning ? { label: "Start now", run: () => detach(handleStartNow(d, active)) } : null;
+    }
+    if (isStoppedStatus(d.status)) {
+      const label = resumeActionLabel(d.reason);
+      return anyRunning
+        ? { label: "Start now", run: () => detach(handleStartNow(d, active)) }
+        : { label, run: () => detach(handleResume(d)) };
+    }
+    return null;
+  };
+
+  const Thumb: FC<{ item: DownloadItem; big?: boolean }> = ({ item, big }) => (
+    <span
+      className="rm-thumb"
+      style={{ background: tintFor(item.rom_name), ...(big ? { width: 44, height: 60 } : {}) }}
+    >
+      {platformAbbrev(item.platform_name)}
+    </span>
+  );
+
+  const queueBlock = active.map((item) => {
+    const action = rowAction(item);
+    const pct = item.total_bytes > 0 ? (item.bytes_downloaded / item.total_bytes) * 100 : 0;
+    const waiting = item.status === "downloading" && Boolean(item.phase);
+    const barStyle = { width: `${Math.min(100, pct)}%`, ...(isStoppedStatus(item.status) ? { background: "#d4a72c" } : {}) };
+    return compact ? (
+      <div className="rm-dlrow" key={downloadKey(item)} data-testid="dl-row">
+        <Thumb item={item} />
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
+          <span data-testid="dl-caption" style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {item.rom_name}
+          </span>
+          <span className="rm-bar">
+            <span style={barStyle} />
+          </span>
+          <span className="rm-muted" style={{ fontSize: 11 }}>
+            {statusLabel(item)}
+          </span>
+        </div>
+        {action && (
+          <RmButton variant="sm icon" label={action.label} onActivate={action.run}>
+            <Icon name={item.status === "downloading" ? "pause" : "play"} />
+          </RmButton>
+        )}
+      </div>
+    ) : (
+      <div className="rm-dlrow" key={downloadKey(item)} data-testid="dl-row" style={{ gap: 14, padding: "14px 0" }}>
+        <Thumb item={item} big />
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15 }}>
+            <span data-testid="dl-caption" style={{ fontWeight: 600 }}>
+              {item.rom_name}
+            </span>
+            <span className="rm-muted">{statusLabel(item)}</span>
+          </div>
+          {waiting && <WaitingNote item={item} />}
+          <span className="rm-bar">
+            <span style={barStyle} />
+          </span>
+          {waiting ? (
+            <div className="rm-muted rm-small">{item.platform_name}</div>
+          ) : (
+            <div className="rm-muted rm-small" data-testid="dl-bytes">
+              {detailLine(item)}
+            </div>
+          )}
+        </div>
+        {action && (
+          <RmButton variant="sm" onActivate={action.run}>
+            {action.label}
+          </RmButton>
+        )}
+        {item.status !== "extracting" && (
+          <RmButton variant="sm icon ghost" label="Cancel download" onActivate={() => detach(handleCancel(item))}>
+            <Icon name="x" size={16} />
+          </RmButton>
+        )}
+      </div>
+    );
+  });
+
+  const allControl = (pausable.length > 0 || stopped.length > 0) && (
+    <RmButton
+      variant={compact ? "block ghost" : "sm ghost"}
+      onActivate={() => detach(pausable.length > 0 ? pauseAll() : resumeAll())}
+    >
+      {paused || pausable.length === 0 ? "Resume all" : "Pause all"}
+    </RmButton>
+  );
+
   return (
-    <>
-      <PanelSection>
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            onClick={onBack}
-            // @ts-expect-error onFocus works at runtime; not in Decky's ButtonItem types
-            onFocus={scrollToTop}
-          >
-            Back
-          </ButtonItem>
-        </PanelSectionRow>
-      </PanelSection>
+    <div className="rm-root" style={{ background: "transparent" }}>
+      {compact && <RmStyles />}
+      {compact && (
+        <RmButton variant="block" onActivate={onBack}>
+          <Icon name="back" size={16} />
+          Back
+        </RmButton>
+      )}
+      {!compact && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+          <h2 style={{ margin: 0, fontSize: 18, color: "#fff" }}>Queue</h2>
+          <span className="rm-muted">{queueCount ? `${queueCount} item${queueCount > 1 ? "s" : ""}` : ""}</span>
+          <span style={{ marginLeft: "auto" }}>{allControl}</span>
+        </div>
+      )}
+      {queueCount === 0 ? (
+        <div className="rm-muted" style={{ padding: compact ? "18px 0" : "24px 0" }}>
+          {compact ? "No downloads running." : "Nothing downloading. Pick a game in the Library and press Download."}
+        </div>
+      ) : (
+        queueBlock
+      )}
+      {compact && queueCount > 0 && <div style={{ marginTop: 12 }}>{allControl}</div>}
 
-      <PanelSection title="Downloads">
-        {visible.length === 0 ? (
-          <PanelSectionRow>
-            <Field label="No downloads" focusable />
-          </PanelSectionRow>
-        ) : (
-          <>
-            {active.map((item) => (
-              <PanelSectionRow key={downloadKey(item)}>
-                {/* Own the caption in a full-width row and use the bare ProgressBar.
-                    ProgressBarWithInfo is a Steam Field (label column | bar column);
-                    with the rom name in sOperationText the empty bar column gets
-                    squeezed into the right half and clips (#751). The bare
-                    ProgressBar is just the bar and spans the full panel width
-                    (mirrors the sync-progress fix in MainPage). */}
-                <div style={{ width: "100%" }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      fontSize: "12px",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    <span
-                      data-testid="dl-caption"
-                      style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                    >
-                      {item.rom_name} ({item.platform_name}){stoppedCaptionSuffix(item.status, item.reason)}
-                      {item.status === "extracting" ? " — Extracting…" : ""}
-                    </span>
-                    {!(item.status === "downloading" && item.phase) && (
-                      <span data-testid="dl-bytes" style={{ flexShrink: 0 }}>
-                        {item.total_bytes > 0
-                          ? `${formatBytes(item.bytes_downloaded)} / ${formatBytes(item.total_bytes)}`
-                          : formatBytes(item.bytes_downloaded)}
-                        {transferNote(item)}
-                      </span>
-                    )}
-                  </div>
-                  {item.status === "downloading" && item.phase && <WaitingNote item={item} />}
-                  <ProgressBar
-                    indeterminate={item.total_bytes === 0 || (item.status === "downloading" && Boolean(item.phase))}
-                    {...(item.total_bytes > 0 ? { nProgress: (item.bytes_downloaded / item.total_bytes) * 100 } : {})}
-                  />
-                </div>
-              </PanelSectionRow>
-            ))}
-            {(pausable.length > 0 || stopped.length > 0) && (
-              <PanelSectionRow>
-                <ButtonItem
-                  layout="below"
-                  onClick={() => {
-                    detach(pausable.length > 0 ? pauseAll() : resumeAll());
-                  }}
-                >
-                  {pausable.length > 0 ? "Pause all" : "Resume all"}
-                </ButtonItem>
-              </PanelSectionRow>
-            )}
-            {active.map((item) =>
-              // Extraction is not cancellable and can't pause/resume — the
-              // post-transfer unpack runs to completion. Offer no action row,
-              // matching the game-detail button's disabled throbber.
-              item.status === "extracting" ? null : (
-                <Fragment key={`actions-${downloadKey(item)}`}>
-                  {item.status === "downloading" && (item.resumable || item.phase) && (
-                    <PanelSectionRow>
-                      <ButtonItem
-                        layout="below"
-                        onClick={() => {
-                          detach(handlePause(item));
-                        }}
-                      >
-                        Pause {item.rom_name}
-                      </ButtonItem>
-                    </PanelSectionRow>
-                  )}
-                  {isStoppedStatus(item.status) && (
-                    <PanelSectionRow>
-                      <ButtonItem
-                        layout="below"
-                        onClick={() => {
-                          detach(handleResume(item));
-                        }}
-                      >
-                        {resumeActionLabel(item.reason)} {item.rom_name}
-                      </ButtonItem>
-                    </PanelSectionRow>
-                  )}
-                  {(item.status === "queued" || isStoppedStatus(item.status)) && active.some((d) => d.status === "downloading") && (
-                    <PanelSectionRow>
-                      <ButtonItem
-                        layout="below"
-                        onClick={() => {
-                          detach(handleStartNow(item, active));
-                        }}
-                      >
-                        Start now: {item.rom_name}
-                      </ButtonItem>
-                    </PanelSectionRow>
-                  )}
-                  <PanelSectionRow>
-                    <ButtonItem
-                      layout="below"
-                      onClick={() => {
-                        detach(handleCancel(item));
-                      }}
-                    >
-                      Cancel {item.rom_name}
-                    </ButtonItem>
-                  </PanelSectionRow>
-                </Fragment>
-              ),
-            )}
-
-            {finished.map((item) => {
-              const appId = !compact && item.status === "completed" && (item.kind ?? "rom") === "rom" ? appIds.get(item.rom_id) : undefined;
-              return (
-                <PanelSectionRow key={downloadKey(item)}>
-                  {appId !== undefined ? (
-                    <ButtonItem
-                      layout="below"
-                      description={formatFinishedDescription(item)}
-                      onClick={() => Navigation.Navigate(`/library/app/${appId}`)}
-                    >
-                      Open {item.rom_name}
-                    </ButtonItem>
-                  ) : (
-                    // focusable: the cursor can only stop on focusable rows, so a plain Field below the screen edge is unreachable
-                    <Field label={item.rom_name} description={formatFinishedDescription(item)} focusable />
-                  )}
-                </PanelSectionRow>
-              );
-            })}
-
-            {hasFinished && (
-              <PanelSectionRow>
-                <ButtonItem layout="below" onClick={handleClearCompleted}>
-                  Clear Completed
-                </ButtonItem>
-              </PanelSectionRow>
-            )}
-          </>
-        )}
-        {compact && (
-          <PanelSectionRow>
-            <ButtonItem layout="below" onClick={() => openLibraryRoute("downloads")}>
-              Full queue in RomM Library
-            </ButtonItem>
-          </PanelSectionRow>
-        )}
-      </PanelSection>
-    </>
+      {finished.length > 0 && !compact && (
+        <>
+          <h2 style={{ margin: "28px 0 4px", fontSize: 18, color: "#fff" }}>Finished</h2>
+          {finished.map((item) => {
+            const appId = item.status === "completed" && (item.kind ?? "rom") === "rom" ? appIds.get(item.rom_id) : undefined;
+            return (
+              <div className="rm-dlrow" key={downloadKey(item)} style={{ gap: 14 }} data-testid="dl-finished">
+                <Thumb item={item} />
+                <span style={{ flex: 1, fontSize: 15 }}>
+                  {item.rom_name} <span className="rm-muted">· {formatFinishedDescription(item)}</span>
+                </span>
+                {appId !== undefined && (
+                  <RmButton variant="sm play" onActivate={() => Navigation.Navigate(`/library/app/${appId}`)}>
+                    Open
+                  </RmButton>
+                )}
+              </div>
+            );
+          })}
+          {hasFinished && (
+            <div style={{ marginTop: 12 }}>
+              <RmButton variant="sm ghost" onActivate={handleClearCompleted}>
+                Clear completed
+              </RmButton>
+            </div>
+          )}
+        </>
+      )}
+      {compact && (
+        <div style={{ marginTop: 8 }}>
+          <RmButton variant="block" onActivate={() => openLibraryRoute("downloads")}>
+            Full queue in RomM Library
+          </RmButton>
+        </div>
+      )}
+    </div>
   );
 };

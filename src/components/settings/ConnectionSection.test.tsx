@@ -1,89 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
-import { createElement, type ReactElement } from "react";
+import type { ReactElement } from "react";
 import { ConnectionSection } from "./ConnectionSection";
 import { showModal } from "@decky/ui";
 
-// Local re-mock: the URL + RomM Account rows are Field + DialogButton again,
-// so Field renders its `label` + `description` (those copy strings stay
-// queryable via field-label/field-desc) and DialogButton renders its
-// `children` ("Edit"/"Sign in") forwarding `onClick`; ButtonItem stays for the
-// layout="below" Test Connection row, forwarding `disabled` + `description` +
-// `children`; ToggleField forwards `checked` + a usable onChange that mirrors
-// the global stub's (boolean) signature.
-type AnyProps = Record<string, unknown> & { children?: unknown };
-interface ToggleFieldProps {
-  label?: unknown;
-  description?: unknown;
-  checked?: boolean;
-  onChange?: (value: boolean) => void;
-}
-const toggleCaptured: { items: ToggleFieldProps[] } = { items: [] };
-
-vi.mock("@decky/ui", () => ({
-  PanelSection: (p: AnyProps) => createElement("section", {}, p.children as never),
-  PanelSectionRow: (p: AnyProps) => createElement("div", {}, p.children as never),
-  Field: (p: AnyProps & { label?: unknown; description?: unknown }) =>
-    createElement(
-      "div",
-      { "data-testid": "field" },
-      createElement("span", { "data-testid": "field-label" }, p.label as never),
-      createElement("span", { "data-testid": "field-desc" }, p.description as never),
-      p.children as never,
-    ),
-  DialogButton: ({ children, onClick, disabled }: AnyProps & { onClick?: () => void; disabled?: boolean }) =>
-    createElement("button", { onClick, disabled }, children as never),
-  ButtonItem: ({
-    children,
-    onClick,
-    disabled,
-    description,
-  }: AnyProps & {
-    onClick?: () => void;
-    disabled?: boolean;
-    description?: unknown;
-  }) => createElement("button", { onClick, disabled, "data-description": description as never }, children as never),
-  ToggleField: (p: ToggleFieldProps) => {
-    toggleCaptured.items.push(p);
-    return createElement("input", {
-      type: "checkbox",
-      checked: p.checked ?? false,
-      "data-testid": "toggle",
-      onChange: (e: { target: { checked: boolean } }) => p.onChange?.(e.target.checked),
-    });
-  },
-  ConfirmModal: (p: AnyProps) => createElement("div", { "data-testid": "confirm-modal" }, p.children as never),
-  showModal: vi.fn(),
-}));
-
-// Captured props off the modals opened via showModal. The URL Edit opens a
-// TextInputModal (field='url'); the Sign in button opens a ConnectModal
-// (onConnect callback).
-interface UrlModalProps {
-  label?: string;
-  value?: string;
-  field?: string;
-  bIsPassword?: boolean;
-  onSubmit?: (value: string) => void;
-}
-interface ConnectModalProps {
-  onConnect?: (username: string, password: string) => void;
-  onConnectToken?: (token: string) => void;
-  onConnectPairing?: (code: string) => void;
-}
-interface ConfirmModalProps {
-  strTitle?: string;
-  strDescription?: string;
-  strOKButtonText?: string;
-  strCancelButtonText?: string;
-  onOK?: () => void;
-}
-
-function lastShownModalProps<T>(): T | null {
+function lastModal(): ReactElement<Record<string, unknown>> {
   const calls = vi.mocked(showModal).mock.calls;
-  if (calls.length === 0) return null;
-  const el = calls[calls.length - 1]?.[0] as ReactElement<T> | undefined;
-  return el?.props ?? null;
+  return calls[calls.length - 1]![0] as ReactElement<Record<string, unknown>>;
 }
 
 function defaultProps(overrides: Partial<React.ComponentProps<typeof ConnectionSection>> = {}) {
@@ -108,246 +31,78 @@ function defaultProps(overrides: Partial<React.ComponentProps<typeof ConnectionS
 
 describe("ConnectionSection", () => {
   beforeEach(() => {
-    toggleCaptured.items = [];
-    vi.clearAllMocks();
+    vi.mocked(showModal).mockClear();
   });
 
-  describe("URL field", () => {
-    it("shows '(not set)' description when url is empty", () => {
-      const { getAllByTestId } = render(<ConnectionSection {...defaultProps()} />);
-      const descs = getAllByTestId("field-desc").map((el) => el.textContent);
-      expect(descs).toContain("(not set)");
-    });
-
-    it("shows the configured URL in the description", () => {
-      const { getAllByTestId } = render(<ConnectionSection {...defaultProps({ url: "http://romm.local" })} />);
-      const descs = getAllByTestId("field-desc").map((el) => el.textContent);
-      expect(descs).toContain("http://romm.local");
-    });
-
-    it("opens a TextInputModal with field='url' when Edit is clicked", () => {
-      const onUrlChange = vi.fn();
-      const { getAllByText } = render(<ConnectionSection {...defaultProps({ url: "http://romm.local", onUrlChange })} />);
-      fireEvent.click(getAllByText("Edit")[0]!);
-      const props = lastShownModalProps<UrlModalProps>();
-      expect(props?.label).toBe("RomM URL");
-      expect(props?.value).toBe("http://romm.local");
-      expect(props?.field).toBe("url");
-      expect(props?.bIsPassword).toBeUndefined();
-      expect(props?.onSubmit).toBe(onUrlChange);
-    });
+  it("shows the server and external URL on their buttons, with a hint when unset", () => {
+    const empty = render(<ConnectionSection {...defaultProps()} />);
+    expect(empty.getByTestId("edit-url").textContent).toBe("Set URL");
+    expect(empty.getByTestId("edit-external-url").textContent).toBe("Not set");
+    empty.unmount();
+    const set = render(<ConnectionSection {...defaultProps({ url: "http://romm.local", externalUrl: "https://romm.example.com" })} />);
+    expect(set.getByTestId("edit-url").textContent).toBe("http://romm.local");
+    expect(set.getByTestId("edit-external-url").textContent).toBe("https://romm.example.com");
   });
 
-  describe("external URL field", () => {
-    it("shows the external URL, or a hint when none is set", () => {
-      const { getAllByTestId, rerender } = render(<ConnectionSection {...defaultProps()} />);
-      expect(getAllByTestId("field-desc").map((el) => el.textContent).join("|")).toContain("used when the URL above is unreachable");
-      rerender(<ConnectionSection {...defaultProps({ externalUrl: "https://romm.example.com" })} />);
-      expect(getAllByTestId("field-desc").map((el) => el.textContent)).toContain("https://romm.example.com");
-    });
-
-    it("edits through a modal that hands the value to onExternalUrlChange", () => {
-      const onExternalUrlChange = vi.fn();
-      const { getAllByText } = render(
-        <ConnectionSection {...defaultProps({ externalUrl: "https://romm.example.com", onExternalUrlChange })} />,
-      );
-      fireEvent.click(getAllByText("Edit")[1]!);
-      const props = lastShownModalProps<UrlModalProps>();
-      expect(props?.value).toBe("https://romm.example.com");
-      expect(props?.onSubmit).toBe(onExternalUrlChange);
-    });
+  it("the URL button opens the URL modal, the external button its own, each wired to its handler", () => {
+    const props = defaultProps({ url: "http://romm.local", externalUrl: "https://x.example.com" });
+    const { getByTestId } = render(<ConnectionSection {...props} />);
+    fireEvent.click(getByTestId("edit-url"));
+    expect(lastModal().props).toMatchObject({ label: "RomM URL", value: "http://romm.local", field: "url", onSubmit: props.onUrlChange });
+    fireEvent.click(getByTestId("edit-external-url"));
+    expect(lastModal().props).toMatchObject({ value: "https://x.example.com", onSubmit: props.onExternalUrlChange });
   });
 
-  describe("connection status indicator", () => {
-    it("labels the account row 'RomM Account'", () => {
-      const { getAllByTestId } = render(<ConnectionSection {...defaultProps({ hasToken: true })} />);
-      const labels = getAllByTestId("field-label").map((el) => el.textContent);
-      expect(labels).toContain("RomM Account");
-    });
-
-    it("shows 'Signed in' description when hasToken is true", () => {
-      const { getAllByTestId } = render(<ConnectionSection {...defaultProps({ hasToken: true })} />);
-      const descs = getAllByTestId("field-desc").map((el) => el.textContent);
-      expect(descs).toContain("Signed in");
-    });
-
-    it("shows 'Not signed in' description when hasToken is false", () => {
-      const { getAllByTestId } = render(<ConnectionSection {...defaultProps({ hasToken: false })} />);
-      const descs = getAllByTestId("field-desc").map((el) => el.textContent);
-      expect(descs).toContain("Not signed in");
-    });
-
-    it("never renders the removed Username/Password fields", () => {
-      const { container } = render(<ConnectionSection {...defaultProps({ hasToken: true })} />);
-      expect(container.textContent).not.toContain("Username");
-      expect(container.textContent).not.toContain("Password");
-    });
+  it("the account row says whether you are signed in and opens the sign-in modal", () => {
+    const props = defaultProps();
+    const out = render(<ConnectionSection {...props} />);
+    expect(out.container.textContent).toContain("Not signed in");
+    expect(out.queryByTestId("sign-out")).toBeNull();
+    fireEvent.click(out.getByTestId("sign-in"));
+    expect(lastModal().props).toMatchObject({ onConnect: props.onConnect, onConnectToken: props.onConnectToken, onConnectPairing: props.onConnectPairing });
+    out.unmount();
+    const signed = render(<ConnectionSection {...defaultProps({ hasToken: true })} />);
+    expect(signed.container.textContent).toContain("Signed in");
+    expect(signed.getByTestId("sign-in").textContent).toBe("Sign in again");
   });
 
-  describe("Sign in button", () => {
-    it("renders a Sign in button", () => {
-      const { getByText } = render(<ConnectionSection {...defaultProps()} />);
-      expect(getByText("Sign in")).toBeTruthy();
-    });
-
-    it("opens a ConnectModal wired to onConnect, onConnectToken, and onConnectPairing when clicked", () => {
-      const onConnect = vi.fn();
-      const onConnectToken = vi.fn();
-      const onConnectPairing = vi.fn();
-      const { getByText } = render(
-        <ConnectionSection {...defaultProps({ onConnect, onConnectToken, onConnectPairing })} />,
-      );
-      fireEvent.click(getByText("Sign in"));
-      const props = lastShownModalProps<ConnectModalProps>();
-      expect(props?.onConnect).toBe(onConnect);
-      expect(props?.onConnectToken).toBe(onConnectToken);
-      expect(props?.onConnectPairing).toBe(onConnectPairing);
-    });
+  it("sign out asks first and only then calls onSignOut", () => {
+    const onSignOut = vi.fn();
+    const { getByTestId } = render(<ConnectionSection {...defaultProps({ hasToken: true, onSignOut })} />);
+    fireEvent.click(getByTestId("sign-out"));
+    const modal = lastModal();
+    expect(modal.props.strTitle).toBe("Sign out of RomM?");
+    expect(String(modal.props.strDescription)).toContain("only forgets the RomM token on this device");
+    expect(onSignOut).not.toHaveBeenCalled();
+    (modal.props.onOK as () => void)();
+    expect(onSignOut).toHaveBeenCalledTimes(1);
   });
 
-  describe("account actions by sign-in state", () => {
-    it("shows a single 'Sign in' action and no sign-out when signed out", () => {
-      const { getByText, queryByText } = render(<ConnectionSection {...defaultProps({ hasToken: false })} />);
-      expect(getByText("Sign in")).toBeTruthy();
-      expect(queryByText("Sign in again")).toBeNull();
-      expect(queryByText("Sign out")).toBeNull();
-    });
-
-    it("shows 'Sign in again' and 'Sign out' actions when signed in", () => {
-      const { getByText, queryByText } = render(<ConnectionSection {...defaultProps({ hasToken: true })} />);
-      expect(getByText("Sign in again")).toBeTruthy();
-      expect(getByText("Sign out")).toBeTruthy();
-      // The bare "Sign in" label is replaced by "Sign in again" once signed in.
-      expect(queryByText("Sign in")).toBeNull();
-    });
-
-    it("'Sign in again' opens the same ConnectModal as first sign-in", () => {
-      const onConnect = vi.fn();
-      const onConnectToken = vi.fn();
-      const onConnectPairing = vi.fn();
-      const { getByText } = render(
-        <ConnectionSection {...defaultProps({ hasToken: true, onConnect, onConnectToken, onConnectPairing })} />,
-      );
-      fireEvent.click(getByText("Sign in again"));
-      const props = lastShownModalProps<ConnectModalProps>();
-      expect(props?.onConnect).toBe(onConnect);
-      expect(props?.onConnectToken).toBe(onConnectToken);
-      expect(props?.onConnectPairing).toBe(onConnectPairing);
-    });
+  it("the self-signed toggle exists only for https URLs and reports its new value", () => {
+    const http = render(<ConnectionSection {...defaultProps({ url: "http://romm.local" })} />);
+    expect(http.queryByLabelText("Allow self-signed certificates")).toBeNull();
+    http.unmount();
+    const onAllowInsecureSslChange = vi.fn();
+    const https = render(<ConnectionSection {...defaultProps({ url: "https://romm.local", onAllowInsecureSslChange })} />);
+    fireEvent.click(https.getByLabelText("Allow self-signed certificates"));
+    expect(onAllowInsecureSslChange).toHaveBeenCalledWith(true);
   });
 
-  describe("Sign out button", () => {
-    it("opens a ConfirmModal noting the token stays valid in RomM", () => {
-      const { getByText } = render(<ConnectionSection {...defaultProps({ hasToken: true })} />);
-      fireEvent.click(getByText("Sign out"));
-      const props = lastShownModalProps<ConfirmModalProps>();
-      expect(props?.strTitle).toBe("Sign out of RomM?");
-      expect(props?.strOKButtonText).toBe("Sign out");
-      expect(props?.strDescription).toContain("stays valid in RomM");
-    });
-
-    it("fires onSignOut only when the confirm modal is accepted", () => {
-      const onSignOut = vi.fn();
-      const { getByText } = render(<ConnectionSection {...defaultProps({ hasToken: true, onSignOut })} />);
-      fireEvent.click(getByText("Sign out"));
-      // Opening the modal must not sign out on its own.
-      expect(onSignOut).not.toHaveBeenCalled();
-      const props = lastShownModalProps<ConfirmModalProps>();
-      props?.onOK?.();
-      expect(onSignOut).toHaveBeenCalledTimes(1);
-    });
+  it("Test connection needs a token and is blocked while loading", () => {
+    const onTestConnection = vi.fn();
+    const off = render(<ConnectionSection {...defaultProps({ onTestConnection })} />);
+    fireEvent.click(off.getByTestId("test-connection"));
+    expect(onTestConnection).not.toHaveBeenCalled();
+    expect(off.container.textContent).toContain("Sign in to RomM first to test the connection.");
+    off.unmount();
+    const on = render(<ConnectionSection {...defaultProps({ hasToken: true, onTestConnection })} />);
+    fireEvent.click(on.getByTestId("test-connection"));
+    expect(onTestConnection).toHaveBeenCalledTimes(1);
   });
 
-  describe("HTTPS SSL toggle", () => {
-    it("is hidden when url is http://...", () => {
-      render(<ConnectionSection {...defaultProps({ url: "http://romm.local" })} />);
-      expect(toggleCaptured.items).toHaveLength(0);
-    });
-
-    it("is hidden when url is empty", () => {
-      render(<ConnectionSection {...defaultProps()} />);
-      expect(toggleCaptured.items).toHaveLength(0);
-    });
-
-    it("is visible when url is https://...", () => {
-      render(<ConnectionSection {...defaultProps({ url: "https://romm.local" })} />);
-      expect(toggleCaptured.items).toHaveLength(1);
-      expect(toggleCaptured.items[0]?.label).toBe("Allow Insecure SSL");
-    });
-
-    it("treats case-insensitive https prefix", () => {
-      render(<ConnectionSection {...defaultProps({ url: "HTTPS://romm.local" })} />);
-      expect(toggleCaptured.items).toHaveLength(1);
-    });
-
-    it("trims a leading space so a padded https URL still shows the toggle", () => {
-      // Regression: untrimmed startsWith("https") hid the toggle for "  https://...".
-      render(<ConnectionSection {...defaultProps({ url: "  https://romm.local" })} />);
-      expect(toggleCaptured.items).toHaveLength(1);
-    });
-
-    it("stays hidden for a padded http URL", () => {
-      render(<ConnectionSection {...defaultProps({ url: "  http://romm.local" })} />);
-      expect(toggleCaptured.items).toHaveLength(0);
-    });
-
-    it("reflects allowInsecureSsl in checked state", () => {
-      render(<ConnectionSection {...defaultProps({ url: "https://romm.local", allowInsecureSsl: true })} />);
-      expect(toggleCaptured.items[0]?.checked).toBe(true);
-    });
-
-    it("dispatches onAllowInsecureSslChange when toggled", () => {
-      const onAllowInsecureSslChange = vi.fn();
-      render(<ConnectionSection {...defaultProps({ url: "https://romm.local", onAllowInsecureSslChange })} />);
-      toggleCaptured.items[0]?.onChange?.(true);
-      expect(onAllowInsecureSslChange).toHaveBeenCalledWith(true);
-    });
-  });
-
-  describe("Test Connection button", () => {
-    it("fires onTestConnection when clicked", () => {
-      const onTestConnection = vi.fn();
-      const { getByText } = render(<ConnectionSection {...defaultProps({ hasToken: true, onTestConnection })} />);
-      fireEvent.click(getByText("Test Connection"));
-      expect(onTestConnection).toHaveBeenCalledTimes(1);
-    });
-
-    it("is disabled while loading", () => {
-      const { getByText } = render(<ConnectionSection {...defaultProps({ hasToken: true, loading: true })} />);
-      expect(getByText("Test Connection")).toBeDisabled();
-    });
-
-    it("is disabled and shows the sign-in hint when not signed in", () => {
-      const { getByText } = render(<ConnectionSection {...defaultProps({ hasToken: false })} />);
-      const button = getByText("Test Connection");
-      expect(button).toBeDisabled();
-      expect(button.getAttribute("data-description")).toBe("Sign in to RomM first to test the connection.");
-    });
-
-    it("is enabled with no hint once signed in", () => {
-      const { getByText } = render(<ConnectionSection {...defaultProps({ hasToken: true })} />);
-      const button = getByText("Test Connection");
-      expect(button).not.toBeDisabled();
-      // `description={undefined}` renders no data-description attribute.
-      expect(button.getAttribute("data-description")).toBeNull();
-    });
-  });
-
-  describe("status row", () => {
-    it("renders the status Field when non-empty", () => {
-      const { getAllByTestId } = render(<ConnectionSection {...defaultProps({ status: "Connected ✓" })} />);
-      const labels = getAllByTestId("field-label").map((el) => el.textContent);
-      expect(labels).toContain("Connected ✓");
-      // URL row + External URL row + RomM Account row + status row.
-      expect(getAllByTestId("field")).toHaveLength(4);
-    });
-
-    it("omits the status Field when empty", () => {
-      const { getAllByTestId } = render(<ConnectionSection {...defaultProps()} />);
-      // URL + RomM Account are Field + DialogButton rows, so with no status the
-      // only Fields are those two — the status row does not render.
-      const labels = getAllByTestId("field-label").map((el) => el.textContent);
-      expect(labels).toEqual(["RomM URL", "External URL", "RomM Account"]);
-    });
+  it("shows the status line only when there is one", () => {
+    expect(render(<ConnectionSection {...defaultProps()} />).queryByTestId("connection-status")).toBeNull();
+    const { getByTestId } = render(<ConnectionSection {...defaultProps({ status: "Connected ✓" })} />);
+    expect(getByTestId("connection-status").textContent).toContain("Connected ✓");
   });
 });

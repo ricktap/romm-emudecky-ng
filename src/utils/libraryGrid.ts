@@ -146,3 +146,28 @@ export function quickAction(status: CoverStatus): QuickAction {
 export function coverUrl(appId: number): string {
   return `https://steamloopback.host/customimages/${appId}p.png`;
 }
+
+const PALETTE = ["#27466e", "#5a1f2b", "#4b2f7a", "#9a4a18", "#1d6a49", "#3a2a68", "#7d611b", "#2d6a2a", "#1f4f6b", "#5f6a1d", "#8a2e24", "#1d4c8f", "#6b2450", "#7a2a2a", "#24584a"];
+
+/** A stable cover colour for a game with no art (the prototype's tinted tiles). */
+export function tintFor(name: string): string {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return PALETTE[h % PALETTE.length]!;
+}
+
+const PLATFORM_TAGS: Record<string, string> = { switch: "NSW", nintendo_switch: "NSW" };
+
+/** The short tag on a cover's top-left corner. */
+export function platformTag(slug: string): string {
+  return PLATFORM_TAGS[slug] ?? slug.replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase();
+}
+
+
+/** A short tag from a platform's display name: `Nintendo 64` → `N64`, `Game Boy Advance` → `GBA`. */
+export function platformAbbrev(name: string): string {
+  if (/^nintendo switch$/i.test(name.trim())) return "NSW";
+  const words = name.split(/[\s/]+/).filter(Boolean);
+  const tag = words.map((w) => (/^\d+$/.test(w) ? w : w[0]!.toUpperCase())).join("");
+  return tag.slice(0, 4) || "?";
+}

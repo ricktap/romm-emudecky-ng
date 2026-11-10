@@ -1,13 +1,12 @@
 /**
- * Settings "Updates" section: installed version, the last check's result, a
- * forced "Check for updates" button, and the update notice when one exists.
- * Reads and drives the shared update store; no props.
+ * The plugin card: installed version and update check, log level, and the way
+ * into the danger zone. Reads and drives the shared update store.
  */
 
 import { FC, useEffect, useState } from "react";
-import { PanelSection, PanelSectionRow, ButtonItem, Field } from "@decky/ui";
 import { getUpdateState, onUpdateStateChange, refreshUpdateState, type UpdateState } from "../../utils/updateStore";
 import { UpdateNotice } from "../UpdateBanner";
+import { RmButton, RmCard, RmChoice, RmRow, RmValueRow } from "../rm";
 
 function formatCheckedAt(iso: string | null): string {
   if (!iso) return "";
@@ -25,7 +24,21 @@ export function updateStatusText(state: UpdateState): string {
   return "No installable release found";
 }
 
-export const UpdatesSection: FC = () => {
+const LOG_LEVELS = [
+  { data: "error", label: "Error" },
+  { data: "warn", label: "Warn" },
+  { data: "info", label: "Info" },
+  { data: "debug", label: "Debug" },
+];
+
+interface PluginSectionProps {
+  logLevel: string;
+  onLogLevelChange: (level: string) => void;
+  dangerOpen: boolean;
+  onToggleDanger: () => void;
+}
+
+export const PluginSection: FC<PluginSectionProps> = ({ logLevel, onLogLevelChange, dangerOpen, onToggleDanger }) => {
   const [state, setState] = useState<UpdateState>(getUpdateState());
 
   useEffect(() => {
@@ -42,28 +55,34 @@ export const UpdatesSection: FC = () => {
   const checkedAt = formatCheckedAt(state.checkedAt);
 
   return (
-    <PanelSection title="Updates">
-      <PanelSectionRow>
-        <Field label="Installed version" description={state.currentVersion ? `v${state.currentVersion}` : "—"} focusable />
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <Field
-          label="Last check"
-          description={checkedAt ? `${updateStatusText(state)} · ${checkedAt}` : updateStatusText(state)} focusable />
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ButtonItem
-          layout="below"
+    <RmCard title="Plugin">
+      <RmValueRow
+        label="Version"
+        sub={checkedAt ? `Checked ${checkedAt}` : undefined}
+        value={`${state.currentVersion ? `v${state.currentVersion}` : "—"} · ${updateStatusText(state)}`}
+      />
+      <RmRow label="Check for updates">
+        <RmButton
+          variant="sm ghost"
+          testId="check-updates"
           disabled={state.checking}
-          onClick={() => {
+          onActivate={() => {
             // refreshUpdateState folds every failure into the store — never rejects.
             refreshUpdateState(true).catch(() => undefined);
           }}
         >
-          Check for updates
-        </ButtonItem>
-      </PanelSectionRow>
+          Check
+        </RmButton>
+      </RmRow>
       {state.info?.update_available && <UpdateNotice info={state.info} />}
-    </PanelSection>
+      <RmRow label="Log level" sub="How much detail the plugin logs">
+        <RmChoice label="Log level" value={logLevel} options={LOG_LEVELS} onChange={onLogLevelChange} />
+      </RmRow>
+      <RmRow label="Danger zone" sub="Remove shortcuts, delete ROMs, reset">
+        <RmButton variant="sm danger" testId="danger-zone" onActivate={onToggleDanger}>
+          {dangerOpen ? "Close" : "Open"}
+        </RmButton>
+      </RmRow>
+    </RmCard>
   );
 };

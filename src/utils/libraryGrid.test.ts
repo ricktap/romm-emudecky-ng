@@ -91,3 +91,21 @@ describe("quickAction and coverUrl", () => {
     expect(coverUrl(123)).toBe("https://steamloopback.host/customimages/123p.png");
   });
 });
+
+import { platformAbbrev, platformTag, tintFor } from "./libraryGrid";
+
+describe("cover helpers", () => {
+  it("tintFor is stable per name and always one of the palette colours", () => {
+    expect(tintFor("Zelda")).toBe(tintFor("Zelda"));
+    expect(tintFor("Zelda")).toMatch(/^#[0-9a-f]{6}$/);
+  });
+  it("platformTag / platformAbbrev make short tags", () => {
+    expect(platformTag("switch")).toBe("NSW");
+    expect(platformTag("super_nintendo")).toBe("SUPE");
+    expect(platformAbbrev("Nintendo 64")).toBe("N64");
+    expect(platformAbbrev("Game Boy Advance")).toBe("GBA");
+    expect(platformAbbrev("Nintendo Switch")).toBe("NSW");
+    expect(platformAbbrev("Mega Drive / Genesis")).toBe("MDG");
+    expect(platformAbbrev("")).toBe("?");
+  });
+});

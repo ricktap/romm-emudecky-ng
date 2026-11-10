@@ -1,7 +1,7 @@
 import { FC, useEffect, useMemo, useState } from "react";
 import { addEventListener, removeEventListener, toaster } from "@decky/api";
-import { DialogButton, Focusable, Navigation, TextField } from "@decky/ui";
-import { FaCheck, FaCloud, FaDownload, FaExclamationTriangle, FaPause } from "react-icons/fa";
+import { Focusable, Navigation } from "@decky/ui";
+import { Icon } from "./rm";
 import { getArtworkBase64, getPlatforms, getLibraryOverview, pauseDownload, resumeDownload, startDownload } from "../api/backend";
 import { getDownloadState } from "../utils/downloadStore";
 import {
@@ -10,7 +10,9 @@ import {
   coverUrl,
   filterCounts,
   liveDownloads,
+  platformTag,
   quickAction,
+  tintFor,
   visibleRoms,
   type CoverStatus,
   type GridFilter,
@@ -26,25 +28,48 @@ type Loaded = Extract<LibraryOverview, { success: true }>;
 const ACTION_TEXT: Record<Exclude<QuickAction, null>, string> = { download: "Download", pause: "Pause", resume: "Resume" };
 
 const Badge: FC<{ status: CoverStatus }> = ({ status }) => {
-  const style = { position: "absolute", top: "6px", right: "6px", width: "22px", height: "22px", borderRadius: "11px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", color: "#fff" } as const;
   if (status.issue) {
     return (
-      <span data-testid="badge-issue" style={{ ...style, background: "#d4a72c" }}>
-        <FaExclamationTriangle size={11} />
+      <span data-testid="badge-issue" className="rm-sbadge rm-sb-warn">
+        <Icon name="bang" />
       </span>
     );
   }
   switch (status.state) {
     case "installed":
-      return <span data-testid="badge-installed" style={{ ...style, background: "#59bf40" }}><FaCheck size={11} /></span>;
+      return <span data-testid="badge-installed" className="rm-sbadge rm-sb-ok"><Icon name="check" /></span>;
     case "romm_only":
-      return <span data-testid="badge-cloud" style={{ ...style, background: "#4b5563" }}><FaCloud size={11} /></span>;
+      return <span data-testid="badge-cloud" className="rm-sbadge rm-sb-cloud"><Icon name="cloud" /></span>;
     case "paused":
-      return <span data-testid="badge-paused" style={{ ...style, background: "#d4a72c" }}><FaPause size={10} /></span>;
+    case "interrupted":
+      return <span data-testid="badge-paused" className="rm-sbadge rm-sb-warn"><Icon name="pause" size={12} /></span>;
     default:
-      return <span data-testid="badge-downloading" style={{ ...style, background: "#1a9fff" }}><FaDownload size={10} /></span>;
+      return <span data-testid="badge-downloading" className="rm-sbadge rm-sb-dl"><Icon name="down" /></span>;
   }
 };
+
+/** The caption under a cover: what state the game is in, in a few words. */
+export function coverCaption(rom: LibraryOverviewRom, status: CoverStatus): { text: string; warn: boolean } {
+  if (status.issue) {
+    const first = rom.issues[0];
+    if (first === "save_conflict") return { text: "Save conflict", warn: true };
+    if (first === "bios_missing") return { text: "BIOS missing", warn: true };
+    if (status.state === "interrupted") return { text: "Interrupted", warn: true };
+    return { text: "Needs attention", warn: true };
+  }
+  switch (status.state) {
+    case "installed":
+      return { text: "Installed", warn: false };
+    case "romm_only":
+      return { text: "On RomM", warn: false };
+    case "queued":
+      return { text: "Queued", warn: false };
+    case "downloading":
+      return { text: `Downloading ${status.progress ?? 0}%`, warn: false };
+    default:
+      return { text: `Paused · ${status.progress ?? 0}%`, warn: false };
+  }
+}
 
 const Cover: FC<{ rom: LibraryOverviewRom; status: CoverStatus; onAction: (a: Exclude<QuickAction, null>) => void }> = ({ rom, status, onAction }) => {
   const [broken, setBroken] = useState(false);
@@ -65,37 +90,40 @@ const Cover: FC<{ rom: LibraryOverviewRom; status: CoverStatus; onAction: (a: Ex
       })
       .catch(() => setBroken(true));
   };
+  const caption = coverCaption(rom, status);
   return (
     <Focusable
+      className="rm-gcard"
       data-testid={`cover-${rom.rom_id}`}
       onActivate={() => Navigation.Navigate(`/library/app/${rom.app_id}`)}
       onSecondaryButton={() => action && onAction(action)}
       onOKActionDescription="Open"
       onSecondaryActionDescription={action ? ACTION_TEXT[action] : undefined}
-      style={{ width: "150px", flex: "none", display: "flex", flexDirection: "column", gap: "4px" }}
     >
-      <div style={{ position: "relative", width: "150px", height: "200px", borderRadius: "4px", overflow: "hidden", background: "#171c23" }}>
+      <span className="rm-cover" style={{ background: tintFor(rom.name) }}>
         {!broken && (
           <img
             src={fallback ?? coverUrl(rom.app_id)}
             alt=""
             onError={() => (fallback ? setBroken(true) : healCover())}
-            style={{ width: "100%", height: "100%", objectFit: "cover", opacity: status.state === "romm_only" ? 0.6 : 1 }}
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: status.state === "romm_only" ? 0.85 : 1 }}
           />
         )}
+        <span className="rm-ptag">{platformTag(rom.platform_slug)}</span>
         {broken && (
-          <div data-testid="cover-fallback" style={{ padding: "8px", fontSize: "12px", opacity: 0.7 }}>
+          <span data-testid="cover-fallback" className="rm-ctitle">
             {rom.name}
-          </div>
+          </span>
         )}
         <Badge status={status} />
         {status.progress !== null && (
-          <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "5px", background: "rgba(0,0,0,0.5)" }}>
-            <div data-testid="cover-progress" style={{ width: `${status.progress}%`, height: "100%", background: status.state === "paused" || status.state === "interrupted" ? "#d4a72c" : "#1a9fff" }} />
-          </div>
+          <span className="rm-cbar">
+            <span data-testid="cover-progress" style={{ width: `${status.progress}%`, background: status.state === "paused" || status.state === "interrupted" ? "#d4a72c" : "#1a9fff" }} />
+          </span>
         )}
-      </div>
-      <div style={{ fontSize: "12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rom.name}</div>
+      </span>
+      <span className="rm-gname">{rom.name}</span>
+      <span className={`rm-gsub${caption.warn ? " rm-warn" : ""}`}>{caption.text}</span>
     </Focusable>
   );
 };
@@ -104,7 +132,7 @@ const Cover: FC<{ rom: LibraryOverviewRom; status: CoverStatus; onAction: (a: Ex
  * The Library tab: platform rail, filter chips, search and the cover grid. A on a cover opens its Steam game page, X
  * downloads / pauses / resumes. Everything is one call (`get_library_overview`); the live queue keeps the badges current.
  */
-export const LibraryGrid: FC = () => {
+export const LibraryGrid: FC<{ search: string }> = ({ search }) => {
   const [overview, setOverview] = useState<LibraryOverview | null>(null);
   const [platforms, setPlatforms] = useState<PlatformSyncSetting[]>([]);
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
@@ -112,7 +140,6 @@ export const LibraryGrid: FC = () => {
   const [collections, setCollections] = useState<RommCollection[]>([]);
   const [collection, setCollection] = useState<string | null>(null);
   const [filter, setFilter] = useState<GridFilter>("all");
-  const [search, setSearch] = useState("");
 
   const load = () => {
     getLibraryOverview()
@@ -183,59 +210,71 @@ export const LibraryGrid: FC = () => {
     return <div style={{ padding: "16px" }}>No games synced yet. Start a sync from the Quick Access Menu.</div>;
   }
 
+  const platformLabel = collection ? collection : platform === null ? "All platforms" : (names.get(platform)?.name ?? platform);
   return (
-    <div style={{ display: "flex", gap: "16px", padding: "8px 16px" }}>
-      <Focusable data-testid="rail" style={{ width: "200px", flex: "none", display: "flex", flexDirection: "column", gap: "4px" }}>
-        <DialogButton
-          style={{ opacity: platform === null && collection === null ? 1 : 0.8, textAlign: "left" }}
+    <div className="rm-lbody">
+      <Focusable data-testid="rail" className="rm-prail">
+        <Focusable
+          className={`rm-pbtn${platform === null && collection === null ? " rm-on" : ""}`}
+          data-testid="rail-all"
+          onActivate={() => choosePlatform(null)}
           onClick={() => choosePlatform(null)}
         >
-          All games ({loaded.roms.length})
-        </DialogButton>
+          <span>All games</span>
+          <span className="rm-n">{loaded.roms.length}</span>
+        </Focusable>
         {loaded.platforms.map((p) => {
           const info = names.get(p.platform_slug);
+          const off = info && !info.sync_enabled;
           return (
-            <DialogButton
+            <Focusable
               key={p.platform_slug}
               data-testid={`rail-${p.platform_slug}`}
-              {...(info && !info.sync_enabled ? { title: "Sync is off for this platform" } : {})}
-              style={{ opacity: info && !info.sync_enabled ? 0.45 : platform === p.platform_slug ? 1 : 0.8, textAlign: "left" }}
+              className={`rm-pbtn${platform === p.platform_slug ? " rm-on" : ""}${off ? " rm-off" : ""}`}
+              {...(off ? { title: "Sync is off for this platform" } : {})}
+              onActivate={() => choosePlatform(p.platform_slug)}
               onClick={() => choosePlatform(p.platform_slug)}
             >
-              {info?.name ?? p.platform_slug} ({p.count})
-            </DialogButton>
+              <span>{info?.name ?? p.platform_slug}</span>
+              <span className="rm-n">{p.count}</span>
+            </Focusable>
           );
         })}
-        {collections.length > 0 && <div style={{ fontSize: "12px", opacity: 0.6, padding: "8px 4px 0" }}>Collections</div>}
+        {collections.length > 0 && <div className="rm-qsec" style={{ paddingLeft: 12 }}>Collections</div>}
         {collections.map((c) => (
-          <DialogButton
+          <Focusable
             key={c.name}
             data-testid={`rail-collection-${c.name}`}
-            style={{ opacity: collection === c.name ? 1 : 0.8, textAlign: "left" }}
+            className={`rm-pbtn${collection === c.name ? " rm-on" : ""}`}
+            onActivate={() => chooseCollection(c.name)}
             onClick={() => chooseCollection(c.name)}
           >
-            {c.name} ({loaded.roms.filter((r) => c.appIds.has(r.app_id)).length})
-          </DialogButton>
+            <span>{c.name}</span>
+            <span className="rm-n">{loaded.roms.filter((r) => c.appIds.has(r.app_id)).length}</span>
+          </Focusable>
         ))}
       </Focusable>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <TextField label="Search" value={search} onChange={(e: { target: { value: string } }) => setSearch(e.target.value)} />
-        <Focusable flow-children="right" style={{ display: "flex", gap: "8px", margin: "8px 0" }}>
+      <div className="rm-lmain">
+        <Focusable flow-children="right" className="rm-chips">
           {GRID_FILTERS.map((f) => (
-            <DialogButton
+            <Focusable
               key={f.id}
               data-testid={`filter-${f.id}`}
-              style={{ minWidth: "auto", width: "auto", padding: "4px 12px", opacity: filter === f.id ? 1 : 0.7 }}
+              className={`rm-fchip${filter === f.id ? " rm-on" : ""}`}
+              onActivate={() => setFilter(f.id)}
               onClick={() => setFilter(f.id)}
             >
-              {f.label} {counts[f.id]}
-            </DialogButton>
+              {f.label} · {counts[f.id]}
+            </Focusable>
           ))}
+          <span className="rm-muted" style={{ marginLeft: "auto" }}>
+            {platformLabel} · {shown.length} shown
+          </span>
         </Focusable>
         {shown.length === 0 ? (
-          <div style={{ padding: "8px 0" }}>No games match.</div>
+          <div className="rm-muted" style={{ padding: "40px 0" }}>No games match this filter.</div>
         ) : (
-          <Focusable flow-children="grid" style={{ display: "flex", flexWrap: "wrap", gap: "14px" }}>
+          <Focusable flow-children="grid" className="rm-grid">
             {shown.map((rom) => (
               <Cover key={rom.rom_id} rom={rom} status={coverStatus(rom, live)} onAction={(a) => detach(act(rom, a))} />
             ))}
