@@ -37,7 +37,7 @@ A game's title ID comes from, in this order, and is **never guessed**:
 1. **A `[0100XXXXXXXXXXXX]` tag in the file name.** Exactly one 16-hex tag with the `01` prefix. *Device finding:* on the Deck
    only one of about ten Switch ROMs carries it (the others are folders or untagged `.xci` names), so this is the
    exception, not the rule.
-2. **RomM data**, if the server's game JSON carries a Switch title ID (to be checked on a real Switch game, §7). Not relied on.
+2. **RomM's `title_id`**: the game JSON has a top-level `title_id` (and `save_target` / `save_target_layout`); on the checked game (Metroid Dread) all three are `null`, so it is used when RomM fills it, never required.
 3. **Learned from play.** Around a play session the plugin notes which title folders in the emulator's save directory
    changed (new or modified files). The one folder that changed is **proposed** on the game page ("This game saved to
    `<TITLEID>`: use it?") and bound only after the user confirms. Several changed folders (a game that touches two titles) or none:
@@ -67,7 +67,7 @@ be the literal text `$HOME` on a Bazzite PC (the existing `expand` handles it).
 
 **Ryujinx.** An index directory holds `ExtraData0` and `ExtraData1` (512 bytes each), the two commit directories `0` and
 `1` (each with `save.meta` and the data), and a `.lock`. The title is identified from the index's `ExtraData0` header (the
-save attribute: program ID, then user ID; to be verified with a hex dump, §7), cross-checked with `saveMeta`. The index
+save attribute, verified with a hex dump, §7: bytes 0-7 little-endian = program/title ID, bytes 8-23 = user ID, byte 0x20 = save type, `1` = account save). Only indices whose type is account (`1`) and whose title ID matches belong to the game; device, cache and temporary saves are not synced. The index
 number differs per machine. Consequences:
 
 - The **whole index directory** is the unit (both commit directories and the extra data), except `.lock`; a partial copy
@@ -162,16 +162,19 @@ The profile list shown to the user comes from the emulator's `profiles.dat` (nam
 **What this changed in the ADR:** title ID from file-name tag is rare (so "learned from play" and a manual pick matter), roots must
 come from the emulator config, the all-zero profile is part of a save, and Ryujinx can only restore into an existing local index.
 
-## Open points before #34 starts
+## Open points answered (2026-11-10, Deck, read-only)
 
-1. **A Switch game's RomM JSON** (any one, like the firmware JSON in #69): does it carry a title ID anywhere?
-2. **Ryujinx `ExtraData0` header:** a hex dump of the first 64 bytes (it holds ids, no save content), e.g.
-   `xxd -l 64 ~/.config/Ryujinx/bis/user/save/0000000000000001/ExtraData0`, plus which title that index belongs to.
-3. **yuzu's `nand_directory`** on the Deck: `grep nand_directory ~/.config/yuzu/qt-config.ini`.
-4. **Eden profile names:** which user profile `7EBDCC30…` is and what the all-zero folder is for (`profiles.dat` at
-   `<nand>/system/save/8000000000000010/su/avators/profiles.dat` is the source; the plugin will read it).
-5. Deck internal drive vs SD: saves of Eden are on the internal drive, `Emulation` on the SD card; the temp-directory rule (same
-   filesystem as the target) keeps the rename atomic, no action needed.
+1. **RomM game JSON** (`GET /api/roms/22`, Metroid Dread): top-level `title_id: null`, `save_target: null`, `save_target_layout: null`; a
+   multi-file game folder (`.xci` plus update `.hdf`). So the field exists but is not filled for this game.
+2. **Ryujinx `ExtraData0`** of index `0000000000000001`: bytes `00c0 aa1b f08c 0001` = little-endian `0x01008CF01BAAC000`, the title ID of
+   *The Legend of Zelda: Echoes of Wisdom*, confirmed by Ryujinx's own log line (`Application Loaded: … [01008cf01baac000]`). Bytes 8-23
+   hold the user ID (`01 00 …`), byte 0x20 is `01` (account save). The numeric index is machine-specific and never generalised.
+3. **yuzu `nand_directory`** on the Deck: `/run/media/mmcblk0p1/Emulation/storage/yuzu/nand` (SD card), so saves are under
+   `…/nand/user/save`, found through the config as designed.
+4. **Eden profile `7EBDCC30…`**: display name `Eden`, the only non-empty record in `profiles.dat` (slot 0), read from
+   `<nand>/system/save/8000000000000010/su/avators/profiles.dat`. The single user profile is therefore chosen automatically; the all-zero
+   folder keeps its role.
+5. Deck internal drive vs SD: the temp-directory-next-to-target rule keeps the rename atomic; no action needed.
 
 ## Acceptance of the decision
 
