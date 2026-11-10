@@ -1,13 +1,7 @@
 import { definePlugin, addEventListener, removeEventListener, toaster } from "@decky/api";
-import { useState, useRef, useEffect, FC, type ReactNode } from "react";
 import { FaGamepad } from "react-icons/fa";
-import { MainPage } from "./components/MainPage";
-import { SettingsPage } from "./components/SettingsPage";
-import { LibraryPage } from "./components/LibraryPage";
-import { SystemPage } from "./components/SystemPage";
 import { downloadKey } from "./utils/downloadKey";
-import { DangerZone } from "./components/DangerZone";
-import { DownloadQueue } from "./components/DownloadQueue";
+import { QAMPanel } from "./components/QAMPanel";
 import { initUnitSyncManager, resetSyncCancel } from "./utils/syncManager";
 import { setSyncProgress } from "./utils/syncProgress";
 import { updateDownload, getDownloadState } from "./utils/downloadStore";
@@ -42,7 +36,6 @@ import { fetchSettingsResetState } from "./utils/settingsResetStore";
 import { resetSyncDelta, recordSyncRemoved, getSyncDelta } from "./utils/syncDeltaStore";
 import { setVersionError, setServerRetryProgress } from "./utils/connectionState";
 import { initSessionManager, destroySessionManager } from "./utils/sessionManager";
-import { findOutermostScrollParent } from "./utils/scrollHelpers";
 import { detach } from "./utils/detach";
 import type {
   SyncProgress,
@@ -59,68 +52,6 @@ import type {
 import { removeShortcut, setLaunchOptionsConfirmed } from "./utils/steamShortcuts";
 import { batchConfirmLaunchOptions } from "./utils/launchOptionsReconcile";
 import { withTimeout } from "./utils/withTimeout";
-
-type Page = "main" | "settings" | "library" | "data" | "downloads" | "system";
-
-// Module-level page state survives QAM remounts (e.g. after modal close)
-let currentPage: Page = "main";
-
-const QAMPanel: FC = () => {
-  const [page, setPageState] = useState<Page>(currentPage); // NOSONAR(typescript:S6754) — setter intentionally renamed; setPage wraps it below to provide custom navigation behavior.
-  const rootRef = useRef<HTMLDivElement>(null);
-  const setPage = (p: Page) => {
-    currentPage = p;
-    setPageState(p);
-  };
-
-  useEffect(() => {
-    const el = rootRef.current;
-    if (!el) return;
-    const container = findOutermostScrollParent(el);
-    // rAF lets the new page mount/measure before we set scrollTop.
-    const rafHandle = requestAnimationFrame(() => {
-      if (container) container.scrollTop = 0;
-    });
-    // Steam's gamepad nav retains a focus pointer across page swaps and
-    // resolves it on the next input — landing on a button at the old page's
-    // position. Force focus to the first button so navigation starts at the
-    // top. Same querySelector + .focus() + gpfocus pattern as CustomPlayButton.
-    const focusTimer = setTimeout(() => {
-      const btn = el.querySelector("button");
-      if (btn) {
-        btn.focus();
-        btn.classList.add("gpfocus");
-      }
-    }, 50);
-    return () => {
-      cancelAnimationFrame(rafHandle);
-      clearTimeout(focusTimer);
-    };
-  }, [page]);
-
-  let content: ReactNode;
-  switch (page) {
-    case "settings":
-      content = <SettingsPage onBack={() => setPage("main")} />;
-      break;
-    case "library":
-      content = <LibraryPage onBack={() => setPage("main")} />;
-      break;
-    case "data":
-      content = <DangerZone onBack={() => setPage("main")} />;
-      break;
-    case "downloads":
-      content = <DownloadQueue onBack={() => setPage("main")} />;
-      break;
-    case "system":
-      content = <SystemPage onBack={() => setPage("main")} />;
-      break;
-    default:
-      content = <MainPage onNavigate={(p) => setPage(p)} />;
-  }
-
-  return <div ref={rootRef}>{content}</div>;
-};
 
 export default definePlugin(() => {
   registerGameDetailPatch();
