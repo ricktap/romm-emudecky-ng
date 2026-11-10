@@ -52,7 +52,7 @@ impl VersionService {
         let Some(group)=self.c.repo.group(app).await?else{return Ok(failure("not_found",&format!("No game is bound to shortcut {app}")));};
         let bound=group.bound["rom_id"].as_i64().unwrap();let key=group.bound["sibling_group_key"].as_str();
         let active=(self.c.active)();
-        if active.contains(&target)||group.members.iter().any(|r|r["rom_id"].as_i64().is_some_and(|id|active.contains(&id))){return Ok(failure("download_in_progress","Cancel the running download first."));}
+        if active.contains(&target)||group.members.iter().any(|r|r["rom_id"].as_i64().is_some_and(|id|active.contains(&id))){return Ok(failure("download_in_progress","Pause or cancel the running download first."));}
         if target==bound{return Ok(self.success(app,target,group.bound["installed"]==true).await);}
         let local=self.c.repo.member(target).await?;
         if let Some(row)=&local{
@@ -70,7 +70,7 @@ impl VersionService {
             if !target_in_group(key,None,Some(&raw),sibling){return Ok(not_in_group());}Some(raw)
         }else{None};
         // Recheck admission after a potentially slow fetch.
-        let active=(self.c.active)();if active.contains(&target)||group.members.iter().any(|r|r["rom_id"].as_i64().is_some_and(|id|active.contains(&id))){return Ok(failure("download_in_progress","Cancel the running download first."));}
+        let active=(self.c.active)();if active.contains(&target)||group.members.iter().any(|r|r["rom_id"].as_i64().is_some_and(|id|active.contains(&id))){return Ok(failure("download_in_progress","Pause or cancel the running download first."));}
         let result=self.c.repo.bind_version(&group,target,server,&self.c.clock.now_iso()).await?;
         if result["success"]!=true{return Ok(result);}
         Ok(self.success(app,target,result["target_installed"]==true).await)

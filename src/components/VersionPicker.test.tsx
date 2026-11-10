@@ -607,6 +607,25 @@ describe("VersionPicker — switching", () => {
     expect(invalidateCachedGameDetail).not.toHaveBeenCalled();
   });
 
+  it("says in the toast body that a running download blocks the switch, and what to do", async () => {
+    vi.mocked(backend.getVersionList).mockResolvedValue(multiVersionList());
+    vi.mocked(backend.switchVersion).mockResolvedValue({
+      success: false,
+      reason: "download_in_progress",
+      message: "Pause or cancel the running download first.",
+    });
+
+    const { menu } = await renderAndOpen();
+    await clickRow(menu.container, "Game (Japan)");
+
+    expect(toaster.toast).toHaveBeenCalledWith({
+      title: "EmuDecky RomM Manager",
+      body: "Can't switch version while a download is running",
+      subtext: "Pause or cancel the download first.",
+    });
+    expect(setLaunchOptionsConfirmed).not.toHaveBeenCalled();
+  });
+
   it("toasts a fallback on a switchVersion rejection (non-vacuous catch)", async () => {
     vi.mocked(backend.getVersionList).mockResolvedValue(multiVersionList());
     vi.mocked(backend.switchVersion).mockRejectedValue(new Error("network down"));
