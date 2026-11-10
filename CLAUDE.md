@@ -5,7 +5,7 @@ install/uninstall games, launch via EmuDeck emulators, save sync, BIOS/firmware.
 a thin Decky shim (`main.py`), React/TypeScript frontend (`src/`). The backend is being rewritten in Rust for 0.40.0
 (GitHub milestone "0.40.0"); the shim's socket protocol is the contract both must satisfy.
 
-- **Step 6 done on `rust-6-remove-python`:** the Python backend is gone; `backend/` (Rust) is the backend and `py_modules/`
+- **Released as v0.40.0 (2026-11-10):** the Python backend is gone; `backend/` (Rust) is the backend and `py_modules/`
   keeps only the shim's `rpc/` client. The Python-specific sections below (layers, constraints, save sync, tests) describe
   the **reference implementation at commit `580680864e89af50c376dc946d12cf35cee7f808`** — they are the spec for the Rust ports, and for firmware (0.45.0) and
   save sync (0.55.0), which are not ported yet (see HANDOFF.md, "Python reference implementation").

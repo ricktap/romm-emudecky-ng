@@ -35,7 +35,7 @@ Rewrite steps (GitHub milestone **0.40.0**, issues #8–#14; the Python code + i
 | 3b part 2: game page, metadata, cover refresh and SteamGridDB | merged into `rust` (PR #24); CI and release dry run green |
 | 3b remainder: version choice, launch checks, removal, playtime, updates and Steam Input | merged into `rust` (PR #25); CI and release dry run green |
 | 6 #14 delete the Python backend | merged into `rust` (PR #26); CI and release dry run green; see "Python reference implementation" |
-| 4 #12 firmware (**0.45.0**), 5 #13 save sync (**0.55.0**) | not started; moved out of 0.40.0 |
+| 4 #12 firmware (**0.45.0**), 5 #13 save sync (**0.55.0**) | not started; moved out of 0.40.0 (v0.40.0 is released without them) |
 
 After PR #22: Rust 365 tests / 96.90% lines, Python 5275, frontend 1530 (fewer because removed features' tests went).
 
@@ -129,7 +129,8 @@ Step-3b remainder in [PR #25](https://github.com/ricktap/romm-emudecky-ng/pull/2
   download cleanup. All 81 step-1–3 callables are ported; the remaining 25 belong to firmware and save sync (steps 4–5).
 - Local validation: Rust **431 tests / 97.12% line coverage** (`--fail-under-lines 80`), Python **5275 passed**
   (the two known unawaited-download-coroutine warnings), frontend **1530 passed**, pinned pnpm production build passed.
-- No shipping version bump or release tag. The `rust` → `main` swap and milestone release still need Patrick's approval.
+- Released as **v0.40.0** (2026-11-10): `rust` was merged into `main` (PR #67) and tagged `v0.40.0`; milestone 0.40.0 is closed.
+  Next: firmware in 0.45.0 (#12), save sync in 0.55.0 (#13), see the milestones.
 
 ## Python reference implementation (read this before porting firmware or save sync)
 
