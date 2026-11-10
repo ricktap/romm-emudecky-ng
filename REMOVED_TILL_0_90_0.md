@@ -1,6 +1,6 @@
 # Removed until v0.90.0
 
-The plugin is **Switch-only until v0.70** (see `EMUDECK_PORT_PLAN.md` §0). During the Rust rewrite (milestone 0.40.0)
+The plugin is **Switch-only until v0.80** (see `EMUDECK_PORT_PLAN.md` §0). During the Rust rewrite (milestone 0.40.0)
 these features were deliberately **not ported**. They come back, where still wanted, in v0.80.0 (retro systems) or v0.90.0 (modern
 consoles), when the other systems return.
 
