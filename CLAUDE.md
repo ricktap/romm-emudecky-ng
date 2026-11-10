@@ -64,9 +64,12 @@ no linting/formatting in CI — don't add any.
 - **RomM:** requires ≥ 4.9.0 (`_MIN_REQUIRED_VERSION` in `py_modules/backend.py`). Filter param is `platform_ids` (plural); cover URLs
   contain unencoded spaces; lists are paginated `{"items": [...], "total": N}`. Send a real User-Agent
   (`romm-emudecky-ng/<version>`, read from `package.json`) — Cloudflare/SteamGridDB 403 the Python default.
-- **Token-host binding:** the API token is sent only to the origin it was minted for (`romm_api_token_origin`);
-  mismatch raises `TokenHostMismatchError`. Sign-in persists URL+token+origin atomically only on success. Changing
-  origin forgets the registered save-sync device id. (Plan D6 extends this to an internal + external URL pair.)
+- **Token-host binding:** the API token is sent only to the origins it is bound to (`romm_api_token_origins`: the
+  sign-in URL's and the optional `romm_url_external`'s; `romm_api_token_origin` is the primary / legacy single one);
+  a request to any other origin raises `TokenHostMismatch`. Sign-in persists URL+token+origins atomically only on
+  success. The registered save-sync device id is forgotten only when none of the old origins is the new server.
+  `romm_url` is the internal URL (tried first, 3 s TCP connect probe); `romm_url_external` is used only after a
+  genuine connect failure; the winner is cached for 60 s (plan D6).
 - **Save sync:** `compute_sync_action` is the only decision authority; RomM `negotiate` is transport only. Automatic
   uploads use `overwrite=false` (409 → `resolve_upload_conflict`); `overwrite=true` only from an explicit `keep_local`.
   Every read-modify-write of a `RomSaveState` holds `SyncEngine.rom_lock(rom_id)`. Never delete data that exists

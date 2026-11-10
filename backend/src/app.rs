@@ -77,6 +77,7 @@ pub const PORTED_CALLABLES: &[&str] = &[
     "resume_download",
     "save_collection_platform_groups",
     "save_collection_sync",
+    "save_external_url",
     "save_log_level",
     "save_platform_sync",
     "save_preferred_region",
@@ -624,6 +625,10 @@ impl Backend {
                 let url = req_str(&a, 0, "romm_url")?;
                 Ok(s.save_server_url(&url, a.get(1)).await)
             }),
+            "save_external_url" => bind(name, 1, 1, s, |s, a| async move {
+                let url = opt_str(&a, 0, "romm_url_external")?;
+                Ok(s.save_external_url(&url).await)
+            }),
             "frontend_log" => bind(name, 2, 2, s, |s, a| async move {
                 s.frontend_log(&loose_str(&a[0]), &loose_str(&a[1]));
                 Ok(Value::Null)
@@ -820,7 +825,7 @@ mod tests {
     #[test]
     fn surface_matches_python_backend_size_and_includes_ported() {
         let names = callable_names();
-        assert_eq!(names.len(), 113);
+        assert_eq!(names.len(), 114);
         let mut dedup = names.clone();
         dedup.dedup();
         assert_eq!(dedup.len(), names.len());

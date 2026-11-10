@@ -89,11 +89,13 @@ function lastShownModalProps<T>(): T | null {
 function defaultProps(overrides: Partial<React.ComponentProps<typeof ConnectionSection>> = {}) {
   return {
     url: "",
+    externalUrl: "",
     hasToken: false,
     allowInsecureSsl: false,
     status: "",
     loading: false,
     onUrlChange: vi.fn(),
+    onExternalUrlChange: vi.fn(),
     onConnect: vi.fn(),
     onConnectToken: vi.fn(),
     onConnectPairing: vi.fn(),
@@ -125,14 +127,34 @@ describe("ConnectionSection", () => {
 
     it("opens a TextInputModal with field='url' when Edit is clicked", () => {
       const onUrlChange = vi.fn();
-      const { getByText } = render(<ConnectionSection {...defaultProps({ url: "http://romm.local", onUrlChange })} />);
-      fireEvent.click(getByText("Edit"));
+      const { getAllByText } = render(<ConnectionSection {...defaultProps({ url: "http://romm.local", onUrlChange })} />);
+      fireEvent.click(getAllByText("Edit")[0]!);
       const props = lastShownModalProps<UrlModalProps>();
       expect(props?.label).toBe("RomM URL");
       expect(props?.value).toBe("http://romm.local");
       expect(props?.field).toBe("url");
       expect(props?.bIsPassword).toBeUndefined();
       expect(props?.onSubmit).toBe(onUrlChange);
+    });
+  });
+
+  describe("external URL field", () => {
+    it("shows the external URL, or a hint when none is set", () => {
+      const { getAllByTestId, rerender } = render(<ConnectionSection {...defaultProps()} />);
+      expect(getAllByTestId("field-desc").map((el) => el.textContent).join("|")).toContain("used when the URL above is unreachable");
+      rerender(<ConnectionSection {...defaultProps({ externalUrl: "https://romm.example.com" })} />);
+      expect(getAllByTestId("field-desc").map((el) => el.textContent)).toContain("https://romm.example.com");
+    });
+
+    it("edits through a modal that hands the value to onExternalUrlChange", () => {
+      const onExternalUrlChange = vi.fn();
+      const { getAllByText } = render(
+        <ConnectionSection {...defaultProps({ externalUrl: "https://romm.example.com", onExternalUrlChange })} />,
+      );
+      fireEvent.click(getAllByText("Edit")[1]!);
+      const props = lastShownModalProps<UrlModalProps>();
+      expect(props?.value).toBe("https://romm.example.com");
+      expect(props?.onSubmit).toBe(onExternalUrlChange);
     });
   });
 
@@ -316,8 +338,8 @@ describe("ConnectionSection", () => {
       const { getAllByTestId } = render(<ConnectionSection {...defaultProps({ status: "Connected ✓" })} />);
       const labels = getAllByTestId("field-label").map((el) => el.textContent);
       expect(labels).toContain("Connected ✓");
-      // URL row + RomM Account row + status row.
-      expect(getAllByTestId("field")).toHaveLength(3);
+      // URL row + External URL row + RomM Account row + status row.
+      expect(getAllByTestId("field")).toHaveLength(4);
     });
 
     it("omits the status Field when empty", () => {
@@ -325,7 +347,7 @@ describe("ConnectionSection", () => {
       // URL + RomM Account are Field + DialogButton rows, so with no status the
       // only Fields are those two — the status row does not render.
       const labels = getAllByTestId("field-label").map((el) => el.textContent);
-      expect(labels).toEqual(["RomM URL", "RomM Account"]);
+      expect(labels).toEqual(["RomM URL", "External URL", "RomM Account"]);
     });
   });
 });

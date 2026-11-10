@@ -68,6 +68,29 @@ impl SettingsService {
         }
     }
 
+    /// Persist the optional external RomM URL (used when the internal one cannot be reached); blank clears it.
+    ///
+    /// The user typing it is what binds the stored token to that origin too (D6): the bearer may then go to the
+    /// internal or the external origin and to nothing else. Clearing it takes the origin out again.
+    pub async fn save_external_url(&self, url: &str) -> Value {
+        let trimmed = url.trim();
+        if !trimmed.is_empty() && !is_valid_server_url(trimmed) {
+            return failure("config_error", "Enter a valid http(s):// server URL");
+        }
+        self.settings.set("romm_url_external", json!(trimmed));
+        if let Some(primary) = self.settings.get_str("romm_api_token_origin") {
+            let origins = crate::services::connection::bound_origins(trimmed, Some(primary));
+            self.settings.set("romm_api_token_origins", json!(origins));
+        }
+        match self.persister.save_settings().await {
+            Ok(()) => json!({"success": true, "message": "Settings saved"}),
+            Err(err) => {
+                tracing::error!("Failed to save settings: {err:#}");
+                failure("save_failed", &format!("Save failed: {err}"))
+            }
+        }
+    }
+
     /// The read-shape settings for the frontend. The token itself is never
     /// returned (only `has_token`); the SteamGridDB key is masked.
     pub async fn get_settings(&self) -> Value {
@@ -75,6 +98,7 @@ impl SettingsService {
         let get = |key: &str, default: Value| s.get(key).cloned().unwrap_or(default);
         json!({
             "romm_url": get("romm_url", json!("")),
+            "romm_url_external": get("romm_url_external", json!("")),
             "has_token": s.get("romm_api_token").is_some_and(truthy),
             "steam_input_mode": get("steam_input_mode", json!("default")),
             "sgdb_api_key_masked": if s.get("steamgriddb_api_key").is_some_and(truthy) { MASK_PLACEHOLDER } else { "" },
@@ -227,6 +251,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn save_external_url_binds_and_unbinds_the_token_origin() {
+        let f = fixture();
+        f.settings.set("romm_api_token", json!("tok"));
+        f.settings.set("romm_api_token_origin", json!("http://romm.local"));
+        let r = f.service.save_external_url("  https://romm.example.com/  ").await;
+        assert_eq!(r["success"], true);
+        assert_eq!(f.settings.get("romm_url_external"), Some(json!("https://romm.example.com/")));
+        assert_eq!(
+            f.settings.get("romm_api_token_origins"),
+            Some(json!(["http://romm.local", "https://romm.example.com"]))
+        );
+        assert_eq!(f.service.get_settings().await["romm_url_external"], "https://romm.example.com/");
+        // Clearing it takes the origin out again.
+        assert_eq!(f.service.save_external_url("").await["success"], true);
+        assert_eq!(f.settings.get("romm_url_external"), Some(json!("")));
+        assert_eq!(f.settings.get("romm_api_token_origins"), Some(json!(["http://romm.local"])));
+        assert_eq!(f.persister.saves(), 2);
+    }
+
+    #[tokio::test]
+    async fn save_external_url_rejects_a_bad_url_and_writes_nothing() {
+        let f = fixture();
+        let r = f.service.save_external_url("ftp://nope").await;
+        assert_eq!(r["success"], false);
+        assert_eq!(r["reason"], "config_error");
+        assert!(!f.settings.contains("romm_url_external"));
+        assert_eq!(f.persister.saves(), 0);
+    }
+
+    #[tokio::test]
     async fn save_server_url_persists_trimmed_and_ssl_flag() {
         let f = fixture();
         f.settings.set("romm_api_token", json!("tok"));
@@ -292,6 +346,7 @@ mod tests {
             r,
             json!({
                 "romm_url": "http://romm.local",
+                "romm_url_external": "",
                 "has_token": true,
                 "steam_input_mode": "force_on",
                 "sgdb_api_key_masked": "\u{2022}\u{2022}\u{2022}\u{2022}",

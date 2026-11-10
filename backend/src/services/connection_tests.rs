@@ -413,6 +413,37 @@ async fn device_forget_on_origin_change() {
 }
 
 #[tokio::test]
+async fn signing_in_binds_the_token_to_the_internal_and_the_external_origin() {
+    let mut initial = working();
+    initial["romm_url_external"] = json!("https://romm.example.com/");
+    let f = fx_with(initial);
+    f.svc.establish_token("http://romm.local", "u", "p", None).await;
+    assert_eq!(
+        f.settings.get("romm_api_token_origins"),
+        Some(json!(["http://romm.local", "https://romm.example.com"]))
+    );
+}
+
+#[tokio::test]
+async fn the_device_is_kept_when_the_new_sign_in_uses_the_other_bound_origin() {
+    // The old token was bound to the internal and external origin; signing in through the external address is the
+    // same server, so the registered device stays.
+    let mut initial = working();
+    initial["romm_api_token_origins"] = json!(["https://old.server", "https://romm.example.com"]);
+    let f = fx_with(initial);
+    f.kv.insert("device_id", "dev-1");
+    f.svc.establish_token("https://romm.example.com", "u", "p", None).await;
+    assert!(f.kv.has("device_id"));
+    // An origin in neither set is a different server.
+    let mut initial = working();
+    initial["romm_api_token_origins"] = json!(["https://old.server", "https://romm.example.com"]);
+    let f = fx_with(initial);
+    f.kv.insert("device_id", "dev-1");
+    f.svc.establish_token("https://elsewhere.net", "u", "p", None).await;
+    assert!(!f.kv.has("device_id"));
+}
+
+#[tokio::test]
 async fn device_kept_on_failed_sign_in() {
     let f = fx_with(working());
     f.kv.insert("device_id", "dev-1");

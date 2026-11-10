@@ -45,8 +45,10 @@ const DEVICE_ID_KEY: &str = "device_id";
 /// `kv_config` key of the "sign in again for cross-device playtime" notice.
 const PLAYTIME_SCOPE_NOTICE_KEY: &str = "playtime_scope_notice";
 
-const AUTH_STATE_KEYS: [&str; 6] = [
+const AUTH_STATE_KEYS: [&str; 8] = [
     "romm_url",
+    "romm_url_external",
+    "romm_api_token_origins",
     "romm_allow_insecure_ssl",
     "romm_api_token",
     "romm_api_token_id",
@@ -162,9 +164,7 @@ impl ConnectionService {
         let _guard = self.auth_lock.lock().await;
         let snapshot = self.snapshot_auth_state();
         let old_token_id = snapshot_value(&snapshot, "romm_api_token_id");
-        let old_origin = snapshot_value(&snapshot, "romm_api_token_origin")
-            .as_str()
-            .map(str::to_string);
+        let old_origins = snapshot_origins(&snapshot);
         let old_source = snapshot_value(&snapshot, "romm_api_token_source");
 
         self.hold_candidate(&trimmed, allow_insecure_ssl);
@@ -178,7 +178,7 @@ impl ConnectionService {
         // Never DELETE a user-supplied token; only replay the DELETE against the
         // server the old token was minted on.
         if old_source.as_str() != Some("user") && !old_token_id.is_null() {
-            if same_origin(old_origin.as_deref(), Some(&trimmed)) {
+            if any_origin_matches(&old_origins, &trimmed) {
                 let id = match &old_token_id {
                     Value::String(s) => s.clone(),
                     other => other.to_string(),
@@ -227,7 +227,7 @@ impl ConnectionService {
             self.restore_auth_state(&snapshot);
             return unknown_failure(&e);
         }
-        self.after_sign_in(old_origin.as_deref(), &trimmed).await;
+        self.after_sign_in(&old_origins, &trimmed).await;
         success_result(version.as_deref())
     }
 
@@ -243,9 +243,7 @@ impl ConnectionService {
         }
         let _guard = self.auth_lock.lock().await;
         let snapshot = self.snapshot_auth_state();
-        let old_origin = snapshot_value(&snapshot, "romm_api_token_origin")
-            .as_str()
-            .map(str::to_string);
+        let old_origins = snapshot_origins(&snapshot);
 
         self.hold_candidate(&trimmed, allow_insecure_ssl);
         self.bind_candidate_token(trimmed_token, &trimmed);
@@ -254,7 +252,7 @@ impl ConnectionService {
             Ok(v) => v,
             Err(resp) => return resp,
         };
-        self.validate_and_persist_user_token(trimmed_token, &trimmed, old_origin.as_deref(), version, &snapshot)
+        self.validate_and_persist_user_token(trimmed_token, &trimmed, &old_origins, version, &snapshot)
             .await
     }
 
@@ -275,9 +273,7 @@ impl ConnectionService {
         }
         let _guard = self.auth_lock.lock().await;
         let snapshot = self.snapshot_auth_state();
-        let old_origin = snapshot_value(&snapshot, "romm_api_token_origin")
-            .as_str()
-            .map(str::to_string);
+        let old_origins = snapshot_origins(&snapshot);
 
         self.hold_candidate(&trimmed, allow_insecure_ssl);
         self.clear_token_trio();
@@ -310,7 +306,7 @@ impl ConnectionService {
         };
         let raw = raw.to_string();
         self.bind_candidate_token(&raw, &trimmed);
-        self.validate_and_persist_user_token(&raw, &trimmed, old_origin.as_deref(), version, &snapshot)
+        self.validate_and_persist_user_token(&raw, &trimmed, &old_origins, version, &snapshot)
             .await
     }
 
@@ -382,7 +378,7 @@ impl ConnectionService {
         &self,
         raw: &str,
         trimmed: &str,
-        old_origin: Option<&str>,
+        old_origins: &[String],
         version: Option<String>,
         snapshot: &Snapshot,
     ) -> Value {
@@ -403,7 +399,7 @@ impl ConnectionService {
             self.restore_auth_state(snapshot);
             return unknown_failure(&e);
         }
-        self.after_sign_in(old_origin, trimmed).await;
+        self.after_sign_in(old_origins, trimmed).await;
         success_result(version.as_deref())
     }
 
@@ -489,7 +485,7 @@ impl ConnectionService {
     }
 
     fn clear_token_trio(&self) {
-        for key in ["romm_api_token", "romm_api_token_id", "romm_api_token_origin"] {
+        for key in ["romm_api_token", "romm_api_token_id", "romm_api_token_origin", "romm_api_token_origins"] {
             self.settings.set(key, Value::Null);
         }
     }
@@ -501,14 +497,18 @@ impl ConnectionService {
         self.settings.set("romm_api_token_id", Value::Null);
         self.settings
             .set("romm_api_token_origin", json!(normalize_origin(trimmed)));
+        self.settings
+            .set("romm_api_token_origins", json!(self.bound_origins(normalize_origin(trimmed))));
         self.settings.set("romm_api_token_source", json!("user"));
     }
 
     /// Store the token, retire legacy credentials, and save once.
     async fn persist_token(&self, token: &NewToken, origin: Option<String>) -> anyhow::Result<()> {
+        let external = self.settings.get_str("romm_url_external").unwrap_or_default();
         self.settings.with(|m| {
             m.insert("romm_api_token".into(), json!(token.raw));
             m.insert("romm_api_token_id".into(), token.id.clone());
+            m.insert("romm_api_token_origins".into(), json!(bound_origins(&external, origin.clone())));
             m.insert("romm_api_token_origin".into(), json!(origin));
             m.insert("romm_api_token_source".into(), json!(token.source));
             m.shift_remove("romm_user");
@@ -519,8 +519,12 @@ impl ConnectionService {
 
     /// Success-path side effects, both best-effort: forget the device id on an
     /// origin change, and clear the playtime re-sign-in notice.
-    async fn after_sign_in(&self, old_origin: Option<&str>, new_url: &str) {
-        if !same_origin(old_origin, Some(new_url))
+    async fn after_sign_in(&self, old_origins: &[String], new_url: &str) {
+        // The device id belongs to the server, not to one address: forget it only when none of the origins the
+        // old token was bound to (internal or external) is the server we just signed in to.
+        let new_external = self.settings.get_str("romm_url_external").unwrap_or_default();
+        if !any_origin_matches(old_origins, new_url)
+            && !(!new_external.is_empty() && any_origin_matches(old_origins, &new_external))
             && let Err(e) = self.kv_config.delete(DEVICE_ID_KEY).await
         {
             tracing::warn!("Could not clear device id after origin change: {e:#}");
@@ -534,6 +538,11 @@ impl ConnectionService {
         if let Err(e) = cleared.await {
             tracing::warn!("Could not clear playtime scope notice after sign-in: {e:#}");
         }
+    }
+
+    /// The origins a token minted now is bound to: the sign-in URL's and the external URL's (D6).
+    fn bound_origins(&self, primary: Option<String>) -> Vec<String> {
+        bound_origins(&self.settings.get_str("romm_url_external").unwrap_or_default(), primary)
     }
 
     fn token_name(&self) -> String {
@@ -556,6 +565,32 @@ fn validate_url(romm_url: &str) -> Result<String, Value> {
         return Err(failure(reason::CONFIG_ERROR, INVALID_URL_MESSAGE));
     }
     Ok(trimmed.to_string())
+}
+
+/// `[primary, external]` origins, deduplicated, without blanks.
+pub fn bound_origins(external_url: &str, primary: Option<String>) -> Vec<String> {
+    let mut out: Vec<String> = primary.into_iter().collect();
+    if let Some(ext) = normalize_origin(external_url.trim())
+        && !out.contains(&ext)
+    {
+        out.push(ext);
+    }
+    out
+}
+
+/// The origins the snapshotted token was bound to: the list, or the single legacy origin.
+fn snapshot_origins(snapshot: &Snapshot) -> Vec<String> {
+    if let Value::Array(list) = snapshot_value(snapshot, "romm_api_token_origins") {
+        let found: Vec<String> = list.iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
+        if !found.is_empty() {
+            return found;
+        }
+    }
+    snapshot_value(snapshot, "romm_api_token_origin").as_str().map(str::to_string).into_iter().collect()
+}
+
+fn any_origin_matches(origins: &[String], url: &str) -> bool {
+    origins.iter().any(|o| same_origin(Some(o), Some(url)))
 }
 
 fn snapshot_value(snapshot: &Snapshot, key: &str) -> Value {

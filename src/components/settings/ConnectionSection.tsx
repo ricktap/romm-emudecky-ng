@@ -27,11 +27,13 @@ const SIGN_OUT_CONFIRM_DESCRIPTION =
 
 interface ConnectionSectionProps {
   url: string;
+  externalUrl: string;
   hasToken: boolean;
   allowInsecureSsl: boolean;
   status: string;
   loading: boolean;
   onUrlChange: (value: string) => void;
+  onExternalUrlChange: (value: string) => void;
   onConnect: (username: string, password: string) => void;
   onConnectToken: (token: string) => void;
   onConnectPairing: (code: string) => void;
@@ -42,11 +44,13 @@ interface ConnectionSectionProps {
 
 export const ConnectionSection: FC<ConnectionSectionProps> = ({
   url,
+  externalUrl,
   hasToken,
   allowInsecureSsl,
   status,
   loading,
   onUrlChange,
+  onExternalUrlChange,
   onConnect,
   onConnectToken,
   onConnectPairing,
@@ -62,6 +66,20 @@ export const ConnectionSection: FC<ConnectionSectionProps> = ({
             style={{ minWidth: "auto", width: "auto" }}
             onClick={() =>
               showModal(<TextInputModal label="RomM URL" value={url} field="url" onSubmit={onUrlChange} />)
+            }
+          >
+            Edit
+          </DialogButton>
+        </Field>
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <Field label="External URL" description={externalUrl || "(not set) — used when the URL above is unreachable"}>
+          <DialogButton
+            style={{ minWidth: "auto", width: "auto" }}
+            onClick={() =>
+              showModal(
+                <TextInputModal label="External RomM URL (empty to clear)" value={externalUrl} onSubmit={onExternalUrlChange} />,
+              )
             }
           >
             Edit

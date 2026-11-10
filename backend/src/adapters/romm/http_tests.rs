@@ -145,7 +145,7 @@ async fn origin_mismatch_refuses_before_sending_and_is_not_retried() {
     // Scheme downgrade is a different origin too.
     let https_token = store("http://127.0.0.1:1", Some("t"), Some("https://127.0.0.1:1"));
     assert_eq!(
-        http(https_token).auth_header().unwrap_err(),
+        http(https_token).auth_header("http://127.0.0.1:1/x").unwrap_err(),
         RommError::TokenHostMismatch
     );
 }
@@ -506,4 +506,70 @@ async fn a_save_download_beyond_the_limit_is_refused() {
     Mock::given(method("GET")).and(path("/api/saves/1/content")).respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; 100])).mount(&server).await;
     assert!(h.get_bytes("/api/saves/1/content", 50).await.is_err());
     assert_eq!(h.get_bytes("/api/saves/1/content", 100).await.unwrap().len(), 100);
+}
+
+fn dual_store(internal: &str, external: &str, origins: &[&str]) -> SettingsStore {
+    SettingsStore::new(
+        json!({
+            "romm_url": internal, "romm_url_external": external,
+            "romm_api_token": "rmm_tok", "romm_api_token_origin": origins.first(),
+            "romm_api_token_origins": origins,
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    )
+}
+
+/// A local address nothing listens on: connecting is refused at once.
+async fn dead_url() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    drop(listener);
+    url
+}
+
+#[tokio::test]
+async fn the_internal_url_is_used_while_it_accepts_connections() {
+    let internal = MockServer::start().await;
+    let external = MockServer::start().await;
+    for server in [&internal, &external] {
+        Mock::given(path("/x")).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).mount(server).await;
+    }
+    let h = http(dual_store(&internal.uri(), &external.uri(), &[&internal.uri(), &external.uri()]));
+    h.get_json("/x").await.unwrap();
+    assert_eq!(internal.received_requests().await.unwrap().len(), 1);
+    assert!(external.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_unreachable_internal_url_falls_back_to_the_external_one_with_the_token() {
+    let external = MockServer::start().await;
+    Mock::given(path("/x"))
+        .and(header("authorization", "Bearer rmm_tok"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(2)
+        .mount(&external)
+        .await;
+    let internal = dead_url().await;
+    let h = http(dual_store(&internal, &external.uri(), &[&internal, &external.uri()]));
+    h.get_json("/x").await.unwrap();
+    h.get_json("/x").await.unwrap(); // the winner is cached, no second probe needed
+}
+
+#[tokio::test]
+async fn the_token_is_never_sent_to_an_unlisted_origin() {
+    let external = MockServer::start().await;
+    Mock::given(path("/x")).respond_with(ResponseTemplate::new(200)).expect(0).mount(&external).await;
+    let internal = dead_url().await;
+    // Only the internal origin is bound; the fallback target is not listed.
+    let h = http(dual_store(&internal, &external.uri(), &[&internal]));
+    assert_eq!(h.get_json("/x").await.unwrap_err(), RommError::TokenHostMismatch);
+}
+
+#[tokio::test]
+async fn without_an_external_url_nothing_changes() {
+    let server = MockServer::start().await;
+    Mock::given(path("/x")).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).mount(&server).await;
+    http(store(&server.uri(), Some("t"), Some(&server.uri()))).get_json("/x").await.unwrap();
 }

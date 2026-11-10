@@ -79,6 +79,7 @@
   "resume_download",
   "save_collection_platform_groups",
   "save_collection_sync",
+  "save_external_url",
   "save_firmware_version",
   "save_log_level",
   "save_platform_sync",
