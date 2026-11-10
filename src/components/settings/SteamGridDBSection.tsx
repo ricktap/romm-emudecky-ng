@@ -43,7 +43,7 @@ export const SteamGridDBSection: FC<SteamGridDBSectionProps> = ({
       </PanelSectionRow>
       {sgdbStatus && (
         <PanelSectionRow>
-          <Field label={sgdbStatus} />
+          <Field label={sgdbStatus} focusable />
         </PanelSectionRow>
       )}
     </PanelSection>

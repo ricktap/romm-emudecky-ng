@@ -129,7 +129,7 @@ export const ConnectionSection: FC<ConnectionSectionProps> = ({
       </PanelSectionRow>
       {status && (
         <PanelSectionRow>
-          <Field label={status} />
+          <Field label={status} focusable />
         </PanelSectionRow>
       )}
     </PanelSection>

@@ -1000,4 +1000,35 @@ describe("DownloadQueue", () => {
       expect(getLibraryTab()).toBe("downloads");
     });
   });
+
+  describe("Open on finished ROMs (full-screen queue)", () => {
+    const finished = (over: Partial<DownloadItem> = {}) =>
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({
+        downloads: [makeItem({ rom_id: 7, rom_name: "Metroid", status: "completed", progress: 100, ...over })],
+      });
+
+    it("a completed ROM gets an Open button that goes to its Steam game page", async () => {
+      vi.mocked(backend.getAppIdRomIdMap).mockResolvedValue({ "4000000007": 7 });
+      finished();
+      const { container } = await renderQueue();
+      fireEvent.click(buttonByText(container, "Open Metroid")!);
+      expect(Navigation.Navigate).toHaveBeenCalledWith("/library/app/4000000007");
+    });
+
+    it("no Open for a failed download, a firmware job, a ROM without a shortcut, or in the compact (QAM) queue", async () => {
+      vi.mocked(backend.getAppIdRomIdMap).mockResolvedValue({ "4000000007": 7 });
+      finished({ status: "failed" });
+      expect(buttonByText((await renderQueue()).container, "Open Metroid")).toBeNull();
+      finished({ kind: "firmware" });
+      expect(buttonByText((await renderQueue()).container, "Open Metroid")).toBeNull();
+      vi.mocked(backend.getAppIdRomIdMap).mockResolvedValue({});
+      finished();
+      expect(buttonByText((await renderQueue()).container, "Open Metroid")).toBeNull();
+      vi.mocked(backend.getAppIdRomIdMap).mockResolvedValue({ "4000000007": 7 });
+      finished();
+      const compact = render(<DownloadQueue compact onBack={() => {}} />);
+      await flushMount();
+      expect(buttonByText(compact.container, "Open Metroid")).toBeNull();
+    });
+  });
 });

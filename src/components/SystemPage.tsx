@@ -153,13 +153,13 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
 
         {loading && (
           <PanelSectionRow>
-            <Field label="Loading firmware status..." />
+            <Field label="Loading firmware status..." focusable />
           </PanelSectionRow>
         )}
 
         {error && (
           <PanelSectionRow>
-            <Field label="Error" description={error} />
+            <Field label="Error" description={error} focusable />
           </PanelSectionRow>
         )}
 
@@ -167,26 +167,25 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
           <PanelSectionRow>
             <Field
               label="Server offline"
-              description="RomM is unreachable. Showing what is on this machine; downloads are unavailable."
-            />
+              description="RomM is unreachable. Showing what is on this machine; downloads are unavailable." focusable />
           </PanelSectionRow>
         )}
 
         {status && (status.emulators?.length ?? 0) === 0 && (
           <PanelSectionRow>
-            <Field label="No Switch emulator found" description="Install Eden, yuzu or Ryujinx with EmuDeck first." />
+            <Field label="No Switch emulator found" description="Install Eden, yuzu or Ryujinx with EmuDeck first." focusable />
           </PanelSectionRow>
         )}
 
         {status && !loading && onRomm === 0 && !status.server_offline && (
           <PanelSectionRow>
-            <Field label="No Switch firmware on RomM" description="Upload firmware and keys to RomM's bios/Switch folder." />
+            <Field label="No Switch firmware on RomM" description="Upload firmware and keys to RomM's bios/Switch folder." focusable />
           </PanelSectionRow>
         )}
 
         {note && (
           <PanelSectionRow>
-            <Field label={note} />
+            <Field label={note} focusable />
           </PanelSectionRow>
         )}
       </PanelSection>
@@ -198,8 +197,7 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
               <PanelSectionRow>
                 <Field
                   label={`${key.file_name}${key.required ? "" : " (optional)"}${key.on_romm ? "" : " — not on RomM"}`}
-                  description={keyStateSummary(key)}
-                />
+                  description={keyStateSummary(key)} focusable />
               </PanelSectionRow>
               {key.on_romm &&
                 !status.server_offline &&
@@ -237,8 +235,7 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
                 label={`${fw.version}${fw.selected ? " (selected)" : ""}`}
                 description={`${fw.size != null ? formatBytes(fw.size) : "size unknown"} — ${
                   fw.downloaded ? "downloaded" : "not downloaded"
-                }`}
-              />
+                }`} focusable />
             </PanelSectionRow>
           ))}
           <PanelSectionRow>

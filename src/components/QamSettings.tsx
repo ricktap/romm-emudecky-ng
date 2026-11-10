@@ -75,7 +75,7 @@ export const QamSettings: FC<QamSettingsProps> = ({ onBack }) => {
       <PanelSection title="Save sync">
         {saveSyncUnavailable && (
           <PanelSectionRow>
-            <Field label="Save sync is not implemented yet" description="Planned for 0.55.0" />
+            <Field label="Save sync is not implemented yet" description="Planned for 0.55.0" focusable />
           </PanelSectionRow>
         )}
         {saveSync && (
@@ -122,7 +122,7 @@ export const QamSettings: FC<QamSettingsProps> = ({ onBack }) => {
 
       <PanelSection title="Server">
         <PanelSectionRow>
-          <Field label="Host" description={host || "Not set"} />
+          <Field label="Host" description={host || "Not set"} focusable />
         </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={() => openLibraryRoute("settings")}>

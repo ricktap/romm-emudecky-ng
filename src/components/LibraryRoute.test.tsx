@@ -2,79 +2,29 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { Navigation } from "@decky/ui";
 
-vi.mock("../api/backend", () => ({ getLibraryOverview: vi.fn() }));
+vi.mock("./LibraryGrid", () => ({ LibraryGrid: () => <div>library-grid</div> }));
 vi.mock("./SettingsPage", () => ({ SettingsPage: () => <div>settings-page</div> }));
 vi.mock("./DangerZone", () => ({ DangerZone: () => <div>danger-zone</div> }));
 vi.mock("./SystemPage", () => ({ SystemPage: () => <div>system-page</div> }));
+vi.mock("./settings/LibrarySyncSection", () => ({ LibrarySyncSection: () => <div>library-sync</div> }));
 vi.mock("./DownloadQueue", () => ({ DownloadQueue: ({ onBack }: { onBack: () => void }) => <button onClick={onBack}>downloads-page</button> }));
 
-import { getLibraryOverview } from "../api/backend";
 import { LibraryRoute } from "./LibraryRoute";
 import { LIBRARY_ROUTE, openLibraryRoute, getLibraryPlatformFilter, setLibraryPlatformFilter } from "../utils/libraryRoute";
-
-const overview = {
-  success: true,
-  roms: [
-    { rom_id: 1, app_id: 10, name: "A", platform_slug: "switch", cover_path: null, installed: true, download: null, issues: [] },
-    { rom_id: 2, app_id: 11, name: "B", platform_slug: "switch", cover_path: null, installed: false, download: null, issues: [] },
-  ],
-  platforms: [{ platform_slug: "switch", count: 2, installed: 1 }],
-};
 
 describe("LibraryRoute", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getLibraryOverview).mockResolvedValue(overview as never);
-  });
-
-  it("opens on the library tab with the overview counts", async () => {
-    render(<LibraryRoute />);
-    expect(await screen.findByText("2 games, 1 installed")).toBeTruthy();
-    expect(screen.getByText("switch: 2 games, 1 installed")).toBeTruthy();
-  });
-
-  it("narrows the Library tab to one platform when opened from a game page, and Show all clears it", async () => {
-    vi.mocked(getLibraryOverview).mockResolvedValue({
-      success: true,
-      roms: [
-        { rom_id: 1, app_id: 10, name: "A", platform_slug: "switch", cover_path: null, installed: true, download: null, issues: [] },
-        { rom_id: 2, app_id: 11, name: "B", platform_slug: "snes", cover_path: null, installed: false, download: null, issues: [] },
-      ],
-      platforms: [
-        { platform_slug: "switch", count: 1, installed: 1 },
-        { platform_slug: "snes", count: 1, installed: 0 },
-      ],
-    } as never);
-    openLibraryRoute("library", { platform: "snes" });
-    const { findByTestId, getByText, queryByText, queryByTestId } = render(<LibraryRoute />);
-    expect((await findByTestId("library-filter")).textContent).toBe("Showing snes only");
-    expect(getByText("1 games, 0 installed")).toBeTruthy();
-    expect(queryByText("switch: 1 games, 1 installed")).toBeNull();
-    fireEvent.click(getByText("Show all"));
-    expect(queryByTestId("library-filter")).toBeNull();
-    expect(getByText("2 games, 1 installed")).toBeTruthy();
-    expect(getLibraryPlatformFilter()).toBeNull();
-  });
-
-  it("opening the library without a platform clears an earlier filter", () => {
-    setLibraryPlatformFilter("snes");
     openLibraryRoute("library");
-    expect(getLibraryPlatformFilter()).toBeNull();
+    vi.clearAllMocks();
   });
 
-  it("shows the failure message when the overview cannot be loaded", async () => {
-    vi.mocked(getLibraryOverview).mockResolvedValue({ success: false, message: "Not connected" } as never);
+  it("opens on the library tab with the grid", () => {
     render(<LibraryRoute />);
-    expect(await screen.findByText("Not connected")).toBeTruthy();
+    expect(screen.getByText("library-grid")).toBeTruthy();
   });
 
-  it("shows the failure text when the overview call rejects", async () => {
-    vi.mocked(getLibraryOverview).mockRejectedValue(new Error("socket closed"));
-    render(<LibraryRoute />);
-    expect(await screen.findByText("Could not load the library")).toBeTruthy();
-  });
-
-  it("reaches the moved pages through the tabs: downloads, systems, settings with the danger zone", async () => {
+  it("reaches the moved pages through the tabs: downloads, systems, settings with the sync section and danger zone", () => {
     render(<LibraryRoute />);
     fireEvent.click(screen.getByTestId("tab-downloads"));
     expect(screen.getByText("downloads-page")).toBeTruthy();
@@ -82,6 +32,7 @@ describe("LibraryRoute", () => {
     expect(screen.getByText("system-page")).toBeTruthy();
     fireEvent.click(screen.getByTestId("tab-settings"));
     expect(screen.getByText("settings-page")).toBeTruthy();
+    expect(screen.getByText("library-sync")).toBeTruthy();
     expect(screen.getByText("danger-zone")).toBeTruthy();
   });
 
@@ -109,5 +60,13 @@ describe("LibraryRoute", () => {
     expect(Navigation.Navigate).toHaveBeenCalledWith(LIBRARY_ROUTE);
     render(<LibraryRoute />);
     expect(screen.getByText("settings-page")).toBeTruthy();
+  });
+
+  it("opening the library without a platform clears an earlier filter; with one it keeps it", () => {
+    setLibraryPlatformFilter("snes");
+    openLibraryRoute("library");
+    expect(getLibraryPlatformFilter()).toBeNull();
+    openLibraryRoute("library", { platform: "switch" });
+    expect(getLibraryPlatformFilter()).toBe("switch");
   });
 });

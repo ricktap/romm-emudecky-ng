@@ -43,7 +43,7 @@ export const ControllerSection: FC<ControllerSectionProps> = ({
       </PanelSectionRow>
       {steamInputStatus && (
         <PanelSectionRow>
-          <Field label={steamInputStatus} />
+          <Field label={steamInputStatus} focusable />
         </PanelSectionRow>
       )}
     </PanelSection>

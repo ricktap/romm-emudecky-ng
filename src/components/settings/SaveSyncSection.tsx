@@ -60,14 +60,14 @@ export const SaveSyncSection: FC<SaveSyncSectionProps> = ({
           </PanelSectionRow>
           {!saveSyncEnabled && (
             <PanelSectionRow>
-              <Field label="Save sync is disabled" description="Enable above to configure sync settings" />
+              <Field label="Save sync is disabled" description="Enable above to configure sync settings" focusable />
             </PanelSectionRow>
           )}
           {saveSyncEnabled && (
             <>
               {deviceInfo && (
                 <PanelSectionRow>
-                  <Field label="Device" description={`Registered as "${deviceInfo.device_name}"`} />
+                  <Field label="Device" description={`Registered as "${deviceInfo.device_name}"`} focusable />
                 </PanelSectionRow>
               )}
               <PanelSectionRow>
@@ -135,7 +135,7 @@ export const SaveSyncSection: FC<SaveSyncSectionProps> = ({
               </PanelSectionRow>
               {syncStatus && (
                 <PanelSectionRow>
-                  <Field label={syncStatus} />
+                  <Field label={syncStatus} focusable />
                 </PanelSectionRow>
               )}
             </>
@@ -143,7 +143,7 @@ export const SaveSyncSection: FC<SaveSyncSectionProps> = ({
         </>
       ) : (
         <PanelSectionRow>
-          <Field label="Loading..." />
+          <Field label="Loading..." focusable />
         </PanelSectionRow>
       )}
     </PanelSection>

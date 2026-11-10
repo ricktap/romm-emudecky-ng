@@ -88,6 +88,8 @@ vi.mock("@decky/ui", () => {
           className,
           "aria-label": rest["aria-label"],
           title: rest.title,
+          // Optional: lets a test address one of several buttons (style and FooterLegend props stay dropped).
+          "data-testid": rest["data-testid"],
         },
         children as never,
       ),
@@ -112,14 +114,35 @@ vi.mock("@decky/ui", () => {
       style,
       onButtonDown,
       onCancel,
-    }: AnyProps & { style?: unknown; onButtonDown?: (evt: unknown) => void; onCancel?: (evt: unknown) => void }) =>
+      onActivate,
+      onSecondaryButton,
+      ...rest
+    }: AnyProps & {
+      style?: unknown;
+      onButtonDown?: (evt: unknown) => void;
+      onCancel?: (evt: unknown) => void;
+      onActivate?: (evt: unknown) => void;
+      onSecondaryButton?: (evt: unknown) => void;
+    }) =>
       createElement(
         "div",
         {
-          "data-testid": "focusable",
+          "data-testid": (rest["data-testid"] as string | undefined) ?? "focusable",
           style,
           ref: (el: HTMLDivElement | null) => {
             if (!el) return;
+            // A (onActivate) and X (onSecondaryButton) arrive as "decky-activate" / "decky-secondary" DOM events.
+            for (const [name, handler, key] of [
+              ["decky-activate", onActivate, "_deckyActivate"],
+              ["decky-secondary", onSecondaryButton, "_deckySecondary"],
+            ] as const) {
+              const slot = el as unknown as Record<string, EventListener | undefined>;
+              if (slot[key]) el.removeEventListener(name, slot[key]!);
+              if (handler) {
+                slot[key] = ((e: Event) => handler(e)) as EventListener;
+                el.addEventListener(name, slot[key]!);
+              } else slot[key] = undefined;
+            }
             const prev = (el as unknown as { _deckyButtonDown?: EventListener })._deckyButtonDown;
             if (prev) el.removeEventListener("decky-button-down", prev);
             const prevCancel = (el as unknown as { _deckyCancel?: EventListener })._deckyCancel;

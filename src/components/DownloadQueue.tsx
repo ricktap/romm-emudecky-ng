@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, FC, Fragment } from "react";
 import { toaster } from "@decky/api";
-import { PanelSection, PanelSectionRow, ButtonItem, Field, ProgressBar } from "@decky/ui";
-import { getDownloadQueue, cancelDownload, pauseDownload, resumeDownload } from "../api/backend";
+import { PanelSection, PanelSectionRow, ButtonItem, Field, Navigation, ProgressBar } from "@decky/ui";
+import { getDownloadQueue, cancelDownload, pauseDownload, resumeDownload, getAppIdRomIdMap } from "../api/backend";
 import { getDownloadState, setDownloads } from "../utils/downloadStore";
 import { formatBytes } from "../utils/formatters";
 import { scrollToTop } from "../utils/scrollHelpers";
@@ -50,6 +50,8 @@ const WaitingNote: FC<{ item: DownloadItem }> = ({ item }) => {
 export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack, compact }) => {
   const [downloads, setLocalDownloads] = useState<DownloadItem[]>([]); // NOSONAR(typescript:S6754) — setter intentionally renamed (local wrapper around global download state).
   const [cleared, setCleared] = useState<Set<string>>(new Set());
+  // rom id -> Steam app id, to open a finished ROM's game page (full-screen queue only).
+  const [appIds, setAppIds] = useState<Map<number, number>>(new Map());
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopPolling = () => {
@@ -93,6 +95,11 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack, compact }) => {
         setLocalDownloads([...getDownloadState()]);
       });
     startPolling();
+    if (!compact) {
+      getAppIdRomIdMap()
+        .then((map) => setAppIds(new Map(Object.entries(map ?? {}).map(([appId, romId]) => [romId, Number(appId)]))))
+        .catch(() => undefined);
+    }
     return () => stopPolling();
   }, []);
 
@@ -174,7 +181,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack, compact }) => {
       <PanelSection title="Downloads">
         {visible.length === 0 ? (
           <PanelSectionRow>
-            <Field label="No downloads" />
+            <Field label="No downloads" focusable />
           </PanelSectionRow>
         ) : (
           <>
@@ -274,11 +281,25 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack, compact }) => {
               ),
             )}
 
-            {finished.map((item) => (
-              <PanelSectionRow key={downloadKey(item)}>
-                <Field label={item.rom_name} description={formatFinishedDescription(item)} />
-              </PanelSectionRow>
-            ))}
+            {finished.map((item) => {
+              const appId = !compact && item.status === "completed" && (item.kind ?? "rom") === "rom" ? appIds.get(item.rom_id) : undefined;
+              return (
+                <PanelSectionRow key={downloadKey(item)}>
+                  {appId !== undefined ? (
+                    <ButtonItem
+                      layout="below"
+                      description={formatFinishedDescription(item)}
+                      onClick={() => Navigation.Navigate(`/library/app/${appId}`)}
+                    >
+                      Open {item.rom_name}
+                    </ButtonItem>
+                  ) : (
+                    // focusable: the cursor can only stop on focusable rows, so a plain Field below the screen edge is unreachable
+                    <Field label={item.rom_name} description={formatFinishedDescription(item)} focusable />
+                  )}
+                </PanelSectionRow>
+              );
+            })}
 
             {hasFinished && (
               <PanelSectionRow>
