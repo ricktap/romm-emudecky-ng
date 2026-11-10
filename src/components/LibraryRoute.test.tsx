@@ -9,7 +9,8 @@ vi.mock("./SystemPage", () => ({ SystemPage: () => <div>system-page</div> }));
 vi.mock("./DownloadQueue", () => ({ DownloadQueue: ({ onBack }: { onBack: () => void }) => <button onClick={onBack}>downloads-page</button> }));
 
 import { getLibraryOverview } from "../api/backend";
-import { LIBRARY_ROUTE, LibraryRoute, openLibraryRoute } from "./LibraryRoute";
+import { LibraryRoute } from "./LibraryRoute";
+import { LIBRARY_ROUTE, openLibraryRoute } from "../utils/libraryRoute";
 
 const overview = {
   success: true,

@@ -22,3 +22,12 @@ export function isValidServerUrl(url: string): boolean {
 export function isHttpsUrl(url: string): boolean {
   return trimServerUrl(url).toLowerCase().startsWith("https://");
 }
+
+/** The host part of a server URL for display ("romm.example.com:8080"), or "" when it cannot be parsed. */
+export function serverHost(url: string): string {
+  try {
+    return new URL(trimServerUrl(url)).host;
+  } catch {
+    return "";
+  }
+}

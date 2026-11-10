@@ -208,6 +208,9 @@ export const LibraryPage: FC<LibraryPageProps> = ({ onBack }) => {
     return (
       <>
         <PanelSectionRow>
+          <Field label="Changes apply on the next sync" />
+        </PanelSectionRow>
+        <PanelSectionRow>
           <ButtonItem
             layout="below"
             onClick={() => {

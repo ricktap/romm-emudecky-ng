@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { trimServerUrl, isValidServerUrl, isHttpsUrl } from "./serverUrl";
+import { trimServerUrl, isValidServerUrl, isHttpsUrl, serverHost } from "./serverUrl";
 
 describe("trimServerUrl", () => {
   it("strips surrounding whitespace", () => {
@@ -51,5 +51,16 @@ describe("isHttpsUrl", () => {
 
   it("is case-insensitive", () => {
     expect(isHttpsUrl("HTTPS://romm.local")).toBe(true);
+  });
+});
+
+describe("serverHost", () => {
+  it("returns the host with its port", () => {
+    expect(serverHost(" https://romm.example.com:8443/app ")).toBe("romm.example.com:8443");
+  });
+
+  it("returns an empty string for an unparseable URL", () => {
+    expect(serverHost("not a url")).toBe("");
+    expect(serverHost("")).toBe("");
   });
 });

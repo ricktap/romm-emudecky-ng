@@ -15,9 +15,12 @@ import {
 import { phaseLines, useNowMs } from "../utils/downloadPhase";
 import { callArgs, downloadKey } from "../utils/downloadKey";
 import type { DownloadItem } from "../types";
+import { openLibraryRoute } from "../utils/libraryRoute";
 
 interface DownloadQueueProps {
   onBack: () => void;
+  /** In the Quick Access Menu: adds the link to the full queue in the RomM Library. */
+  compact?: boolean;
 }
 
 function formatFinishedDescription(item: DownloadItem): string {
@@ -44,7 +47,7 @@ const WaitingNote: FC<{ item: DownloadItem }> = ({ item }) => {
   );
 };
 
-export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
+export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack, compact }) => {
   const [downloads, setLocalDownloads] = useState<DownloadItem[]>([]); // NOSONAR(typescript:S6754) — setter intentionally renamed (local wrapper around global download state).
   const [cleared, setCleared] = useState<Set<string>>(new Set());
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -140,6 +143,15 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
   // pause/resume offered).
   const active = visible.filter((d) => isUnfinishedStatus(d.status));
   const finished = visible.filter((d) => d.status === "completed" || d.status === "failed" || d.status === "cancelled");
+  // "Pause all" pauses what is transferring; once nothing transfers, the same button resumes what is stopped.
+  const pausable = active.filter((d) => d.status === "downloading" && (d.resumable || d.phase));
+  const stopped = active.filter((d) => isStoppedStatus(d.status));
+  const pauseAll = async () => {
+    await Promise.all(pausable.map((d) => handlePause(d)));
+  };
+  const resumeAll = async () => {
+    await Promise.all(stopped.map((d) => handleResume(d)));
+  };
   const hasFinished = downloads.some(
     (d) => !cleared.has(downloadKey(d)) && (d.status === "completed" || d.status === "failed" || d.status === "cancelled"),
   );
@@ -206,6 +218,18 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
                 </div>
               </PanelSectionRow>
             ))}
+            {(pausable.length > 0 || stopped.length > 0) && (
+              <PanelSectionRow>
+                <ButtonItem
+                  layout="below"
+                  onClick={() => {
+                    detach(pausable.length > 0 ? pauseAll() : resumeAll());
+                  }}
+                >
+                  {pausable.length > 0 ? "Pause all" : "Resume all"}
+                </ButtonItem>
+              </PanelSectionRow>
+            )}
             {active.map((item) =>
               // Extraction is not cancellable and can't pause/resume — the
               // post-transfer unpack runs to completion. Offer no action row,
@@ -264,6 +288,13 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
               </PanelSectionRow>
             )}
           </>
+        )}
+        {compact && (
+          <PanelSectionRow>
+            <ButtonItem layout="below" onClick={() => openLibraryRoute("downloads")}>
+              Full queue in RomM Library
+            </ButtonItem>
+          </PanelSectionRow>
         )}
       </PanelSection>
     </>

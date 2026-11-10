@@ -1,7 +1,8 @@
 import { definePlugin, addEventListener, removeEventListener, toaster, routerHook } from "@decky/api";
 import { FaGamepad } from "react-icons/fa";
 import { downloadKey } from "./utils/downloadKey";
-import { LibraryRoute, LIBRARY_ROUTE } from "./components/LibraryRoute";
+import { LibraryRoute } from "./components/LibraryRoute";
+import { LIBRARY_ROUTE } from "./utils/libraryRoute";
 import { QAMPanel } from "./components/QAMPanel";
 import { initUnitSyncManager, resetSyncCancel } from "./utils/syncManager";
 import { setSyncProgress } from "./utils/syncProgress";

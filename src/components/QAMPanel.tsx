@@ -1,14 +1,12 @@
 import { useState, useRef, useEffect, FC, type ReactNode } from "react";
 import { MainPage } from "./MainPage";
-import { SettingsPage } from "./SettingsPage";
+import { QamSettings } from "./QamSettings";
 import { LibraryPage } from "./LibraryPage";
-import { SystemPage } from "./SystemPage";
-import { DangerZone } from "./DangerZone";
 import { DownloadQueue } from "./DownloadQueue";
 import { BackOnCancel } from "./BackOnCancel";
 import { findOutermostScrollParent } from "../utils/scrollHelpers";
 
-export type Page = "main" | "settings" | "library" | "data" | "downloads" | "system";
+export type Page = "main" | "settings" | "platforms" | "downloads";
 
 // Module-level page state survives QAM remounts (e.g. after modal close)
 let currentPage: Page = "main";
@@ -49,19 +47,13 @@ export const QAMPanel: FC = () => {
   let content: ReactNode;
   switch (page) {
     case "settings":
-      content = <SettingsPage onBack={() => setPage("main")} />;
+      content = <QamSettings onBack={() => setPage("main")} />;
       break;
-    case "library":
+    case "platforms":
       content = <LibraryPage onBack={() => setPage("main")} />;
       break;
-    case "data":
-      content = <DangerZone onBack={() => setPage("main")} />;
-      break;
     case "downloads":
-      content = <DownloadQueue onBack={() => setPage("main")} />;
-      break;
-    case "system":
-      content = <SystemPage onBack={() => setPage("main")} />;
+      content = <DownloadQueue compact onBack={() => setPage("main")} />;
       break;
     default:
       content = <MainPage onNavigate={(p) => setPage(p)} />;

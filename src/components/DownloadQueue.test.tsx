@@ -26,6 +26,8 @@ import { DownloadQueue } from "./DownloadQueue";
 import * as backend from "../api/backend";
 import { setDownloads, getDownloadState } from "../utils/downloadStore";
 import type { DownloadItem } from "../types";
+import { Navigation } from "@decky/ui";
+import { getLibraryTab } from "../utils/libraryRoute";
 
 // Local @decky/ui mock adds ProgressBar (not in the global stub) and exposes
 // per-prop testids so we can assert progress bar wiring directly. The active
@@ -37,6 +39,7 @@ vi.mock("@decky/ui", async () => {
   const { createElement: ce } = await import("react");
   const passthrough = (tag: string) => (p: AnyProps) => ce(tag, p, p.children as never);
   return {
+    Navigation: { Navigate: vi.fn(), CloseSideMenus: vi.fn() },
     PanelSection: (p: AnyProps & { title?: unknown }) => ce("section", { title: p.title }, p.children as never),
     PanelSectionRow: passthrough("div"),
     ButtonItem: ({ children, onClick, disabled }: AnyProps & { onClick?: () => void; disabled?: boolean }) =>
@@ -947,6 +950,54 @@ describe("DownloadQueue", () => {
       expect(back).not.toBeNull();
       fireEvent.click(back!);
       expect(onBack).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("pause all / resume all and the compact (QAM) link", () => {
+    beforeEach(() => {
+      vi.mocked(backend.pauseDownload).mockClear();
+      vi.mocked(backend.resumeDownload).mockClear();
+    });
+
+    const queue = (...items: Partial<DownloadItem>[]) =>
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({
+        downloads: items.map((o, n) => makeItem({ rom_id: n + 1, rom_name: `G${n + 1}`, ...o })),
+      });
+
+    it("Pause all pauses every transferring download, and only those", async () => {
+      queue({ resumable: true }, { resumable: true }, { status: "queued" });
+      const { container } = await renderQueue();
+      fireEvent.click(buttonByExactText(container, "Pause all")!);
+      await flushMount();
+      const paused = vi.mocked(backend.pauseDownload).mock.calls.map((c) => c[0]).sort();
+      expect(paused).toEqual([1, 2]);
+    });
+
+    it("offers Resume all once nothing transfers, and resumes every stopped download", async () => {
+      queue({ status: "paused", resumable: true }, { status: "interrupted", reason: "network", resumable: true });
+      const { container } = await renderQueue();
+      expect(buttonByExactText(container, "Pause all")).toBeNull();
+      fireEvent.click(buttonByExactText(container, "Resume all")!);
+      await flushMount();
+      const resumed = vi.mocked(backend.resumeDownload).mock.calls.map((c) => c[0]).sort();
+      expect(resumed).toEqual([1, 2]);
+    });
+
+    it("shows neither button when the queue is empty", async () => {
+      const { container } = await renderQueue();
+      expect(buttonByExactText(container, "Pause all")).toBeNull();
+      expect(buttonByExactText(container, "Resume all")).toBeNull();
+    });
+
+    it("only the compact page links to the full queue, and the link opens the Downloads tab", async () => {
+      const plain = await renderQueue();
+      expect(buttonByExactText(plain.container, "Full queue in RomM Library")).toBeNull();
+      plain.unmount();
+      const compact = render(<DownloadQueue compact onBack={() => {}} />);
+      await flushMount();
+      fireEvent.click(buttonByExactText(compact.container, "Full queue in RomM Library")!);
+      expect(Navigation.Navigate).toHaveBeenCalledWith("/romm-library");
+      expect(getLibraryTab()).toBe("downloads");
     });
   });
 });

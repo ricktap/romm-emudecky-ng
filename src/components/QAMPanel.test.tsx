@@ -3,20 +3,18 @@ import { render, fireEvent, act } from "@testing-library/react";
 
 // The pages are not under test here; each shows its name and a way to navigate.
 vi.mock("./MainPage", () => ({
-  MainPage: ({ onNavigate }: { onNavigate: (p: "downloads" | "system" | "settings") => void }) => (
+  MainPage: ({ onNavigate }: { onNavigate: (p: "downloads" | "platforms" | "settings") => void }) => (
     <div>
       <span>MAIN PAGE</span>
       <button onClick={() => onNavigate("downloads")}>open downloads</button>
-      <button onClick={() => onNavigate("system")}>open system</button>
+      <button onClick={() => onNavigate("platforms")}>open platforms</button>
       <button onClick={() => onNavigate("settings")}>open settings</button>
     </div>
   ),
 }));
 vi.mock("./DownloadQueue", () => ({ DownloadQueue: () => <span>DOWNLOADS PAGE</span> }));
-vi.mock("./SystemPage", () => ({ SystemPage: () => <span>SYSTEM PAGE</span> }));
-vi.mock("./SettingsPage", () => ({ SettingsPage: () => <span>SETTINGS PAGE</span> }));
-vi.mock("./LibraryPage", () => ({ LibraryPage: () => <span>LIBRARY PAGE</span> }));
-vi.mock("./DangerZone", () => ({ DangerZone: () => <span>DANGER PAGE</span> }));
+vi.mock("./QamSettings", () => ({ QamSettings: () => <span>SETTINGS PAGE</span> }));
+vi.mock("./LibraryPage", () => ({ LibraryPage: () => <span>PLATFORMS PAGE</span> }));
 vi.mock("../utils/scrollHelpers", () => ({ findOutermostScrollParent: () => null, scrollToTop: vi.fn() }));
 
 import { QAMPanel } from "./QAMPanel";
@@ -40,7 +38,7 @@ describe("QAMPanel — B steps back to the main page", () => {
 
   it.each([
     ["open downloads", "DOWNLOADS PAGE"],
-    ["open system", "SYSTEM PAGE"],
+    ["open platforms", "PLATFORMS PAGE"],
     ["open settings", "SETTINGS PAGE"],
   ])("from a sub-menu (%s), B goes back to the main page", async (label, expected) => {
     const { getByTestId, getByText, queryByText } = await openAndGet(label, expected);
@@ -60,7 +58,7 @@ describe("QAMPanel — B steps back to the main page", () => {
   });
 
   it("goes back one level at a time: sub-menu, then main page, and stays on main", async () => {
-    const { getByTestId, getByText, queryByTestId } = await openAndGet("open system", "SYSTEM PAGE");
+    const { getByTestId, getByText, queryByTestId } = await openAndGet("open platforms", "PLATFORMS PAGE");
     await act(async () => {
       cancel(getByTestId("focusable"));
       await vi.advanceTimersByTimeAsync(100);
