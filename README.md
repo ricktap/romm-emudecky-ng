@@ -17,8 +17,8 @@ saves in sync across devices through your RomM server.
 - **Save sync** — Keeps save files in sync across devices through your RomM server, with newest-wins conflict resolution
   and a manual override when you need it
 - **ROM downloads** — Download ROMs on demand with progress tracking and a managed download queue
-- **BIOS management** — Download firmware/BIOS files from RomM for systems that need them (PSX, Dreamcast, PS2, …)
-- **Game detail page** — Install status, BIOS status, and download/uninstall actions right on each game's Steam page
+- **Switch firmware and keys** — See which keys and firmware RomM has, compare them with your emulators (Eden, yuzu, Ryujinx), download what is missing, pick the firmware version, and replace a key with a backup
+- **Game detail page** — Install status and download/uninstall actions right on each game's Steam page
 - **Per-platform control** — Choose exactly which platforms get synced
 - **Controller friendly** — Full gamepad navigation throughout the plugin UI
 - **Steam Input config** — Per-shortcut Steam Input mode (Default / Force On / Force Off)
@@ -74,7 +74,7 @@ gear icon → toggle **Developer Mode**).
 
 See the [User Guide](docs/user-guide/syncing-your-library.md) for syncing details,
 [save sync](docs/user-guide/save-sync.md), and
-[BIOS management](docs/user-guide/bios-management.md).
+[Switch firmware and keys](docs/user-guide/bios-management.md).
 
 ## Contributing
 

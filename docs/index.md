@@ -7,7 +7,7 @@ library into Steam as Non-Steam shortcuts. Games launch through EmuDeck.
 
 - Browse your entire RomM library directly from Steam's Gaming Mode
 - Download ROMs on-demand with cover art, hero banners, logos, and metadata
-- Manage BIOS files for systems that require them
+- Download and check the Switch firmware and keys your emulators need
 - Sync save files between devices through your RomM server
 
 ![A RomM game's detail page in Steam showing the injected EmuDecky RomM Manager panel](assets/screenshot-game-detail.jpg)
@@ -21,7 +21,7 @@ library into Steam as Non-Steam shortcuts. Games launch through EmuDeck.
    artwork
 4. **[Managing Games](user-guide/managing-games.md)** — Game detail panel, downloading ROMs, uninstalling, refreshing
    metadata
-5. **[BIOS Management](user-guide/bios-management.md)** — What BIOS files are, checking status, downloading per-platform
+5. **[Switch firmware and keys](user-guide/bios-management.md)** — Checking keys per emulator, choosing a firmware version, downloading, replacing a key
 6. **[EmuDeck Path Migration](user-guide/retrodeck-path-migration.md)** — Moving your EmuDeck installation between
    storage locations
 7. **[Save Sync](user-guide/save-sync.md)** — Auto-sync, conflict resolution modes, manual sync, failed sync retries
