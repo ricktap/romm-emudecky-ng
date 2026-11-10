@@ -40,8 +40,9 @@ export function interruptedLabel(reason?: string | null): string {
   return detail ? `Interrupted — ${detail}` : "Interrupted";
 }
 
-/** Caption suffix for a stopped download in the queue list ("" for any other status). */
+/** Caption suffix for a download that is stopped or still waiting for the transfer slot ("" otherwise). */
 export function stoppedCaptionSuffix(status: string, reason?: string | null): string {
+  if (status === "queued") return " — In Queue";
   if (status === "paused") return " — Paused";
   if (status === "interrupted") return ` — ${interruptedLabel(reason)}`;
   return "";

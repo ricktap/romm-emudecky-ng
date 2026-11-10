@@ -35,6 +35,7 @@ describe("downloadStatus", () => {
     expect(stoppedCaptionSuffix("paused")).toBe(" — Paused");
     expect(stoppedCaptionSuffix("interrupted", "restart")).toBe(" — Interrupted — plugin restarted");
     expect(stoppedCaptionSuffix("downloading", "restart")).toBe("");
+    expect(stoppedCaptionSuffix("queued")).toBe(" — In Queue");
   });
 
   it("labels timeouts and unverifiable partials", () => {

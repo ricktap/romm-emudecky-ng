@@ -80,6 +80,8 @@ interface DownloadProgress {
    * Pause-Resume chevron.
    */
   extracting: boolean;
+  /** The download is accepted but another one holds the transfer slot: no bytes yet. */
+  queued?: boolean;
 }
 
 function lerpColor(a: [number, number, number], b: [number, number, number], t: number): string {
@@ -167,6 +169,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
           paused: isStoppedStatus(entry.status),
           interruptReason: entry.status === "interrupted" ? (entry.reason ?? "") : null,
           extracting: entry.status === "extracting",
+          queued: entry.status === "queued",
           ...(entry.phase && entry.status === "downloading"
             ? {
                 phaseInfo: {
@@ -272,6 +275,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
             paused: extracting ? false : isStoppedStatus(evt.status),
             interruptReason: evt.status === "interrupted" ? (evt.reason ?? "") : null,
             extracting,
+            queued: evt.status === "queued",
             ...(evt.phase && evt.status === "downloading"
               ? {
                   phaseInfo: {
@@ -1041,6 +1045,8 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
       dlLabel = `Extracting… ${Math.round(t * 100)}%`;
     } else if (paused) {
       dlLabel = interruptReason === null ? "Paused" : interruptedLabel(interruptReason);
+    } else if (downloading && dlProgress.queued) {
+      dlLabel = "In Queue";
     } else if (waitingInfo) {
       dlLabel = phaseButtonLabel(waitingInfo, nowMs);
     } else if (downloading) {
