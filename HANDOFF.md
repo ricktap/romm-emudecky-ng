@@ -7,7 +7,7 @@ then `EMUDECK_PORT_PLAN.md` (roadmap + decisions). Where this file and the code 
 
 A Decky Loader plugin (repo `ricktap/romm-emudecky-ng`, owner Patrick) that syncs a self-hosted RomM library onto
 **EmuDeck** machines (Steam Deck + two Bazzite PCs) as Steam shortcuts: install/uninstall, launch via emulators, save
-sync, firmware. **Switch only until v0.70** (Eden / Ryujinx / yuzu); retro systems return in v0.80, modern consoles in v0.90; Decky store at v1.0.0.
+sync, firmware. **Switch only until v0.80** (Eden / Ryujinx / yuzu); retro systems return in v0.80, modern consoles in v0.90; Decky store at v1.0.0.
 Fork chain: `danielcopper/decky-romm-sync` (RetroDECK) → `melikootje/Romm-emudecky` → this repo. `#NNN` refs inside old
 code/docs/ADRs are **upstream** issues.
 

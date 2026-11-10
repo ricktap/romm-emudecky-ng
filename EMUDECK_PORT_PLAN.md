@@ -14,14 +14,16 @@
 | Version         | Focus                                                                                                  |
 | --------------- | ------------------------------------------------------------------------------------------------------ |
 | **0.40.0**      | Rust backend rewrite, rewrite steps 1–3 and 6 (remove Python), still Switch-only. It is built on the long-running `rust` branch and swapped in all at once (no hybrid releases); `main` gets only bugfixes until then. Tests are ported to Rust, with the Python tests as the spec |
-| **0.45.0**      | Switch firmware/keys in Rust (rewrite step 4, Phase 7)                                                  |
-| **0.55.0**      | Switch save sync in Rust (rewrite step 5, Phase 6; needs an ADR first)                                  |
-| up to **0.70.0**| New UI and new features (internal/external URL, Downloads view, health check), still Switch-only        |
+| **0.45.0**      | Switch firmware/keys in Rust (rewrite step 4, Phase 7). Released 2026-11-10 (shipped as 0.41–0.42, closed as 0.45.0) |
+| **0.46.0–0.50.0** | New UI (moved up front 2026-11-10; spec `docs/design/ui-redesign-prototype.html`, plan `docs/plans/0.46.0-ui-rebuild.md`): 0.46 Library route + overview callable, 0.47 QAM home, 0.48 game page, 0.49 library grid + Downloads tab, 0.50 close-out and docs |
+| **0.55.0**      | Switch save sync in Rust (rewrite step 5, Phase 6; needs an ADR first), UI in the new design        |
+| **0.60.0**      | Connection and settings: internal/external URL, health banner, storage-path notice, RetroDECK leftovers |
+| **0.65.0**      | Stabilization: install/uninstall audit, emulator override, hardware matrix, auto-resume              |
 | **0.80.0**      | Retro emulators, Atari up to the N64 era                                                                |
 | **0.90.0**      | Modern consoles, Xbox/PS2 up to today                                                                   |
 | **1.0.0**       | Release in the Decky plugin store                                                                       |
 
-Each version is a GitHub milestone. **Nintendo Switch only up to 0.70.0.**
+Each version is a GitHub milestone. **Nintendo Switch only up to 0.65.0.**
 
 What this means for the work below:
 

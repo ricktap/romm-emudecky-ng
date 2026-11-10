@@ -1,0 +1,836 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EmuDecky RomM Manager · UI redesign prototype + spec</title>
+<!--
+  FOR THE CODING AGENT
+  This file has two parts:
+  1. An interactive click dummy (1280x800, Steam Deck resolution). Open it in a browser and click through.
+     It defines STRUCTURE, FLOWS and STATES. It does not define pixel styling: use @decky/ui components.
+  2. The implementation spec (section id="spec" below). Read it fully before starting.
+  The prototype's data is fake. All real data comes from the existing backend callables in src/api/backend.ts.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0b0e12;--page:#f4f2ed;--ink:#1b1d21;--muted:#5b6068}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);font-family:Inter,system-ui,sans-serif}
+.wrap{max-width:1320px;margin:0 auto;padding:24px 20px 80px}
+.pagehead h1{margin:0 0 6px;font-size:26px;letter-spacing:-.01em}
+.pagehead p{margin:0 0 18px;color:var(--muted);font-size:15px;max-width:820px;line-height:1.5}
+.stage{width:100%;position:relative;border-radius:10px;overflow:hidden;background:#000;box-shadow:0 12px 40px rgba(0,0,0,.25)}
+.scaler{width:1280px;height:800px;transform-origin:0 0;position:absolute;left:0;top:0}
+.restart{margin:10px 0 0;border:1px solid #c8c3b8;background:#fff;border-radius:6px;padding:7px 12px;font-size:13px;cursor:pointer;font-family:inherit}
+
+/* ---------- prototype (Steam-like) ---------- */
+#app{width:1280px;height:800px;position:relative;overflow:hidden;background:#0e141b;color:#dcdedf;font-family:Inter,system-ui,sans-serif}
+#app button{font-family:inherit}
+.topbar{position:absolute;top:0;left:0;right:0;height:40px;display:flex;align-items:center;justify-content:flex-end;gap:18px;padding:0 20px;font-size:14px;font-weight:500;z-index:40;pointer-events:none}
+.hints{position:absolute;bottom:0;left:0;right:0;height:40px;background:#0a0c0f;display:flex;align-items:center;gap:18px;padding:0 16px;z-index:60}
+.hint{display:inline-flex;align-items:center;gap:8px;background:none;border:0;color:#dcdedf;font-size:12px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;padding:4px 6px;border-radius:4px}
+.hint:hover{background:#23262e}
+.hint.static{cursor:default}.hint.static:hover{background:none}
+.glyph{min-width:22px;height:22px;border-radius:11px;background:#dcdedf;color:#0a0c0f;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;padding:0 6px}
+.btn{border:0;font-size:14px;font-weight:500;background:#2b313a;color:#dcdedf;border-radius:3px;padding:0 14px;height:40px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap}
+.btn:hover{background:#dcdedf;color:#0e141b}
+.btn.primary{background:#1a9fff;color:#fff}.btn.primary:hover{background:#5cbaff;color:#fff}
+.btn.play{background:#59bf40;color:#fff}.btn.play:hover{background:#74d65b;color:#fff}
+.btn.warn{background:#d4a72c;color:#1a1408}
+.btn.ghost{background:transparent;border:1px solid #3a414c}.btn.ghost:hover{background:#dcdedf;color:#0e141b}
+.btn.danger{color:#ff8a8a}.btn.danger:hover{background:#d4343c;color:#fff}
+.btn.dangerfill{background:#d4343c;color:#fff}
+.btn.sm{height:32px;font-size:13px;padding:0 10px}
+.btn.block{width:100%}
+.btn.icon{width:40px;padding:0}
+.btn.sm.icon{width:32px}
+.dim{position:absolute;left:0;top:0;right:0;bottom:40px;background:rgba(4,6,9,.62);border:0;z-index:30;cursor:default}
+.qam{position:absolute;top:0;right:0;bottom:40px;width:420px;display:flex;background:#0e1218;z-index:35;box-shadow:-12px 0 32px rgba(0,0,0,.55)}
+.rail{width:60px;background:#0a0d12;display:flex;flex-direction:column;align-items:center;padding-top:56px;gap:6px}
+.ri{width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:#7d858f;border-radius:4px}
+.ri.on{background:#23262e;color:#fff}
+.qbody{flex:1;overflow-y:auto;padding:48px 16px 24px}
+.qhead{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.qhead h2{margin:0;font-size:19px;font-weight:700;color:#fff}
+.qsec{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8b929a;margin:18px 0 8px}
+.status{display:flex;align-items:center;gap:8px;font-size:13px;color:#a3aab3}
+.dot{width:8px;height:8px;border-radius:4px;background:#59bf40;display:inline-block;flex:none}
+.dot.amber{background:#d4a72c}.dot.red{background:#d4343c}.dot.grey{background:#5c636d}
+.card{background:#171c23;border-radius:6px;padding:12px}
+.card h3{margin:0 0 4px;font-size:15px;font-weight:600;color:#fff}
+.muted{color:#8b929a;font-size:13px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 0;border-bottom:1px solid #222831;font-size:14px}
+.row .v{color:#8b929a;font-size:13px;text-align:right}
+.small{font-size:12px}
+.navrow{width:100%;display:flex;align-items:center;gap:10px;background:#171c23;border:0;color:#dcdedf;border-radius:4px;padding:0 12px;height:44px;font-size:14px;cursor:pointer;margin-bottom:4px}
+.navrow:hover{background:#dcdedf;color:#0e141b}
+.navrow .sp{flex:1;text-align:left}
+.badge{background:#1a9fff;color:#fff;border-radius:9px;font-size:11px;font-weight:700;padding:2px 7px}
+.att{width:100%;display:flex;align-items:center;gap:10px;background:#231f15;border:1px solid #4a3f1d;color:#dcdedf;border-radius:4px;padding:9px 12px;font-size:13px;cursor:pointer;text-align:left;margin-bottom:6px}
+.att:hover{background:#dcdedf;color:#0e141b;border-color:#dcdedf}
+.att .t{font-weight:600;display:block}.att .s{font-size:12px;opacity:.75}
+.amberc{color:#d4a72c}
+.bar{height:6px;background:#2b313a;border-radius:3px;overflow:hidden;display:block}
+.bar span{display:block;height:100%;background:#1a9fff}
+.dlrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #222831}
+.sw{width:44px;height:24px;border-radius:12px;background:#3a414c;border:0;position:relative;cursor:pointer;flex:none}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:9px;background:#dcdedf;transition:left .15s}
+.sw.on{background:#1a9fff}.sw.on::after{left:23px}
+.thumb{width:36px;height:48px;border-radius:3px;flex:none;display:flex;align-items:flex-end;font-size:9px;font-weight:800;color:rgba(255,255,255,.75);padding:3px}
+.toast{position:absolute;right:20px;bottom:56px;background:#23262e;color:#fff;font-size:14px;padding:12px 16px;border-radius:6px;z-index:70;box-shadow:0 8px 24px rgba(0,0,0,.5);display:flex;align-items:center;gap:10px;max-width:420px}
+.steambg{position:absolute;inset:0;padding:56px 32px 0;background:#121820}
+.lbl{font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8b929a;margin-bottom:14px}
+.tile{border:0;padding:0;background:none;cursor:pointer;display:flex;flex-direction:column;gap:8px;text-align:left;color:#dcdedf}
+.tile .art{border-radius:4px;display:flex;align-items:flex-end;padding:12px;font-weight:800;color:#fff;transition:transform .12s}
+.tile:hover .art{outline:3px solid #fff;transform:scale(1.03)}
+.lib{position:absolute;inset:0;padding-top:40px;display:flex;flex-direction:column;background:#10151c}
+.lhead{display:flex;align-items:center;gap:16px;padding:8px 28px 0;height:56px}
+.lhead h1{margin:0;font-size:22px;font-weight:800;color:#fff}
+.ltabs{display:flex;align-items:center;gap:4px;padding:0 28px;border-bottom:1px solid #222831}
+.ltab{border:0;background:transparent;color:#8b929a;font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;padding:14px;cursor:pointer;border-bottom:3px solid transparent;display:inline-flex;align-items:center;gap:8px}
+.ltab.on{color:#fff;border-bottom-color:#1a9fff}
+.ltab:hover{color:#fff;background:#1c222b}
+.searchwrap{position:relative;margin-left:auto}
+.searchwrap svg{position:absolute;left:10px;top:10px;color:#8b929a}
+.search{height:36px;border-radius:4px;border:1px solid #2f3540;background:#171c23;color:#fff;padding:0 12px 0 34px;font-size:14px;width:260px;font-family:inherit}
+.lbody{flex:1;display:flex;min-height:0}
+.prail{width:230px;flex:none;padding:16px 12px;border-right:1px solid #222831;overflow-y:auto}
+.pbtn{width:100%;display:flex;align-items:center;justify-content:space-between;border:0;background:transparent;color:#c3c8ce;font-size:14px;padding:0 12px;height:40px;border-radius:4px;cursor:pointer;text-align:left}
+.pbtn.on{background:#23303f;color:#fff}
+.pbtn:hover{background:#dcdedf;color:#0e141b}
+.pbtn .n{font-size:12px;opacity:.7}
+.pbtn.off{opacity:.45}
+.lmain{flex:1;min-width:0;overflow-y:auto;padding:16px 24px 56px}
+.chips{display:flex;gap:8px;margin-bottom:16px;align-items:center}
+.fchip{border:1px solid #2f3540;background:transparent;color:#c3c8ce;font-size:13px;font-weight:500;padding:0 12px;height:32px;border-radius:16px;cursor:pointer}
+.fchip.on{background:#dcdedf;color:#0e141b;border-color:#dcdedf}
+.fchip:hover{border-color:#fff}
+.grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:18px}
+.gcard{border:0;padding:0;background:none;cursor:pointer;display:flex;flex-direction:column;gap:7px;text-align:left;color:#dcdedf}
+.cover{position:relative;display:block;aspect-ratio:2/3;border-radius:4px;overflow:hidden;transition:transform .12s;box-shadow:0 4px 12px rgba(0,0,0,.35)}
+.gcard:hover .cover{outline:3px solid #fff;transform:scale(1.04)}
+.ptag{position:absolute;left:8px;top:8px;font-size:10px;font-weight:800;letter-spacing:.06em;background:rgba(0,0,0,.45);color:#fff;padding:2px 6px;border-radius:3px}
+.ctitle{position:absolute;left:10px;right:10px;bottom:12px;font-size:15px;font-weight:800;line-height:1.15;color:#fff}
+.sbadge{position:absolute;right:8px;top:8px;width:24px;height:24px;border-radius:12px;display:flex;align-items:center;justify-content:center}
+.sb-ok{background:#59bf40;color:#fff}.sb-cloud{background:rgba(0,0,0,.55);color:#dcdedf}.sb-warn{background:#d4a72c;color:#1a1408}.sb-dl{background:#1a9fff;color:#fff}
+.cbar{position:absolute;left:0;right:0;bottom:0;height:5px;background:rgba(0,0,0,.5)}
+.cbar span{display:block;height:100%;background:#1a9fff}
+.gname{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gsub{font-size:12px;color:#8b929a;margin-top:-4px}.gsub.warn{color:#d4a72c}
+.tbl{width:100%;border-collapse:collapse;font-size:14px}
+.tbl th{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8b929a;text-align:left;padding:8px 10px;border-bottom:1px solid #2a3039}
+.tbl td{padding:10px;border-bottom:1px solid #1f252d;vertical-align:middle}
+.corebtn{border:1px solid #2f3540;background:#171c23;color:#dcdedf;border-radius:4px;height:32px;padding:0 10px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.corebtn:hover{background:#dcdedf;color:#0e141b}
+.setgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:start}
+.col{display:flex;flex-direction:column;gap:18px}
+.scard{background:#161b22;border-radius:6px;padding:4px 16px 8px}
+.scard h3{margin:14px 0 4px;font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8b929a}
+.scard .row:last-child{border:0}
+.game{position:absolute;inset:0;background:#141a21;display:flex;flex-direction:column}
+.hero{height:250px;flex:none;position:relative;display:flex;align-items:flex-end;padding:0 40px 26px}
+.htitle{font-size:46px;font-weight:800;color:#fff;letter-spacing:-.02em;line-height:1.02;max-width:760px}
+.hplat{position:absolute;right:40px;bottom:28px;font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.8)}
+.abar{display:flex;align-items:center;gap:14px;padding:16px 40px 10px}
+.big{height:52px;min-width:230px;font-size:17px;font-weight:600}
+.pbig{position:relative;overflow:hidden;background:#24364a;color:#fff}
+.pbig .fill{position:absolute;left:0;top:0;bottom:0;background:#1a9fff;opacity:.55}
+.pbig .lt{position:relative}
+.pick{border:1px solid #333a45;background:#1b2129;color:#dcdedf;border-radius:3px;height:52px;padding:0 12px;font-size:13px;cursor:pointer;display:inline-flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:2px}
+.pick:hover{background:#dcdedf;color:#0e141b}
+.pk{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.65}
+.pv{display:flex;align-items:center;gap:6px;font-weight:600}
+.stat{display:flex;flex-direction:column;gap:3px;padding:0 8px}
+.sk{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8b929a}
+.sv{font-size:14px}
+.ready{display:flex;gap:10px;padding:2px 40px 12px}
+.rchip{flex:1;min-width:0;display:flex;align-items:center;gap:10px;border:1px solid #262d37;background:#1a2029;border-radius:6px;padding:9px 12px;height:58px}
+.rchip.warn{border-color:#5e4b1b;background:#272114}
+.rt{font-size:14px;font-weight:600;color:#fff}
+.rs{font-size:12px;color:#8b929a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rtx{flex:1;min-width:0}
+.ic-ok{color:#59bf40}.ic-warn{color:#d4a72c}.ic-neu{color:#8b929a}.ic-busy{color:#1a9fff}
+.dtabs{display:flex;gap:4px;padding:0 40px;border-bottom:1px solid #232a33}
+.dtab{border:0;background:transparent;color:#8b929a;font-size:15px;font-weight:600;text-transform:uppercase;padding:12px 14px;cursor:pointer;border-bottom:3px solid transparent}
+.dtab.on{color:#fff;border-bottom-color:#1a9fff}
+.dtab:hover{color:#fff;background:#1c222b}
+.dbody{flex:1;overflow-y:auto;padding:18px 40px 56px}
+.kv{display:grid;grid-template-columns:180px 1fr;gap:10px 18px;font-size:14px}
+.kv .k{color:#8b929a}
+.modalwrap{position:absolute;left:0;top:0;right:0;bottom:40px;background:rgba(4,6,9,.72);z-index:50;display:flex;align-items:center;justify-content:center}
+.modal{width:460px;background:#1c2129;border-radius:6px;box-shadow:0 18px 50px rgba(0,0,0,.6);overflow:hidden}
+.modal.wide{width:640px}
+.modal h2{margin:0;padding:18px 20px 6px;font-size:19px;font-weight:700;color:#fff}
+.msub{padding:0 20px 12px;font-size:13px;color:#8b929a;line-height:1.5}
+.mitem{width:100%;display:flex;align-items:center;gap:12px;border:0;background:transparent;color:#dcdedf;font-size:15px;padding:0 20px;height:46px;cursor:pointer;text-align:left}
+.mitem:hover{background:#dcdedf;color:#0e141b}
+.mitem.danger{color:#ff8a8a}.mitem.danger:hover{background:#d4343c;color:#fff}
+.mv{margin-left:auto;font-size:13px;opacity:.7}
+.mgroup{border-top:1px solid #2a3039;padding:6px 0}
+.mlabel{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8b929a;padding:8px 20px 4px}
+.mfoot{display:flex;gap:10px;justify-content:flex-end;padding:14px 20px;border-top:1px solid #2a3039}
+.tag{font-size:11px;font-weight:700;border-radius:3px;padding:2px 6px;background:#2f3540;color:#c3c8ce}
+.tag.blue{background:#173a5a;color:#8cc8ff}.tag.green{background:#1f3a1a;color:#9be08a}
+.cmpcol{flex:1;background:#141920;border:1px solid #2a3039;border-radius:6px;padding:12px}
+.launch{position:absolute;left:0;top:0;right:0;bottom:40px;background:#07090c;z-index:55;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+
+/* ---------- spec ---------- */
+#spec{margin-top:36px;background:#fff;border:1px solid #e2ded5;border-radius:10px;padding:28px 32px;line-height:1.55;font-size:15px}
+#spec h2{font-size:22px;margin:0 0 6px}
+#spec h3{font-size:17px;margin:28px 0 8px;padding-top:18px;border-top:1px solid #ece9e2}
+#spec h4{font-size:15px;margin:18px 0 6px}
+#spec code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;background:#f1efe9;padding:1px 5px;border-radius:4px}
+#spec pre{background:#1b1d21;color:#e8e6e1;padding:14px 16px;border-radius:8px;overflow-x:auto;font-size:13px;line-height:1.5}
+#spec pre code{background:none;padding:0;color:inherit}
+#spec table{border-collapse:collapse;width:100%;font-size:14px;margin:8px 0}
+#spec th,#spec td{border:1px solid #e2ded5;padding:7px 10px;text-align:left;vertical-align:top}
+#spec th{background:#f6f4ef}
+#spec li{margin:3px 0}
+@media (max-width:700px){#spec{padding:18px 16px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="pagehead">
+    <h1>EmuDecky RomM Manager · UI redesign</h1>
+    <p>Click dummy at Steam Deck resolution (1280×800) plus the implementation spec for <a href="https://github.com/ricktap/romm-emudecky-ng">romm-emudecky-ng</a>. Chosen variants: drill-down Quick Access Menu, cover grid library, inline readiness strip on the game page. Hover is the gamepad focus. The bottom bar's ··· and B buttons are clickable.</p>
+  </div>
+  <div class="stage" id="stage"><div class="scaler" id="scaler"><div id="app"></div></div></div>
+  <button class="restart" id="restart">Restart prototype</button>
+
+<section id="spec">
+<h2>Implementation spec for the coding agent</h2>
+<p>The prototype above is the source of truth for <b>information architecture, flows and states</b>. It is not a styling reference: build everything with <code>@decky/ui</code> components so focus handling, gamepad navigation and theming (including CSS Loader themes) keep working. All data in the prototype is fake. Real data comes from the existing callables in <code>src/api/backend.ts</code>.</p>
+
+<h3>0. Ground rules</h3>
+<ul>
+  <li><b>No feature loss.</b> Every action the plugin has today must still be reachable. This is a re-arrangement, not a rewrite. Reuse existing components and stores (<code>syncProgress</code>, <code>downloadStore</code>, <code>connectionState</code>, <code>saveStatus</code>, <code>updateState</code>, <code>settingsResetStore</code>).</li>
+  <li><b>Gamepad first.</b> Every interactive element must be reachable with D-pad, A selects, B goes back one level. Keep the existing focus pattern from <code>QAMPanel.tsx</code> (focus the first button after a page change) and <code>BackOnCancel</code>.</li>
+  <li><b>Keep tests green.</b> Update affected tests, add tests for new components (vitest setup already exists).</li>
+  <li><b>One PR per phase</b> (see section 5). Each phase must ship a working plugin on its own.</li>
+  <li>Use Decky APIs only: <code>routerHook.addRoute</code> / <code>addPatch</code>, <code>Navigation</code>, <code>showModal</code>, <code>showContextMenu</code>. Do not write <code>shortcuts.vdf</code> directly. Shortcuts and collections stay on <code>SteamClient</code> / <code>collectionStore</code> as today.</li>
+</ul>
+
+<h3>1. Surfaces and their job</h3>
+<table>
+  <tr><th>Surface</th><th>Job</th><th>Where in code</th></tr>
+  <tr><td>Quick Access Menu (QAM)</td><td>Glance and quick actions only: connection, sync, needs attention, active download, entry to the full library.</td><td><code>QAMPanel.tsx</code>, <code>MainPage.tsx</code> + sub pages</td></tr>
+  <tr><td>RomM Library (new full-screen route)</td><td>Browse and manage: library grid, downloads, systems/BIOS/cores, all settings.</td><td>new <code>src/routes/LibraryRoute.tsx</code> + tabs, registered in <code>index.tsx</code></td></tr>
+  <tr><td>Game page (existing injection)</td><td>Play/download plus readiness at a glance (ROM, BIOS, saves) with one-tap fixes.</td><td><code>patches/gameDetailPatch.tsx</code>, <code>RomMPlaySection.tsx</code>, <code>CustomPlayButton.tsx</code>, <code>RomMGameInfoPanel.tsx</code></td></tr>
+</table>
+
+<h3>2. Quick Access Menu (drill-down)</h3>
+<p>Keep the existing drill-down model (<code>Page</code> type in <code>QAMPanel.tsx</code>, B on a sub page returns to Home, B on Home closes the QAM). New page set: <code>home | downloads | platforms | settings</code>.</p>
+<h4>Home, top to bottom</h4>
+<ol>
+  <li><b>Status line:</b> dot + "Connected · &lt;host&gt;". Reuse <code>ConnectionStatus</code> logic from <code>MainPage.tsx</code> (checking / connected / not connected / backend error / version error).</li>
+  <li><b>Library card</b> with an inline state machine instead of separate buttons:
+    <ul>
+      <li><code>idle</code>: "N games · M platforms", "Last sync X ago", primary "Sync library".</li>
+      <li><code>checking</code>: progress while <code>syncPreview()</code> runs.</li>
+      <li><code>preview</code>: "+X new · Y updated · Z removed", first few new titles, buttons Apply (<code>syncApplyDelta</code>) and Cancel (<code>syncCancelPreview</code>). Skipped when the "Skip preview" setting is on.</li>
+      <li><code>running</code>: stage label from the existing <code>STAGE_LABELS</code> + progress bar + Cancel (<code>cancelSync</code>).</li>
+      <li><code>done</code>: result text from the existing sync delta ("3 added", "Library up to date") + "Sync again".</li>
+    </ul>
+    "Skip preview" and "Force full sync" move to full-screen Settings.</li>
+  <li><b>Needs attention</b> (only rendered when non-empty). One list replacing the scattered banners. Each item navigates to its fix:
+    <ul>
+      <li>Save conflict per game → game page, Saves tab, conflict modal open (<code>SyncConflictModal</code>).</li>
+      <li>Required BIOS missing per enabled platform (<code>getFirmwareStatus</code>) → RomM Library, Systems tab.</li>
+      <li>Plugin update available (<code>updateState</code>) → Settings tab, Plugin section.</li>
+      <li>Settings reset notice, playtime scope notice, version error → their existing actions.</li>
+    </ul></li>
+  <li><b>Manage</b> rows (drill-down): Downloads (badge with queue count), Platforms &amp; collections, Settings.</li>
+  <li><b>Open RomM Library</b> button (full width): <code>Navigation.CloseSideMenus(); Navigation.Navigate("/romm-library")</code>.</li>
+</ol>
+<h4>Sub pages</h4>
+<ul>
+  <li><b>Downloads:</b> compact queue (cover thumb, title, bar, status, pause/resume), "Pause all / Resume all", link "Full queue in RomM Library". Reuse <code>DownloadQueue.tsx</code> logic.</li>
+  <li><b>Platforms &amp; collections:</b> per-platform sync toggles and collection toggles from today's <code>LibraryPage.tsx</code>. Note "Changes apply on the next sync".</li>
+  <li><b>Settings (compact):</b> save sync on/off, before launch, after exit, skip sync preview, server host, button "All settings" → full-screen Settings tab. Everything else lives in full screen.</li>
+</ul>
+<p>Removed from the QAM: the separate Data Management, System and full Settings pages. Their content moves to the full-screen route.</p>
+
+<h3>3. RomM Library (new full-screen route)</h3>
+<pre><code>// index.tsx, inside definePlugin
+routerHook.addRoute("/romm-library", LibraryRoute, { exact: true });
+// onDismount
+routerHook.removeRoute("/romm-library");</code></pre>
+<p>Use the <code>Tabs</code> component from <code>@decky/ui</code> so L1/R1 switch tabs natively. Header: title, connection status, search field (<code>TextField</code>, opens the on-screen keyboard), Sync button. B leaves the route (history back). Remember the last active tab in module state like <code>currentPage</code> in <code>QAMPanel.tsx</code>.</p>
+<h4>Tab: Library</h4>
+<ul>
+  <li>Left rail: "All games" + one entry per platform with count, disabled platforms dimmed. Below: collections.</li>
+  <li>Filter chips with counts: All, Installed, On RomM only, Needs attention.</li>
+  <li>Cover grid, 6 columns at 1280 px (compute columns from width for Big Picture on larger screens). Cover = SteamGridDB/RomM portrait art already used for the shortcut (<code>getArtworkBase</code> / Steam's capsule for the appId).</li>
+  <li>Status badge per cover: installed (green check), on RomM only (cloud), downloading/queued (blue + progress bar along the bottom edge), issue (amber, e.g. save conflict or required BIOS missing).</li>
+  <li>A on a cover opens the Steam game page: <code>Navigation.Navigate(`/library/app/${appId}`)</code>. Every synced ROM already has a shortcut appId (<code>getAppIdRomIdMap</code>).</li>
+  <li>Optional quick action on X: download / pause / resume.</li>
+  <li><b>Data:</b> if no callable returns a merged list (appId, rom id, title, platform, install state, size, issue flags), add one backend callable <code>get_library_overview</code> that joins the metadata cache, installed ROMs, download queue, save status and firmware status. Avoid N calls per cover.</li>
+</ul>
+<h4>Tab: Downloads</h4>
+<p>Full queue (active, queued, paused) with pause/resume, start now, cancel, plus a "Finished" list of recent downloads with Open. Reuse <code>DownloadQueue.tsx</code> and <code>downloadStore</code>.</p>
+<h4>Tab: Systems &amp; BIOS</h4>
+<p>Table per platform: name + game/installed counts, sync toggle, BIOS status (not needed / ready / missing x/y) with "Download BIOS" (<code>downloadRequiredFirmware</code>), emulator core picker (<code>getPlatformCoreInfo</code>, with the existing <code>CoreChangeModal</code> warning). Keep the Switch firmware row from <code>SystemPage.tsx</code>.</p>
+<h4>Tab: Settings</h4>
+<p>Two columns of grouped sections, reusing the existing section components in <code>components/settings/</code>: Connection, Library sync (preferred region, favorites, skip preview, full resync), Artwork &amp; controller (SteamGridDB, Steam Input mode), Save sync, Registered devices, Plugin (version/updates, log level), Danger zone (content of <code>DangerZone.tsx</code>, every destructive action behind <code>ConfirmModal</code>).</p>
+
+<h3>4. Game page</h3>
+<ul>
+  <li><b>Primary button</b> (existing <code>CustomPlayButton</code>): Download · size → progress with pause/resume ("Queued · Start now" when queued) → Play. Unchanged behaviour, check the labels match the prototype.</li>
+  <li><b>Version and disc pickers</b> as compact chips right of the primary button, only when relevant (existing <code>VersionPicker</code>, <code>DiscSelector</code>). Show the current value in the chip ("Europe", "Disc 1", "All discs").</li>
+  <li><b>Readiness strip</b> (new component, e.g. <code>ReadinessStrip.tsx</code>) directly below the action bar. Three equal chips, each with icon, title, one-line detail and an optional fix button:
+    <table>
+      <tr><th>Chip</th><th>States</th><th>Fix action</th></tr>
+      <tr><td>ROM</td><td>installed (size · version) / not downloaded (size on RomM) / downloading x% / paused / queued</td><td>none, the primary button handles it</td></tr>
+      <tr><td>BIOS</td><td>no BIOS needed (shows core) / ready / <b>missing</b> (warn)</td><td>"Get" → <code>downloadRequiredFirmware</code> for that platform</td></tr>
+      <tr><td>Saves</td><td>save sync off / synced x ago / on, nothing uploaded yet / <b>conflict</b> (warn)</td><td>"Resolve" → <code>SyncConflictModal</code></td></tr>
+    </table>
+    Warning chips use the amber treatment. The strip replaces the BIOS stat in the stats row.</li>
+  <li><b>Play with an unresolved save conflict</b> still opens the conflict modal first (as today), then launches after the choice.</li>
+  <li><b>Tabs:</b> Overview (existing game info), Saves (slot, local vs server time, version history with restore via <code>savesListFileVersions</code> / <code>savesRollbackToVersion</code>), BIOS &amp; Core (files + per-game core override via <code>setGameCore</code>/<code>clearGameCore</code>), Achievements (unchanged).</li>
+  <li><b>RomM actions menu</b> (··· button, <code>showContextMenu</code> with <code>MenuSeparator</code>): groups "Game" (refresh artwork, refresh metadata, choose SteamGridDB artwork, Steam Input mode), "Saves" (sync now, save history), "Remove" (delete local saves…, uninstall ROM…). Remove items only when installed, both behind <code>ConfirmModal</code> that states what is kept (shortcut, playtime, saves on RomM).</li>
+  <li>Add a small button "Show in RomM Library" that opens the route filtered to the game's platform.</li>
+  <li>Keep the injection slim. This patch is the part most likely to break on Steam client updates.</li>
+</ul>
+
+<h3>5. Phases (one PR each)</h3>
+<ol>
+  <li><b>Route skeleton:</b> register <code>/romm-library</code> with Tabs. Move Settings, Danger zone and System page content into the Settings and Systems tabs. QAM gets the "Open RomM Library" button. Old QAM sub pages may stay until phase 2.</li>
+  <li><b>QAM home:</b> status line, Library card state machine, Needs attention list, Manage rows, compact Downloads/Platforms/Settings sub pages. Remove the old QAM pages.</li>
+  <li><b>Game page:</b> readiness strip, pickers as chips, grouped actions menu with confirms, Saves and BIOS &amp; Core tabs.</li>
+  <li><b>Library grid:</b> <code>get_library_overview</code> callable, platform rail, filters, search, cover grid with badges, Downloads tab.</li>
+</ol>
+
+<h3>6. Done criteria</h3>
+<ul>
+  <li>Every flow in the prototype works with only D-pad, A, B, L1/R1 on a real Deck in Game Mode, and in Big Picture on a desktop.</li>
+  <li>No dead ends: B always returns to the previous level, focus never gets lost after closing a modal.</li>
+  <li>Offline (RomM unreachable): QAM shows "Not connected", sync/download actions disabled with a reason, installed games still launch.</li>
+  <li>All existing features reachable (check against the README feature list and the user guide in <code>docs/user-guide/</code>). Update the docs and screenshots.</li>
+  <li>Lint, type check and tests pass.</li>
+</ul>
+
+<h3>7. Out of scope</h3>
+<ul>
+  <li>Adding tabs to Steam's own library page (leave that to TabMaster, keep collections clean so it can filter by them).</li>
+  <li>An entry in Steam's main menu.</li>
+  <li>Changes to sync, download or save logic in the backend beyond the one overview callable.</li>
+</ul>
+</section>
+</div>
+
+<script>
+/* ===== Prototype logic (plain JS, re-renders #app from state S) ===== */
+const PLAT = {
+  psx: { name: 'PlayStation', short: 'PS1', bios: 'required', files: [['scph5501.bin', 'USA BIOS · required'], ['scph5502.bin', 'Europe BIOS · alternative'], ['scph5500.bin', 'Japan BIOS · alternative']], cores: ['SwanStation', 'Beetle PSX HW', 'PCSX ReARMed'] },
+  gba: { name: 'Game Boy Advance', short: 'GBA', bios: 'optional', files: [['gba_bios.bin', 'optional · better accuracy']], cores: ['mGBA', 'gpSP', 'VBA-M'] },
+  snes: { name: 'Super Nintendo', short: 'SNES', bios: 'none', files: [], cores: ['Snes9x', 'bsnes'] },
+  md: { name: 'Mega Drive / Genesis', short: 'MD', bios: 'none', files: [], cores: ['Genesis Plus GX', 'PicoDrive'] },
+  n64: { name: 'Nintendo 64', short: 'N64', bios: 'none', files: [], cores: ['Mupen64Plus-Next', 'ParaLLEl N64'] }
+};
+const ORDER = ['psx', 'gba', 'snes', 'md', 'n64'];
+const BASE = [
+  { id: 'ff7', title: 'Final Fantasy VII', plat: 'psx', year: 1997, genre: 'RPG', mb: 2100, color: '#27466e', versions: ['USA', 'Europe', 'Japan'], discs: 3, played: 'Never', time: 'None' },
+  { id: 'sotn', title: 'Castlevania: Symphony of the Night', plat: 'psx', year: 1997, genre: 'Action', mb: 620, color: '#5a1f2b', played: 'Never', time: 'None' },
+  { id: 'spyro', title: 'Spyro the Dragon', plat: 'psx', year: 1998, genre: 'Platformer', mb: 540, color: '#4b2f7a', played: '2 weeks ago', time: '3 h' },
+  { id: 'crash', title: 'Crash Bandicoot', plat: 'psx', year: 1996, genre: 'Platformer', mb: 480, color: '#9a4a18', played: 'Never', time: 'None' },
+  { id: 'emerald', title: 'Pokémon Emerald', plat: 'gba', year: 2004, genre: 'RPG', mb: 16, color: '#1d6a49', versions: ['USA', 'Europe'], played: 'Yesterday', time: '14 h' },
+  { id: 'fusion', title: 'Metroid Fusion', plat: 'gba', year: 2002, genre: 'Action', mb: 8, color: '#3a2a68', played: '3 days ago', time: '5 h' },
+  { id: 'goldensun', title: 'Golden Sun', plat: 'gba', year: 2001, genre: 'RPG', mb: 16, color: '#7d611b', played: 'Never', time: 'None' },
+  { id: 'minish', title: 'The Minish Cap', plat: 'gba', year: 2004, genre: 'Adventure', mb: 16, color: '#2d6a2a', played: 'Last month', time: '9 h' },
+  { id: 'chrono', title: 'Chrono Trigger', plat: 'snes', year: 1995, genre: 'RPG', mb: 4, color: '#1f4f6b', played: 'Last week', time: '22 h' },
+  { id: 'lttp', title: 'A Link to the Past', plat: 'snes', year: 1991, genre: 'Adventure', mb: 1, color: '#5f6a1d', versions: ['USA', 'Europe'], played: 'Never', time: 'None' },
+  { id: 'smw', title: 'Super Mario World', plat: 'snes', year: 1990, genre: 'Platformer', mb: 1, color: '#8a2e24', played: 'Last month', time: '2 h' },
+  { id: 'sonic2', title: 'Sonic the Hedgehog 2', plat: 'md', year: 1992, genre: 'Platformer', mb: 1, color: '#1d4c8f', played: 'Today', time: '1 h' },
+  { id: 'sor2', title: 'Streets of Rage 2', plat: 'md', year: 1992, genre: "Beat 'em up", mb: 2, color: '#6b2450', played: 'Never', time: 'None' },
+  { id: 'sm64', title: 'Super Mario 64', plat: 'n64', year: 1996, genre: 'Platformer', mb: 8, color: '#7a2a2a', played: 'Never', time: 'None' },
+  { id: 'oot', title: 'Ocarina of Time', plat: 'n64', year: 1998, genre: 'Adventure', mb: 32, color: '#24584a', played: 'Never', time: 'None' }
+];
+const NEW = [
+  { id: 'aw', title: 'Advance Wars', plat: 'gba', year: 2001, genre: 'Strategy', mb: 8, color: '#6b3a1d', played: 'Never', time: 'None' },
+  { id: 'dkc', title: 'Donkey Kong Country', plat: 'snes', year: 1994, genre: 'Platformer', mb: 4, color: '#5a3d1a', played: 'Never', time: 'None' },
+  { id: 'thps2', title: "Tony Hawk's Pro Skater 2", plat: 'psx', year: 2000, genre: 'Sports', mb: 610, color: '#2f3a44', played: 'Never', time: 'None' }
+];
+const STAGES = ['Discovering platforms', 'Fetching library', 'Applying shortcuts', 'Finalizing'];
+const REGIONS = ['Europe', 'USA', 'Japan', 'World'];
+const INPUTS = ['Default', 'Force On', 'Force Off'];
+
+const I = {
+  check: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>',
+  cloud: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.5-7.97A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z"/></svg>',
+  bang: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M12 7v6"/><path d="M12 17v.01"/></svg>',
+  down: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v12"/><path d="M7 12l5 5 5-5"/></svg>',
+  chev: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>',
+  chevd: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
+  back: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>',
+  warn: (sz) => `<svg class="ic-warn" width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5"/><path d="M12 18v.01"/></svg>`,
+  okc: (sz) => `<svg class="ic-ok" width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>`,
+  neu: '<svg class="ic-neu" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.5-7.97A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z"/></svg>',
+  busy: '<svg class="ic-busy" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></svg>',
+  dl: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></svg>',
+  play: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5l12 7-12 7z"/></svg>',
+  pause: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>',
+  playsm: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5l12 7-12 7z"/></svg>',
+  x: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  grid: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
+  dots: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>',
+  sync: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>',
+  search: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>'
+};
+const RAIL = [
+  '<path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21h4"/>',
+  '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6"/><path d="M17 4a4 4 0 0 1 0 8"/>',
+  '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
+  '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  '<path d="M9 2v6"/><path d="M15 2v6"/><path d="M6 8h12v4a6 6 0 0 1-12 0z"/><path d="M12 18v4"/>'
+];
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = (mb) => (mb >= 1000 ? (mb / 1000).toFixed(1) + ' GB' : mb + ' MB');
+const fmtPart = (mb, pct) => { const v = (mb * pct) / 100; return v >= 1000 ? (v / 1000).toFixed(1) + ' GB' : (v >= 10 ? Math.round(v) : v.toFixed(1)) + ' MB'; };
+const sw = (on) => (on ? 'sw on' : 'sw');
+
+function initState() {
+  return {
+    screen: 'steam', from: 'steam', qamOpen: true, qamPage: 'home',
+    libTab: 'library', platform: 'all', filter: 'all', q: '',
+    gameId: 'ff7', detailTab: 'overview', modal: null, afterConflictPlay: false,
+    g: {
+      ff7: { st: 'cloud', pct: 0 }, sotn: { st: 'cloud', pct: 0 }, spyro: { st: 'installed', pct: 100 }, crash: { st: 'cloud', pct: 0 },
+      emerald: { st: 'installed', pct: 100, conflict: true }, fusion: { st: 'installed', pct: 100 }, goldensun: { st: 'cloud', pct: 0 },
+      minish: { st: 'installed', pct: 100 }, chrono: { st: 'installed', pct: 100 }, lttp: { st: 'cloud', pct: 0 }, smw: { st: 'installed', pct: 100 },
+      sonic2: { st: 'installed', pct: 100 }, sor2: { st: 'cloud', pct: 0 }, sm64: { st: 'downloading', pct: 62 }, oot: { st: 'queued', pct: 0 },
+      aw: { st: 'cloud', pct: 0 }, dkc: { st: 'cloud', pct: 0 }, thps2: { st: 'cloud', pct: 0 }
+    },
+    bios: { psx: false, gba: true },
+    core: { psx: 0, gba: 0, snes: 0, md: 0, n64: 0 },
+    gameCore: {},
+    syncOn: { psx: true, gba: true, snes: true, md: true, n64: true },
+    sync: { stage: 'idle', t: 0 }, added: false, lastSync: '2 h ago',
+    set: { saveSync: true, before: true, after: true, skipPreview: false, ssl: false, fav: true, coop: false },
+    region: 0, input: 0, done: [], launch: null, playing: null, toast: null, toastT: 0
+  };
+}
+let S = initState();
+const allRaw = () => (S.added ? BASE.concat(NEW) : BASE);
+function upd(p) { Object.assign(S, p); render(); }
+function setG(id, p) { S.g[id] = Object.assign({}, S.g[id] || {}, p); render(); }
+function toast(m) { S.toast = m; S.toastT = 8; render(); }
+const anyActive = () => allRaw().some((x) => S.g[x.id] && S.g[x.id].st === 'downloading');
+
+function deco(gm) {
+  const x = S.g[gm.id] || { st: 'cloud', pct: 0 };
+  const p = PLAT[gm.plat];
+  const st = x.st, pct = Math.floor(x.pct || 0);
+  const isInst = st === 'installed', isCloud = st === 'cloud', isDl = st === 'downloading', isQ = st === 'queued', isPaused = st === 'paused';
+  const inQueue = isDl || isQ || isPaused;
+  const biosMissing = p.bios === 'required' && !S.bios[gm.plat];
+  const conflict = !!x.conflict && isInst;
+  const issue = conflict || (biosMissing && isInst);
+  const versions = gm.versions || ['USA'];
+  const defVer = versions.length > 1 ? 1 : 0;
+  const verIdx = x.ver != null ? x.ver : defVer;
+  const discs = gm.discs || 1, discIdx = x.disc != null ? x.disc : 0;
+  let statusText = isInst ? 'Installed' : isCloud ? 'On RomM · ' + fmt(gm.mb) : isDl ? 'Downloading ' + pct + '%' : isQ ? 'Queued' : 'Paused · ' + pct + '%';
+  if (conflict) statusText = 'Save conflict'; else if (isInst && biosMissing) statusText = 'BIOS missing';
+  return Object.assign({}, gm, {
+    platName: p.name, platShort: p.short, st, pct, isInst, isCloud, isDl, isQ, isPaused, inQueue, biosMissing, conflict, issue,
+    size: fmt(gm.mb), statusText, dlText: fmtPart(gm.mb, pct) + ' / ' + fmt(gm.mb),
+    versions, verIdx, defVer, verName: versions[verIdx], multiVer: versions.length > 1, multiDisc: discs > 1, discs, discIdx,
+    discName: discIdx >= discs ? 'All discs' : 'Disc ' + (discIdx + 1),
+    toggleLabel: isDl ? 'Pause' : isQ ? 'Start now' : 'Resume'
+  });
+}
+const games = () => allRaw().map(deco);
+const byId = (id) => games().find((x) => x.id === id);
+
+/* ---------- actions (data-act) ---------- */
+function openGame(id, from) { upd({ screen: 'game', gameId: id, from, qamOpen: false, modal: null, detailTab: 'overview' }); }
+function startDownload(id) { setG(id, { st: anyActive() ? 'queued' : 'downloading', pct: 0 }); }
+function toggleDl(id) {
+  const x = S.g[id];
+  if (x.st === 'downloading') setG(id, { st: 'paused' });
+  else if (x.st === 'queued') {
+    allRaw().forEach((o) => { if (S.g[o.id] && S.g[o.id].st === 'downloading') S.g[o.id] = Object.assign({}, S.g[o.id], { st: 'queued' }); });
+    setG(id, { st: 'downloading' });
+  } else setG(id, { st: 'queued' });
+}
+function back() {
+  if (S.launch || S.playing) return;
+  if (S.modal) return upd({ modal: null });
+  if (S.qamOpen) return S.qamPage !== 'home' ? upd({ qamPage: 'home' }) : upd({ qamOpen: false });
+  if (S.screen === 'game') return upd({ screen: S.from });
+  if (S.screen === 'library') return upd({ screen: 'steam' });
+}
+function startLaunch() { upd({ modal: null, launch: { t: 0 }, afterConflictPlay: false }); }
+function play(cur) { if (cur.conflict) return upd({ modal: 'conflict', afterConflictPlay: true }); startLaunch(); }
+function resolve(msg) {
+  const cont = S.afterConflictPlay;
+  S.g[S.gameId] = Object.assign({}, S.g[S.gameId], { conflict: false });
+  toast(msg);
+  if (cont) startLaunch(); else upd({ modal: null });
+}
+function pauseAll() {
+  const q = games().filter((x) => x.inQueue);
+  const allPaused = q.length > 0 && q.every((x) => x.isPaused);
+  allRaw().forEach((o) => {
+    const x = S.g[o.id]; if (!x) return;
+    if (allPaused) { if (x.st === 'paused') S.g[o.id] = Object.assign({}, x, { st: 'queued' }); }
+    else if (x.st === 'downloading' || x.st === 'queued') S.g[o.id] = Object.assign({}, x, { st: 'paused' });
+  });
+  render();
+}
+const ACT = {
+  toggleQam: () => upd({ qamOpen: !S.qamOpen }),
+  closeQam: () => upd({ qamOpen: false }),
+  back,
+  qGo: (p) => upd({ qamPage: p }),
+  openLib: (tab) => upd({ screen: 'library', libTab: tab || 'library', qamOpen: false, modal: null }),
+  libTab: (t) => upd({ libTab: t }),
+  plat: (k) => upd({ platform: k }),
+  filter: (f) => upd({ filter: f }),
+  openGame: (id) => openGame(id, S.screen === 'steam' ? 'steam' : 'library'),
+  startSync: () => upd({ sync: { stage: 'checking', t: 0 } }),
+  startSyncLib: () => upd({ sync: { stage: 'checking', t: 0 }, qamOpen: true, qamPage: 'home' }),
+  applySync: () => upd({ sync: { stage: 'running', t: 0 } }),
+  cancelSync: () => upd({ sync: { stage: 'idle', t: 0 } }),
+  toggleDl: (id) => toggleDl(id),
+  cancelDl: (id) => { S.g[id] = { st: 'cloud', pct: 0 }; toast('Download cancelled'); },
+  pauseAll,
+  attConflict: (id) => upd({ screen: 'game', gameId: id, from: 'steam', qamOpen: false, detailTab: 'saves', modal: 'conflict', afterConflictPlay: false }),
+  toggleSync: (k) => { S.syncOn[k] = !S.syncOn[k]; render(); },
+  cycleCore: (k) => { S.core[k] = (S.core[k] + 1) % PLAT[k].cores.length; render(); },
+  getBios: (k) => { S.bios[k] = true; toast(PLAT[k].name + ' BIOS downloaded from RomM'); },
+  tSet: (k) => { S.set[k] = !S.set[k]; render(); },
+  cycleRegion: () => upd({ region: (S.region + 1) % REGIONS.length }),
+  cycleInput: () => upd({ input: (S.input + 1) % INPUTS.length }),
+  fullResync: () => { S.added = false; S.sync = { stage: 'checking', t: 0 }; toast('Full resync started'); },
+  proto: () => toast('Not part of this click dummy'),
+  primary: () => {
+    const cur = byId(S.gameId);
+    if (cur.isCloud) { startDownload(cur.id); toast(cur.title + ' added to downloads'); }
+    else if (cur.isInst) play(cur);
+    else toggleDl(cur.id);
+  },
+  modal: (m) => upd({ modal: m, afterConflictPlay: false }),
+  closeModal: () => upd({ modal: null }),
+  dtab: (t) => upd({ detailTab: t }),
+  showInLibrary: () => { const cur = byId(S.gameId); upd({ screen: 'library', libTab: 'library', platform: cur.plat, filter: 'all' }); },
+  pickVer: (i) => { const cur = byId(S.gameId); S.g[cur.id] = Object.assign({}, S.g[cur.id], { ver: +i }); S.modal = null; toast('Active version: ' + cur.versions[+i]); },
+  pickDisc: (i) => { S.g[S.gameId] = Object.assign({}, S.g[S.gameId], { disc: +i }); upd({ modal: null }); },
+  keepLocal: () => resolve('Kept this Deck’s save · uploaded to RomM'),
+  keepServer: () => resolve('Using server save'),
+  cycleGameCore: () => { const cur = byId(S.gameId); const c = S.gameCore[cur.id]; const n = c == null ? 0 : c + 1; S.gameCore[cur.id] = n >= PLAT[cur.plat].cores.length ? null : n; render(); },
+  syncNow: () => { const cur = byId(S.gameId); S.modal = null; toast(cur.conflict ? 'Conflict needs a decision first' : 'Saves synced with RomM'); },
+  goSaves: () => upd({ modal: null, detailTab: 'saves' }),
+  menuToast: (m) => { S.modal = null; toast(m); },
+  doUninstall: () => { const cur = byId(S.gameId); S.g[cur.id] = { st: 'cloud', pct: 0 }; S.modal = null; toast(cur.title + ' uninstalled · saves kept'); },
+  restore: (w) => toast('Restored save from ' + w),
+  exitGame: () => upd({ playing: null, toast: S.set.saveSync && S.set.after ? 'Saves uploaded to RomM' : 'Game closed', toastT: 8 })
+};
+const a = (name, arg) => `data-act="${name}"${arg != null ? ` data-arg="${esc(arg)}"` : ''}`;
+
+/* ---------- views ---------- */
+function coverBadge(g) {
+  if (g.issue) return `<span class="sbadge sb-warn">${I.bang}</span>`;
+  if (g.isInst) return `<span class="sbadge sb-ok">${I.check}</span>`;
+  if (g.isCloud) return `<span class="sbadge sb-cloud">${I.cloud}</span>`;
+  return `<span class="sbadge sb-dl">${I.down}</span>`;
+}
+function vSteam(all) {
+  const recent = ['sonic2', 'emerald', 'fusion', 'chrono', 'spyro'].map((id) => all.find((x) => x.id === id));
+  const gba = all.filter((x) => x.plat === 'gba').slice(0, 6);
+  return `<div class="steambg">
+    <div class="lbl">Recent games</div>
+    <div style="display:flex;gap:18px;margin-bottom:34px">${recent.map((g) => `<button class="tile" ${a('openGame', g.id)}><span class="art" style="width:214px;height:214px;background:${g.color};font-size:20px;line-height:1.1">${esc(g.title)}</span><span style="font-size:12px;color:#8b929a">${g.platName} · ${g.played}</span></button>`).join('')}</div>
+    <div class="lbl">Collection · RomM Game Boy Advance</div>
+    <div style="display:flex;gap:14px">${gba.map((g) => `<button class="tile" ${a('openGame', g.id)}><span class="art" style="width:140px;height:210px;background:${g.color};font-size:14px;line-height:1.15">${esc(g.title)}</span></button>`).join('')}</div>
+    <div style="position:absolute;left:32px;bottom:60px;font-size:13px;color:#8b929a">Mock of Steam's library home. Open a game, or press ··· for the Quick Access Menu.</div>
+  </div>`;
+}
+function vQueueRows(queue, compact) {
+  if (compact) return queue.map((g) => `<div class="dlrow"><span class="thumb" style="background:${g.color}">${g.platShort}</span><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:5px"><span style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(g.title)}</span><span class="bar"><span style="width:${g.pct}%"></span></span><span class="muted" style="font-size:11px">${g.statusText} · ${g.dlText}</span></div><button class="btn sm icon" aria-label="${g.toggleLabel}" ${a('toggleDl', g.id)}>${g.isDl ? I.pause : I.playsm}</button></div>`).join('');
+  return queue.map((g) => `<div class="dlrow" style="gap:14px;padding:14px 0"><span class="thumb" style="background:${g.color};width:44px;height:60px">${g.platShort}</span><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px"><div style="display:flex;justify-content:space-between;font-size:15px"><span style="font-weight:600">${esc(g.title)}</span><span class="muted">${g.statusText}</span></div><span class="bar"><span style="width:${g.pct}%"></span></span><div class="muted small">${g.dlText} · ${g.platName} · ${g.verName}</div></div><button class="btn sm" ${a('toggleDl', g.id)}>${g.toggleLabel}</button><button class="btn sm icon ghost" aria-label="Cancel download" ${a('cancelDl', g.id)}>${I.x}</button></div>`).join('');
+}
+function sysRows(all) {
+  return ORDER.map((k) => {
+    const p = PLAT[k], gs = all.filter((x) => x.plat === k);
+    const missing = p.bios === 'required' && !S.bios[k];
+    return { k, p, count: gs.length, installed: gs.filter((x) => x.isInst).length, missing,
+      dot: missing ? 'dot red' : p.bios === 'optional' && !S.bios[k] ? 'dot amber' : p.bios === 'none' ? 'dot grey' : 'dot',
+      biosText: p.bios === 'none' ? 'Not needed' : missing ? 'Missing · 0/1 required' : 'Ready',
+      core: S.core[k] === 0 ? p.cores[0] + ' (default)' : p.cores[S.core[k]] };
+  });
+}
+function vLibrary(all, queue) {
+  const tabs = [['library', 'Library', 0], ['downloads', 'Downloads', queue.length], ['systems', 'Systems & BIOS', 0], ['settings', 'Settings', 0]];
+  let body = '';
+  if (S.libTab === 'library') {
+    const inPlat = all.filter((x) => S.platform === 'all' || x.plat === S.platform);
+    const fdefs = [['all', 'All', () => true], ['installed', 'Installed', (x) => x.isInst], ['cloud', 'On RomM only', (x) => x.isCloud || x.inQueue], ['issues', 'Needs attention', (x) => x.issue]];
+    const fn = fdefs.find((f) => f[0] === S.filter)[2];
+    const q = S.q.toLowerCase();
+    const shown = inPlat.filter(fn).filter((x) => !q || x.title.toLowerCase().includes(q));
+    body = `<div class="lbody">
+      <div class="prail">
+        <button class="pbtn${S.platform === 'all' ? ' on' : ''}" ${a('plat', 'all')}><span>All games</span><span class="n">${all.length}</span></button>
+        ${ORDER.map((k) => `<button class="pbtn${S.platform === k ? ' on' : ''}${S.syncOn[k] ? '' : ' off'}" ${a('plat', k)}><span>${PLAT[k].name}</span><span class="n">${all.filter((x) => x.plat === k).length}</span></button>`).join('')}
+        <div class="qsec" style="padding-left:12px">Collections</div>
+        <button class="pbtn" ${a('proto')}><span>Favorites</span><span class="n">6</span></button>
+        <button class="pbtn" ${a('proto')}><span>Couch co-op</span><span class="n">4</span></button>
+      </div>
+      <div class="lmain" id="scroll-lib">
+        <div class="chips">${fdefs.map((f) => `<button class="fchip${S.filter === f[0] ? ' on' : ''}" ${a('filter', f[0])}>${f[1]} · ${inPlat.filter(f[2]).length}</button>`).join('')}<span class="muted" style="margin-left:auto">${S.platform === 'all' ? 'All platforms' : PLAT[S.platform].name} · ${shown.length} shown</span></div>
+        ${shown.length ? '' : '<div class="muted" style="padding:40px 0">No games match this filter.</div>'}
+        <div class="grid">${shown.map((g) => `<button class="gcard" ${a('openGame', g.id)}><span class="cover" style="background:${g.color}"><span class="ptag">${g.platShort}</span><span class="ctitle">${esc(g.title)}</span>${coverBadge(g)}${g.inQueue ? `<span class="cbar"><span style="width:${g.pct}%"></span></span>` : ''}</span><span class="gname">${esc(g.title)}</span><span class="gsub${g.issue ? ' warn' : ''}">${g.statusText}</span></button>`).join('')}</div>
+      </div></div>`;
+  } else if (S.libTab === 'downloads') {
+    const qp = queue.length > 0 && queue.every((x) => x.isPaused);
+    const done = S.done.map((id) => all.find((x) => x.id === id)).filter(Boolean);
+    body = `<div class="lmain" id="scroll-libdl" style="max-width:900px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px"><h2 style="margin:0;font-size:18px;color:#fff">Queue</h2><span class="muted">${queue.length ? queue.length + ' item' + (queue.length > 1 ? 's' : '') : ''}</span>${queue.length ? `<button class="btn sm ghost" style="margin-left:auto" ${a('pauseAll')}>${qp ? 'Resume all' : 'Pause all'}</button>` : ''}</div>
+      ${queue.length ? vQueueRows(queue, false) : '<div class="muted" style="padding:24px 0">Nothing downloading. Pick a game in the Library and press Download.</div>'}
+      ${done.length ? `<h2 style="margin:28px 0 4px;font-size:18px;color:#fff">Finished</h2>${done.map((g) => `<div class="dlrow" style="gap:14px"><span class="thumb" style="background:${g.color}">${g.platShort}</span><span style="flex:1;font-size:15px">${esc(g.title)} <span class="muted">· ${g.size}</span></span><button class="btn sm play" ${a('openGame', g.id)}>Open</button></div>`).join('')}` : ''}
+    </div>`;
+  } else if (S.libTab === 'systems') {
+    body = `<div class="lmain" id="scroll-sys"><table class="tbl"><thead><tr><th>Platform</th><th>Sync</th><th>BIOS</th><th>Emulator core</th><th></th></tr></thead><tbody>
+      ${sysRows(all).map((r) => `<tr><td><div style="font-weight:600;color:#fff">${r.p.name}</div><div class="muted small">${r.count} games · ${r.installed} installed</div></td>
+        <td><button class="${sw(S.syncOn[r.k])}" aria-label="Sync ${r.p.name}" ${a('toggleSync', r.k)}></button></td>
+        <td><span style="display:inline-flex;align-items:center;gap:8px"><span class="${r.dot}"></span>${r.biosText}</span><div class="muted small" style="margin-left:16px">${r.p.files.length ? r.p.files[0][0] : ''}</div></td>
+        <td><button class="corebtn" ${a('cycleCore', r.k)}>${r.core}${I.chevd}</button></td>
+        <td style="text-align:right">${r.missing ? `<button class="btn sm primary" ${a('getBios', r.k)}>Download BIOS</button>` : ''}</td></tr>`).join('')}
+      <tr><td><div style="font-weight:600;color:#fff">Nintendo Switch</div><div class="muted small">Firmware and keys</div></td><td></td><td><span style="display:inline-flex;align-items:center;gap:8px"><span class="dot grey"></span>No Switch emulator found</span></td><td class="muted">Install Eden, yuzu or Ryujinx with EmuDeck first</td><td></td></tr>
+      </tbody></table><p class="muted" style="margin-top:18px">Core changes apply per platform. A per-game override lives on the game page under BIOS &amp; Core.</p></div>`;
+  } else {
+    const row = (k, v) => `<div class="row"><span>${k}</span>${v}</div>`;
+    const tg = (key, label) => `<button class="${sw(S.set[key])}" aria-label="${label}" ${a('tSet', key)}></button>`;
+    body = `<div class="lmain" id="scroll-set"><div class="setgrid">
+      <div class="col">
+        <div class="scard"><h3>Connection</h3>${row('RomM server', '<span class="v">https://romm.home.lan <span class="dot" style="margin-left:6px"></span></span>')}${row('Account', `<span class="v" style="display:flex;align-items:center;gap:10px">patrick<button class="btn sm ghost" ${a('proto')}>Sign out</button></span>`)}${row('Allow self-signed certificates<div class="muted small">LAN only</div>', tg('ssl', 'Allow self-signed certificates'))}</div>
+        <div class="scard"><h3>Library sync</h3>${row('Preferred region', `<button class="corebtn" ${a('cycleRegion')}>${REGIONS[S.region]}</button>`)}${row('Sync RomM favorites', tg('fav', 'Sync RomM favorites'))}${row('Skip preview<div class="muted small">Apply changes without review</div>', tg('skipPreview', 'Skip preview'))}${row('Full resync<div class="muted small">Clears cached data, re-fetches all platforms</div>', `<button class="btn sm ghost" ${a('fullResync')}>Run</button>`)}</div>
+        <div class="scard"><h3>Artwork &amp; controller</h3>${row('SteamGridDB API key', '<span class="v">•••• 9f2c</span>')}${row('Steam Input for ROM shortcuts', `<button class="corebtn" ${a('cycleInput')}>${INPUTS[S.input]}</button>`)}</div>
+      </div>
+      <div class="col">
+        <div class="scard"><h3>Save sync</h3>${row('Save sync', tg('saveSync', 'Save sync'))}${row('Download newer saves before launch', tg('before', 'Sync before launch'))}${row('Upload saves after exit', tg('after', 'Sync after exit'))}${row('Versions kept per slot', '<span class="v">10</span>')}</div>
+        <div class="scard"><h3>Devices</h3>${row('steamdeck <span class="tag blue">This device</span>', '<span class="v">now</span>')}${row('living-room-pc', '<span class="v">3 days ago</span>')}</div>
+        <div class="scard"><h3>Plugin</h3>${row('Version', '<span class="v">0.33.2 · up to date</span>')}${row('Log level', '<span class="v">Info</span>')}${row('Danger zone<div class="muted small">Remove shortcuts, delete ROMs, reset</div>', `<button class="btn sm danger" ${a('proto')}>Open</button>`)}</div>
+      </div></div></div>`;
+  }
+  const syncing = S.sync.stage === 'checking' || S.sync.stage === 'running';
+  return `<div class="lib">
+    <div class="lhead"><h1>RomM Library</h1><span class="status"><span class="dot"></span>romm.home.lan · synced ${S.lastSync}</span>
+      <div class="searchwrap">${I.search}<input class="search" id="search" type="search" placeholder="Search games" aria-label="Search games" value="${esc(S.q)}"></div>
+      <button class="btn sm" ${a('startSyncLib')}>${I.sync}${syncing ? 'Syncing…' : 'Sync'}</button></div>
+    <div class="ltabs"><span class="glyph" style="margin-right:6px">L1</span>${tabs.map((t) => `<button class="ltab${S.libTab === t[0] ? ' on' : ''}" ${a('libTab', t[0])}>${t[1]}${t[2] ? `<span class="badge">${t[2]}</span>` : ''}</button>`).join('')}<span class="glyph" style="margin-left:6px">R1</span></div>
+    ${body}</div>`;
+}
+function vGame(cur) {
+  const p = PLAT[cur.plat];
+  const core = p.cores[S.core[cur.plat]];
+  const played = cur.played !== 'Never';
+  let primary;
+  if (cur.isInst) primary = `<button class="btn play big" ${a('primary')}>${I.play}Play</button>`;
+  else if (cur.isCloud) primary = `<button class="btn primary big" ${a('primary')}>${I.dl}Download · ${cur.size}</button>`;
+  else primary = `<button class="btn big pbig" ${a('primary')}><span class="fill" style="width:${cur.pct}%"></span><span class="lt">${cur.isDl ? 'Downloading ' + cur.pct + '% · Pause' : cur.isQ ? 'Queued · Start now' : 'Paused ' + cur.pct + '% · Resume'}</span></button>`;
+  const chips = [
+    cur.isInst ? { ic: I.okc(20), label: 'ROM installed', sub: cur.size + ' · ' + cur.verName }
+      : cur.isCloud ? { ic: I.neu, label: 'Not downloaded', sub: cur.size + ' on RomM' }
+      : { ic: I.busy, label: cur.isPaused ? 'Download paused' : cur.isQ ? 'Queued' : 'Downloading', sub: cur.dlText },
+    p.bios === 'none' ? { ic: I.okc(20), label: 'No BIOS needed', sub: core }
+      : cur.biosMissing ? { warn: true, ic: I.warn(20), label: 'BIOS missing', sub: p.files[0][0] + ' on RomM', btn: `<button class="btn sm warn" ${a('getBios', cur.plat)}>Get</button>` }
+      : { ic: I.okc(20), label: 'BIOS ready', sub: p.files[0][0] },
+    !S.set.saveSync ? { ic: I.neu, label: 'Save sync off', sub: 'Saves stay on this Deck' }
+      : cur.conflict ? { warn: true, ic: I.warn(20), label: 'Save conflict', sub: 'Deck and server both changed', btn: `<button class="btn sm warn" ${a('modal', 'conflict')}>Resolve</button>` }
+      : played ? { ic: I.okc(20), label: 'Saves synced', sub: '2 h ago · slot default' }
+      : { ic: I.okc(20), label: 'Save sync on', sub: 'Uploads after first session' }
+  ];
+  const dtabs = [['overview', 'Overview'], ['saves', 'Saves'], ['bios', 'BIOS & Core'], ['ach', 'Achievements']];
+  let body = '';
+  if (S.detailTab === 'overview') {
+    body = `<div style="display:flex;gap:28px"><span class="cover" style="background:${cur.color};width:150px;flex:none"><span class="ptag">${cur.platShort}</span><span class="ctitle">${esc(cur.title)}</span></span>
+      <div style="flex:1"><p class="muted" style="margin:0 0 16px;font-size:14px;line-height:1.5">Description, genres and credits come from RomM metadata (IGDB / ScreenScraper). This block stays as today and is not part of the redesign.</p>
+      <div class="kv"><span class="k">Platform</span><span>${cur.platName}</span><span class="k">Release</span><span>${cur.year}</span><span class="k">Genre</span><span>${esc(cur.genre)}</span><span class="k">Active version</span><span>${cur.verName} · ${cur.size}</span><span class="k">Launches with</span><span>${core} via EmuDeck</span></div></div></div>`;
+  } else if (S.detailTab === 'saves') {
+    const hist = played ? [['Today 14:02', 'steamdeck', '128 KB'], ['Today 09:12', 'living-room-pc', '128 KB'], ['Monday 19:05', 'steamdeck', '124 KB']] : [];
+    body = !S.set.saveSync ? '<div class="muted">Save sync is off. Turn it on in Settings to keep saves on RomM.</div>' :
+      `<div style="display:flex;gap:24px"><div style="flex:1">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><span style="font-weight:600;color:#fff;font-size:15px">Slot “default”</span><span class="tag blue">Active</span><span class="tag ${cur.conflict ? '' : 'green'}">${cur.conflict ? 'Conflict' : 'In sync'}</span></div>
+        <div class="row"><span>This Deck</span><span class="v">${played ? 'Today 14:02 · 128 KB' : 'No save yet'}</span></div>
+        <div class="row"><span>RomM server</span><span class="v">${played ? (cur.conflict ? 'Today 09:12 · living-room-pc' : 'Today 14:02 · in sync') : 'No save yet'}</span></div>
+        <div style="display:flex;gap:10px;margin-top:14px">${cur.conflict ? `<button class="btn warn" ${a('modal', 'conflict')}>Resolve conflict</button>` : ''}<button class="btn" ${a('syncNow')}>Sync now</button><button class="btn ghost" ${a('proto')}>New slot</button></div></div>
+        <div style="width:420px"><div class="qsec" style="margin-top:0">Version history on RomM</div>${hist.map((h) => `<div class="row"><span>${h[0]}<div class="muted small">${h[1]} · ${h[2]}</div></span><button class="btn sm ghost" ${a('restore', h[0])}>Restore</button></div>`).join('') || '<div class="muted">No versions yet.</div>'}</div></div>`;
+  } else if (S.detailTab === 'bios') {
+    const gc = S.gameCore[cur.id];
+    body = `<div style="display:flex;gap:40px"><div style="flex:1"><div class="qsec" style="margin-top:0">BIOS</div>
+      <div style="display:flex;align-items:center;gap:10px;font-size:15px;margin-bottom:8px"><span class="${p.bios === 'none' ? 'dot grey' : cur.biosMissing ? 'dot red' : 'dot'}"></span>${p.bios === 'none' ? 'This platform needs no BIOS' : cur.biosMissing ? '0/1 required files ready' : 'All required files ready'}</div>
+      ${p.files.map((f, i) => `<div class="row"><span>${f[0]}<div class="muted small">${f[1]}</div></span><span class="v">${cur.biosMissing ? 'On RomM' : i === 0 || p.bios === 'optional' ? 'Installed' : 'On RomM'}</span></div>`).join('')}
+      ${cur.biosMissing ? `<button class="btn primary" style="margin-top:14px" ${a('getBios', cur.plat)}>Download from RomM</button>` : ''}</div>
+      <div style="width:360px"><div class="qsec" style="margin-top:0">Emulator core</div><div class="row"><span>Platform default</span><span class="v">${core}</span></div><div class="row"><span>This game</span><button class="corebtn" ${a('cycleGameCore')}>${gc == null ? 'Use platform default' : p.cores[gc]}</button></div><p class="muted small">Switching cores can make existing saves unreadable. You get a warning before it applies.</p></div></div>`;
+  } else body = '<div class="muted">RetroAchievements list stays as today (not part of the redesign).</div>';
+  return `<div class="game">
+    <div class="hero" style="background:${cur.color}"><div class="htitle">${esc(cur.title)}</div><div class="hplat">${cur.platName} · ${cur.year}</div></div>
+    <div class="abar">${primary}
+      ${cur.multiVer ? `<button class="pick" ${a('modal', 'version')}><span class="pk">Version</span><span class="pv">${cur.verName}${I.chevd}</span></button>` : ''}
+      ${cur.multiDisc ? `<button class="pick" ${a('modal', 'disc')}><span class="pk">Disc</span><span class="pv">${cur.discName}${I.chevd}</span></button>` : ''}
+      <div class="stat"><span class="sk">Last played</span><span class="sv">${cur.played}</span></div>
+      <div class="stat"><span class="sk">Playtime</span><span class="sv">${cur.time}</span></div>
+      <div style="margin-left:auto;display:flex;gap:8px"><button class="btn icon ghost" aria-label="Show in RomM Library" ${a('showInLibrary')}>${I.grid}</button><button class="btn icon ghost" aria-label="RomM actions" ${a('modal', 'actions')}>${I.dots}</button></div>
+    </div>
+    <div class="ready">${chips.map((c) => `<div class="rchip${c.warn ? ' warn' : ''}">${c.ic}<div class="rtx"><div class="rt">${c.label}</div><div class="rs">${esc(c.sub)}</div></div>${c.btn || ''}</div>`).join('')}</div>
+    <div class="dtabs">${dtabs.map((t) => `<button class="dtab${S.detailTab === t[0] ? ' on' : ''}" ${a('dtab', t[0])}>${t[1]}</button>`).join('')}</div>
+    <div class="dbody" id="scroll-detail">${body}</div></div>`;
+}
+function vQam(all, queue) {
+  const titles = { home: 'RomM', downloads: 'Downloads', platforms: 'Platforms & collections', settings: 'Settings' };
+  let body = '';
+  if (S.qamPage === 'home') {
+    const st = S.sync.stage;
+    const libStats = all.length + ' games · ' + ORDER.filter((k) => S.syncOn[k]).length + ' platforms';
+    let card = '';
+    if (st === 'idle') card = `<h3>${libStats}</h3><div class="muted" style="margin-bottom:12px">Last sync ${S.lastSync}</div><button class="btn primary block" ${a('startSync')}>Sync library</button>`;
+    else if (st === 'checking') card = '<h3>Checking RomM for changes…</h3><span class="bar" style="margin-top:10px"><span style="width:30%"></span></span>';
+    else if (st === 'preview') card = `<h3>3 new games on RomM</h3><div class="muted" style="margin-bottom:8px">0 updated · 0 removed</div>${NEW.map((g) => `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;font-size:13px"><span class="thumb" style="background:${g.color};width:22px;height:30px"></span><span style="flex:1">${esc(g.title)}</span><span class="muted small">${PLAT[g.plat].short}</span></div>`).join('')}<div style="display:flex;gap:8px;margin-top:12px"><button class="btn primary" style="flex:1" ${a('applySync')}>Apply</button><button class="btn" ${a('cancelSync')}>Cancel</button></div>`;
+    else if (st === 'running') { const i = Math.min(3, Math.floor(S.sync.t / 3)); card = `<h3>Syncing…</h3><div class="muted" style="margin-bottom:10px">[${i + 1}/4] ${STAGES[i]}</div><span class="bar"><span style="width:${Math.min(100, Math.round((S.sync.t / 12) * 100))}%"></span></span><button class="btn sm ghost" style="margin-top:10px" ${a('cancelSync')}>Cancel</button>`; }
+    else card = `<h3>${S.sync.text}</h3><div class="muted" style="margin-bottom:12px">${libStats}</div><button class="btn block" ${a('startSync')}>Sync again</button>`;
+    const att = [];
+    all.filter((x) => x.conflict).forEach((x) => att.push({ t: 'Save conflict', s: esc(x.title) + ' · Deck and server both changed', act: a('attConflict', x.id) }));
+    ORDER.forEach((k) => { const p = PLAT[k]; if (p.bios === 'required' && !S.bios[k] && S.syncOn[k]) att.push({ t: p.name + ' BIOS missing', s: 'Needed by ' + all.filter((x) => x.plat === k).length + ' games · download from RomM', act: a('openLib', 'systems') }); });
+    body = `<div class="status" style="margin:10px 0 4px"><span class="dot"></span>Connected · romm.home.lan</div>
+      <div class="qsec">Library</div><div class="card">${card}</div>
+      ${att.length ? `<div class="qsec">Needs attention</div>${att.map((x) => `<button class="att" ${x.act}>${I.warn(18).replace('ic-warn', 'amberc')}<span style="flex:1"><span class="t">${x.t}</span><span class="s">${x.s}</span></span>${I.chev}</button>`).join('')}` : ''}
+      <div class="qsec">Manage</div>
+      <button class="navrow" ${a('qGo', 'downloads')}><span class="sp">Downloads</span>${queue.length ? `<span class="badge">${queue.length}</span>` : ''}${I.chev}</button>
+      <button class="navrow" ${a('qGo', 'platforms')}><span class="sp">Platforms &amp; collections</span>${I.chev}</button>
+      <button class="navrow" ${a('qGo', 'settings')}><span class="sp">Settings</span>${I.chev}</button>
+      <div style="margin-top:18px"><button class="btn block" style="height:48px;background:#23303f" ${a('openLib', 'library')}>${I.grid}Open RomM Library</button></div>`;
+  } else if (S.qamPage === 'downloads') {
+    const qp = queue.length > 0 && queue.every((x) => x.isPaused);
+    body = `${queue.length ? vQueueRows(queue, true) : '<div class="muted" style="padding:18px 0">No downloads running.</div>'}
+      ${queue.length ? `<button class="btn block ghost" style="margin-top:12px" ${a('pauseAll')}>${qp ? 'Resume all' : 'Pause all'}</button>` : ''}
+      <button class="btn block" style="margin-top:8px" ${a('openLib', 'downloads')}>Full queue in RomM Library</button>`;
+  } else if (S.qamPage === 'platforms') {
+    body = `<div class="qsec" style="margin-top:6px">Synced platforms</div>
+      ${ORDER.map((k) => `<div class="row"><span>${PLAT[k].name}<div class="muted small">${all.filter((x) => x.plat === k).length} games</div></span><button class="${sw(S.syncOn[k])}" aria-label="Sync ${PLAT[k].name}" ${a('toggleSync', k)}></button></div>`).join('')}
+      <div class="qsec">Collections</div>
+      <div class="row"><span>Favorites</span><button class="${sw(S.set.fav)}" aria-label="Sync favorites" ${a('tSet', 'fav')}></button></div>
+      <div class="row"><span>Couch co-op</span><button class="${sw(S.set.coop)}" aria-label="Sync Couch co-op" ${a('tSet', 'coop')}></button></div>
+      <p class="muted small">Changes apply on the next sync.</p>`;
+  } else {
+    const tg = (k, l) => `<div class="row"><span>${l}</span><button class="${sw(S.set[k])}" aria-label="${l}" ${a('tSet', k)}></button></div>`;
+    body = `<div class="qsec" style="margin-top:6px">Save sync</div>${tg('saveSync', 'Save sync')}${tg('before', 'Before launch')}${tg('after', 'After exit')}
+      <div class="qsec">Library</div>${tg('skipPreview', 'Skip sync preview')}<div class="row"><span>Server</span><span class="v">romm.home.lan</span></div>
+      <button class="btn block" style="margin-top:14px" ${a('openLib', 'settings')}>All settings</button>`;
+  }
+  return `<button class="dim" aria-label="Close Quick Access Menu" ${a('closeQam')}></button>
+    <div class="qam"><div class="rail">${RAIL.map((d, i) => `<span class="ri${i === 4 ? ' on' : ''}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg></span>`).join('')}</div>
+    <div class="qbody" id="scroll-qam"><div class="qhead">${S.qamPage !== 'home' ? `<button class="btn sm icon" aria-label="Back" ${a('qGo', 'home')}>${I.back}</button>` : ''}<h2>${titles[S.qamPage]}</h2></div>${body}</div></div>`;
+}
+function vModal(cur) {
+  if (!S.modal) return '';
+  let m = '';
+  if (S.modal === 'actions') {
+    m = `<div class="modal"><h2>RomM actions</h2><div class="msub">${esc(cur.title)}</div>
+      <div class="mgroup"><div class="mlabel">Game</div>
+        <button class="mitem" ${a('menuToast', 'Artwork refreshed')}>Refresh artwork</button>
+        <button class="mitem" ${a('menuToast', 'Metadata refreshed')}>Refresh metadata</button>
+        <button class="mitem" ${a('menuToast', 'SteamGridDB picker (not in this dummy)')}>Choose artwork (SteamGridDB)</button>
+        <button class="mitem" ${a('cycleInput')}>Steam Input<span class="mv">${INPUTS[S.input]}</span></button></div>
+      <div class="mgroup"><div class="mlabel">Saves</div><button class="mitem" ${a('syncNow')}>Sync saves now</button><button class="mitem" ${a('goSaves')}>Save history</button></div>
+      ${cur.isInst ? `<div class="mgroup"><div class="mlabel">Remove</div><button class="mitem danger" ${a('menuToast', 'Would ask for confirmation first')}>Delete local saves…</button><button class="mitem danger" ${a('modal', 'uninstall')}>Uninstall ROM…</button></div>` : ''}
+      <div class="mfoot"><button class="btn" ${a('closeModal')}>Close</button></div></div>`;
+  } else if (S.modal === 'uninstall') {
+    m = `<div class="modal"><h2>Uninstall ${esc(cur.title)}?</h2><div class="msub">Removes the ROM files (${cur.size}) from this Deck. The Steam shortcut, playtime and your saves on RomM stay. You can download it again any time.</div><div class="mfoot"><button class="btn" ${a('closeModal')}>Cancel</button><button class="btn dangerfill" ${a('doUninstall')}>Uninstall</button></div></div>`;
+  } else if (S.modal === 'version') {
+    m = `<div class="modal"><h2>Choose version</h2><div class="msub">One Steam shortcut, several dumps on RomM. Switching never deletes files or saves.</div><div class="mgroup">
+      ${cur.versions.map((v, i) => `<button class="mitem" style="height:54px" ${a('pickVer', i)}><span class="thumb" style="background:${cur.color};width:28px;height:38px"></span><span>${esc(cur.title)} (${v})</span><span style="margin-left:auto;display:flex;gap:6px">${i === cur.defVer ? '<span class="tag">Default</span>' : ''}${i === cur.verIdx && cur.isInst ? '<span class="tag green">Downloaded</span>' : ''}${i === cur.verIdx ? '<span class="tag blue">Active</span>' : ''}</span></button>`).join('')}
+      </div><div class="mfoot"><button class="btn" ${a('closeModal')}>Close</button></div></div>`;
+  } else if (S.modal === 'disc') {
+    const items = []; for (let i = 0; i < cur.discs; i++) items.push(['Disc ' + (i + 1), i]); items.push(['All discs (playlist)', cur.discs]);
+    m = `<div class="modal"><h2>Start from disc</h2><div class="msub">“All discs” launches a playlist, so the emulator can swap discs in game.</div><div class="mgroup">${items.map((d) => `<button class="mitem" ${a('pickDisc', d[1])}>${d[0]}${(cur.discIdx === d[1] || (d[1] === cur.discs && cur.discIdx >= cur.discs)) ? '<span class="tag blue" style="margin-left:auto">Selected</span>' : ''}</button>`).join('')}</div><div class="mfoot"><button class="btn" ${a('closeModal')}>Close</button></div></div>`;
+  } else if (S.modal === 'conflict') {
+    m = `<div class="modal wide"><h2>Save conflict · ${esc(cur.title)}</h2><div class="msub">Both copies changed since the last sync. Pick the one to keep. The other stays in RomM's version history.</div>
+      <div style="display:flex;gap:12px;padding:4px 20px 6px"><div class="cmpcol"><div class="qsec" style="margin-top:0">This Deck</div><div style="font-size:16px;color:#fff;font-weight:600">Today 14:02</div><div class="muted">+1 h 12 min played since last sync</div></div><div class="cmpcol"><div class="qsec" style="margin-top:0">RomM server</div><div style="font-size:16px;color:#fff;font-weight:600">Today 09:12</div><div class="muted">uploaded by living-room-pc</div></div></div>
+      <div class="mfoot"><button class="btn ghost" ${a('closeModal')}>Decide later</button><button class="btn" ${a('keepServer')}>Use server save</button><button class="btn primary" ${a('keepLocal')}>Keep this Deck's save</button></div></div>`;
+  }
+  return `<div class="modalwrap">${m}</div>`;
+}
+
+function render() {
+  const app = document.getElementById('app');
+  const scrolls = {}; app.querySelectorAll('[id^="scroll-"]').forEach((el) => (scrolls[el.id] = el.scrollTop));
+  const focused = document.activeElement && document.activeElement.id === 'search' ? document.activeElement.selectionStart : null;
+  const all = games();
+  const rank = { downloading: 0, queued: 1, paused: 2 };
+  const queue = all.filter((x) => x.inQueue).sort((x, y) => rank[x.st] - rank[y.st]);
+  const cur = all.find((x) => x.id === S.gameId) || all[0];
+  const core = PLAT[cur.plat].cores[S.core[cur.plat]];
+  let html = '<div class="topbar"><span>87%</span><span>15:42</span></div>';
+  html += S.screen === 'steam' ? vSteam(all) : S.screen === 'library' ? vLibrary(all, queue) : vGame(cur);
+  if (S.qamOpen) html += vQam(all, queue);
+  html += vModal(cur);
+  if (S.launch) html += `<div class="launch"><div style="font-size:28px;font-weight:800;color:#fff">${esc(cur.title)}</div><div class="muted" style="font-size:15px">${S.launch.t < 4 ? (S.set.saveSync && S.set.before ? 'Checking saves with RomM…' : 'Preparing…') : 'Starting ' + core + ' via EmuDeck…'}</div><span class="bar" style="width:320px"><span style="width:${Math.round((S.launch.t / 8) * 100)}%"></span></span></div>`;
+  if (S.playing) html += `<div class="launch" style="background:${cur.color}"><div style="font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.75)">Game running (simulated)</div><div style="font-size:40px;font-weight:800;color:#fff">${esc(cur.title)}</div><div style="color:rgba(255,255,255,.8)">${core} via EmuDeck</div><button class="btn" style="margin-top:12px;background:rgba(0,0,0,.45);color:#fff" ${a('exitGame')}>Exit game</button></div>`;
+  if (S.toast) html += `<div class="toast">${I.okc(18)}${esc(S.toast)}</div>`;
+  html += `<div class="hints"><span class="hint static"><span class="glyph" style="padding:0 8px">STEAM</span>Menu</span><button class="hint" ${a('toggleQam')}><span class="glyph">···</span>Quick access</button><span style="flex:1"></span>${S.screen === 'library' && !S.qamOpen ? '<span class="hint static"><span class="glyph">L1</span><span class="glyph">R1</span>Tabs</span>' : ''}<span class="hint static"><span class="glyph">A</span>Select</span><button class="hint" ${a('back')}><span class="glyph">B</span>Back</button></div>`;
+  app.innerHTML = html;
+  Object.keys(scrolls).forEach((id) => { const el = document.getElementById(id); if (el) el.scrollTop = scrolls[id]; });
+  if (focused != null) { const s = document.getElementById('search'); if (s) { s.focus(); s.setSelectionRange(focused, focused); } }
+}
+
+function tick() {
+  let changed = false;
+  if (S.toast) { S.toastT -= 1; if (S.toastT <= 0) S.toast = null; changed = true; }
+  const all = allRaw();
+  const active = all.find((x) => S.g[x.id] && S.g[x.id].st === 'downloading');
+  if (active) {
+    const cur = S.g[active.id];
+    const pct = cur.pct + Math.max(1.2, Math.min(6, 600 / active.mb));
+    if (pct >= 100) {
+      S.g[active.id] = Object.assign({}, cur, { st: 'installed', pct: 100 });
+      S.done = [active.id].concat(S.done.filter((d) => d !== active.id)).slice(0, 3);
+      S.toast = active.title + ' is ready to play'; S.toastT = 8;
+    } else S.g[active.id] = Object.assign({}, cur, { pct });
+    changed = true;
+  } else {
+    const next = all.find((x) => S.g[x.id] && S.g[x.id].st === 'queued');
+    if (next) { S.g[next.id] = Object.assign({}, S.g[next.id], { st: 'downloading' }); changed = true; }
+  }
+  if (S.sync.stage === 'checking' || S.sync.stage === 'running') {
+    const t = S.sync.t + 1;
+    if (S.sync.stage === 'checking' && t >= 4) {
+      if (S.added) { S.sync = { stage: 'done', t: 0, text: 'Everything is up to date' }; S.lastSync = 'just now'; }
+      else S.sync = { stage: S.set.skipPreview ? 'running' : 'preview', t: 0 };
+    } else if (S.sync.stage === 'running' && t >= 12) {
+      S.sync = { stage: 'done', t: 0, text: 'Library synced · 3 added' }; S.added = true; S.lastSync = 'just now';
+      S.toast = 'Library synced · 3 games added'; S.toastT = 8;
+    } else S.sync.t = t;
+    changed = true;
+  }
+  if (S.launch) { const t = S.launch.t + 1; if (t >= 8) { S.launch = null; S.playing = S.gameId; } else S.launch = { t }; changed = true; }
+  if (changed) render();
+}
+
+document.getElementById('app').addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const fn = ACT[el.dataset.act];
+  if (fn) fn(el.dataset.arg);
+});
+document.getElementById('app').addEventListener('input', (e) => { if (e.target.id === 'search') { S.q = e.target.value; render(); } });
+document.getElementById('restart').addEventListener('click', () => { S = initState(); render(); });
+
+function fit() {
+  const stage = document.getElementById('stage');
+  const scale = Math.min(1, stage.clientWidth / 1280);
+  document.getElementById('scaler').style.transform = `scale(${scale})`;
+  stage.style.height = 800 * scale + 'px';
+}
+window.addEventListener('resize', fit);
+fit();
+render();
+setInterval(tick, 400);
+</script>
+</body>
+</html>
