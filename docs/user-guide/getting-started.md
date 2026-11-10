@@ -69,7 +69,7 @@ You only install by URL once. After that the plugin checks GitHub for a newer re
 
 - **When:** shortly after the plugin starts, then at most every 6 hours (sooner after a failed check). Opening the QAM
   reuses the last result, so it never spams GitHub.
-- **Where it shows:** an **Update available: vX.Y.Z** card at the top of the plugin's QAM page, with the release notes
+- **Where it shows:** an **Update available: vX.Y.Z** card under **Needs attention** on the plugin's QAM page, with the release notes
   (long notes behind **Show release notes**) and an **Update** button.
 - **Installing:** **Update** hands the release to Decky Loader's own installer. Decky shows its usual install
   confirmation — nothing changes until you confirm. Decky then downloads the zip, checks its SHA-256 checksum, replaces

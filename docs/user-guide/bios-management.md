@@ -4,7 +4,7 @@ Nintendo Switch emulators (Eden, yuzu, Ryujinx) need your console's **keys** to 
 archive for some of them. If you keep those files on your RomM server (in its `bios/Switch` folder), the plugin can
 check them against what is on this machine and put the missing ones in place.
 
-Everything lives on the **System** page of the plugin's Quick Access Menu. Press **B** to go back to the main page.
+Everything lives in the **Systems & BIOS** tab of the RomM Library (Quick Access Menu → **Open RomM Library**, then **L1** / **R1**). **B** leaves the library. A game's own page also shows the keys it needs in its **BIOS & Core** tab.
 
 > Switch only for now. Other systems' BIOS files return in later versions (see `REMOVED_TILL_0_90_0.md`).
 
@@ -34,7 +34,7 @@ to `Emulation/bios/switch/` and does **not** install it for you: you install it 
 
 ## Reading the key list
 
-For every key file and installed emulator the System page shows one of:
+For every key file and installed emulator the Systems & BIOS tab shows one of:
 
 - **matches RomM** — the file on this machine is the same as RomM's.
 - **missing** — the emulator has no such file.

@@ -14,11 +14,11 @@ saves in sync across devices through your RomM server.
 
 - **Library sync** — Pulls platforms and ROMs from your RomM server and creates Steam shortcuts, complete with cover
   art, hero banners, and logos (with optional [SteamGridDB](https://www.steamgriddb.com/) artwork)
-- **Save sync** — Keeps save files in sync across devices through your RomM server, with newest-wins conflict resolution
-  and a manual override when you need it
+- **Save sync** — *Planned for 0.55.0, not working yet.* Keeps save files in sync across devices through your RomM server, with newest-wins conflict resolution and a manual override
 - **ROM downloads** — Download ROMs on demand with progress tracking and a managed download queue
 - **Switch firmware and keys** — See which keys and firmware RomM has, compare them with your emulators (Eden, yuzu, Ryujinx), download what is missing, pick the firmware version, and replace a key with a backup
-- **Game detail page** — Install status and download/uninstall actions right on each game's Steam page
+- **RomM Library** — A full-screen library of your games with platform rail, filters, search and cover grid, the full download queue, Switch keys and firmware, and all settings
+- **Game detail page** — Play or download, a readiness strip (ROM, BIOS, saves) with one-tap fixes, and the actions menu right on each game's Steam page
 - **Per-platform control** — Choose exactly which platforms get synced
 - **Controller friendly** — Full gamepad navigation throughout the plugin UI
 - **Steam Input config** — Per-shortcut Steam Input mode (Default / Force On / Force Off)
@@ -26,7 +26,23 @@ saves in sync across devices through your RomM server.
 - **EmuDeck health diagnostics** — Detects misconfigured input drivers and EmuDeck configuration issues that break menu
   navigation
 
+## What works today
+
+| Area | Status |
+| ---- | ------ |
+| Systems | **Nintendo Switch** only. Retro systems are planned for 0.80, modern consoles for 0.90 |
+| Switch emulators | **Eden, yuzu, Ryujinx**, launched through EmuDeck (tested on the Steam Deck; Bazzite not yet verified) |
+| Library sync, downloads, games on the Steam page | Working |
+| Switch keys and firmware | Working: Eden, yuzu and Ryujinx (list, version choice, download, replace with backup) |
+| Save sync | **Not working yet**, planned for 0.55.0 (the screens exist and say so) |
+| Other systems' BIOS | Not available until 0.80 / 0.90 |
+
+The plugin is an unofficial community plugin and not affiliated with EmuDeck or RomM. The roadmap is in [`EMUDECK_PORT_PLAN.md`](EMUDECK_PORT_PLAN.md).
+
 ## Screenshots
+
+> The screenshots below show an older layout; new ones follow with the next release.
+
 
 |                                   QAM panel                                    |                                        Game detail page                                         |
 | :----------------------------------------------------------------------------: | :---------------------------------------------------------------------------------------------: |
@@ -68,11 +84,11 @@ gear icon → toggle **Developer Mode**).
 ## Quick start
 
 1. Open the Quick Access Menu and select **EmuDecky RomM Manager**
-2. In **Settings**, enter your RomM server URL and credentials, then hit **Test Connection**
-3. In **Platforms**, enable the platforms you want to sync
+2. Open **Settings → All settings** (the RomM Library's Settings tab), enter your RomM server URL and credentials, then hit **Test Connection**
+3. Back in the Quick Access Menu, open **Platforms & collections** and enable the platforms you want to sync
 4. Hit **Sync Library** — your ROMs appear as non-steam shortcuts
 
-See the [User Guide](docs/user-guide/syncing-your-library.md) for syncing details,
+See [The RomM Library and the Quick Access Menu](docs/user-guide/romm-library.md) for where everything is, the [User Guide](docs/user-guide/syncing-your-library.md) for syncing details,
 [save sync](docs/user-guide/save-sync.md), and
 [Switch firmware and keys](docs/user-guide/bios-management.md).
 

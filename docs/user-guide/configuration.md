@@ -1,7 +1,6 @@
 # Configuration
 
-All settings are accessible from the plugin's QAM panel. Open the Quick Access Menu (**...** button) and navigate to the
-EmuDecky RomM Manager plugin.
+The few settings you need at a glance are under **Settings** in the plugin's Quick Access Menu (**...** button): save sync on/off and its triggers, **Skip sync preview**, and the server host. **All settings** opens the full list in the **Settings** tab of the RomM Library (Quick Access Menu → **Open RomM Library**).
 
 ## Connection Settings
 
