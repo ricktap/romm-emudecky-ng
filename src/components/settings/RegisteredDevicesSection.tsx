@@ -1,13 +1,13 @@
 /**
  * Read-only list of devices currently registered with the RomM save-sync
- * backend. Visible only when save-sync is enabled; parent owns the device
- * list, loading flag, and error message.
+ * backend, as a settings card. Visible only when save-sync is enabled; the
+ * parent owns the device list, loading flag and error message.
  */
 
 import { FC } from "react";
-import { PanelSection, PanelSectionRow, Field } from "@decky/ui";
 import type { RegisteredDevice } from "../../types";
 import { formatRelativeTime } from "./helpers";
+import { RmCard, RmValueRow } from "../rm";
 
 interface RegisteredDevicesSectionProps {
   devicesLoading: boolean;
@@ -19,49 +19,27 @@ export const RegisteredDevicesSection: FC<RegisteredDevicesSectionProps> = ({
   devicesLoading,
   devicesError,
   registeredDevices,
-}) => {
-  return (
-    <PanelSection title="Registered Devices">
-      {devicesLoading && (
-        <PanelSectionRow>
-          <Field label="Loading..." focusable />
-        </PanelSectionRow>
-      )}
-      {!devicesLoading && devicesError && (
-        <PanelSectionRow>
-          <Field label="Could not load devices" description={devicesError} focusable />
-        </PanelSectionRow>
-      )}
-      {!devicesLoading && !devicesError && registeredDevices !== null && registeredDevices.length === 0 && (
-        <PanelSectionRow>
-          <Field label="No devices registered" focusable />
-        </PanelSectionRow>
-      )}
-      {!devicesLoading &&
-        !devicesError &&
-        registeredDevices !== null &&
-        registeredDevices.map((device, i) => {
-          const parts: string[] = [
-            `${device.client ?? "unknown client"} v${device.client_version ?? "?"}`,
-            ...(device.platform ? [device.platform] : []),
-            `last seen ${formatRelativeTime(device.last_seen)}`,
-            `ID ${String(device.id).slice(0, 8) || "—"}`,
-          ];
-          return (
-            <PanelSectionRow key={device.id || `idx-${i}`}>
-              <Field
-                label={
-                  <span>
-                    {device.name ?? "(unnamed)"}
-                    {device.is_current_device && (
-                      <span style={{ color: "#6ab04c", marginLeft: "8px", fontSize: "12px" }}>(this device)</span>
-                    )}
-                  </span>
-                }
-                description={parts.join(" · ")} focusable />
-            </PanelSectionRow>
-          );
-        })}
-    </PanelSection>
-  );
-};
+}) => (
+  <RmCard title="Devices">
+    {devicesLoading && <RmValueRow label="Loading..." />}
+    {!devicesLoading && devicesError && <RmValueRow label="Could not load devices" sub={devicesError} />}
+    {!devicesLoading && !devicesError && registeredDevices !== null && registeredDevices.length === 0 && (
+      <RmValueRow label="No devices registered" />
+    )}
+    {!devicesLoading &&
+      !devicesError &&
+      registeredDevices?.map((device, i) => (
+        <RmValueRow
+          key={device.id || `idx-${i}`}
+          label={
+            <span>
+              {device.name ?? "(unnamed)"}
+              {device.is_current_device && <span className="rm-tag rm-blue" style={{ marginLeft: 8 }}>This device</span>}
+            </span>
+          }
+          sub={`${device.client ?? "unknown client"} v${device.client_version ?? "?"}${device.platform ? ` · ${device.platform}` : ""}`}
+          value={formatRelativeTime(device.last_seen)}
+        />
+      ))}
+  </RmCard>
+);

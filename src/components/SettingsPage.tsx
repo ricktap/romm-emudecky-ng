@@ -1,5 +1,5 @@
 import { useState, useEffect, FC } from "react";
-import { PanelSection, PanelSectionRow, ButtonItem, ConfirmModal, showModal } from "@decky/ui";
+import { ConfirmModal, showModal } from "@decky/ui";
 import {
   getSettings,
   saveServerUrl,
@@ -24,7 +24,6 @@ import {
   logError,
 } from "../api/backend";
 import type { RegisteredDevice } from "../types";
-import { scrollToTop } from "../utils/scrollHelpers";
 import { detach } from "../utils/detach";
 import { trimServerUrl, isValidServerUrl } from "../utils/serverUrl";
 import type { SaveSyncSettings as SaveSyncSettingsType } from "../types";
@@ -33,17 +32,16 @@ import { ConnectionSection } from "./settings/ConnectionSection";
 import { SteamGridDBSection } from "./settings/SteamGridDBSection";
 import { SaveSyncSection } from "./settings/SaveSyncSection";
 import { RegisteredDevicesSection } from "./settings/RegisteredDevicesSection";
-import { ControllerSection } from "./settings/ControllerSection";
-import { AdvancedSection } from "./settings/AdvancedSection";
-import { UpdatesSection } from "./settings/UpdatesSection";
+import { PluginSection } from "./settings/PluginSection";
+import { DangerZone } from "./DangerZone";
 import { LibrarySection, AUTO_REGION, DEFAULT_REGION_LABEL } from "./settings/LibrarySection";
 import { showPreferredRegionModal } from "./settings/PreferredRegionModal";
 
 interface SettingsPageProps {
-  onBack: () => void;
+  onBack?: () => void;
 }
 
-export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
+export const SettingsPage: FC<SettingsPageProps> = () => {
   // Connection state
   const [url, setUrl] = useState("");
   const [externalUrl, setExternalUrl] = useState("");
@@ -75,6 +73,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
 
   // Advanced state
   const [logLevel, setLogLevel] = useState("warn");
+  const [dangerOpen, setDangerOpen] = useState(false);
 
   // Library state (preferred sibling-group region, ADR-0021)
   const [preferredRegion, setPreferredRegion] = useState(AUTO_REGION);
@@ -435,18 +434,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
 
   return (
     <>
-      <PanelSection>
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            onClick={onBack}
-            // @ts-expect-error onFocus works at runtime; not in Decky's ButtonItem types
-            onFocus={scrollToTop}
-          >
-            Back
-          </ButtonItem>
-        </PanelSectionRow>
-      </PanelSection>
+      <div className="rm-setgrid">
+        <div className="rm-col">
       <ConnectionSection
         url={url}
         externalUrl={externalUrl}
@@ -477,6 +466,11 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
           detach(handleSignOut());
         }}
       />
+      <LibrarySection
+        preferredRegion={preferredRegion}
+        libraryRegions={libraryRegions}
+        onPreferredRegionChange={handlePreferredRegionChange}
+      />
       <SteamGridDBSection
         sgdbApiKey={sgdbApiKey}
         sgdbStatus={sgdbStatus}
@@ -487,31 +481,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
         onVerifyKey={() => {
           detach(handleSgdbVerify());
         }}
-      />
-      <SaveSyncSection
-        saveSyncSettings={saveSyncSettings}
-        saveSyncToggleKey={saveSyncToggleKey}
-        deviceInfo={deviceInfo}
-        syncing={syncing}
-        syncStatus={syncStatus}
-        onToggleSaveSync={handleToggleSaveSync}
-        onSettingChange={(partial) => {
-          detach(handleSaveSyncSettingChange(partial));
-        }}
-        onDefaultSlotSubmit={handleDefaultSlotSubmit}
-        onResetDefaultSlot={handleResetDefaultSlot}
-        onSyncAll={() => {
-          detach(handleSyncAll());
-        }}
-      />
-      {saveSyncEnabled && (devicesLoading || registeredDevices !== null) && (
-        <RegisteredDevicesSection
-          devicesLoading={devicesLoading}
-          devicesError={devicesError}
-          registeredDevices={registeredDevices}
-        />
-      )}
-      <ControllerSection
         steamInputMode={steamInputMode}
         steamInputStatus={steamInputStatus}
         loading={loading}
@@ -520,15 +489,40 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
           detach(handleApplySteamInput());
         }}
       />
-      <LibrarySection
-        preferredRegion={preferredRegion}
-        libraryRegions={libraryRegions}
-        onPreferredRegionChange={handlePreferredRegionChange}
-      />
-
-      <UpdatesSection />
-
-      <AdvancedSection logLevel={logLevel} onLogLevelChange={handleLogLevelChange} />
+        </div>
+        <div className="rm-col">
+          <SaveSyncSection
+            saveSyncSettings={saveSyncSettings}
+            saveSyncToggleKey={saveSyncToggleKey}
+            deviceInfo={deviceInfo}
+            syncing={syncing}
+            syncStatus={syncStatus}
+            onToggleSaveSync={handleToggleSaveSync}
+            onSettingChange={(partial) => {
+              detach(handleSaveSyncSettingChange(partial));
+            }}
+            onDefaultSlotSubmit={handleDefaultSlotSubmit}
+            onResetDefaultSlot={handleResetDefaultSlot}
+            onSyncAll={() => {
+              detach(handleSyncAll());
+            }}
+          />
+          {saveSyncEnabled && (devicesLoading || registeredDevices !== null) && (
+            <RegisteredDevicesSection
+              devicesLoading={devicesLoading}
+              devicesError={devicesError}
+              registeredDevices={registeredDevices}
+            />
+          )}
+          <PluginSection
+            logLevel={logLevel}
+            onLogLevelChange={handleLogLevelChange}
+            dangerOpen={dangerOpen}
+            onToggleDanger={() => setDangerOpen((open) => !open)}
+          />
+        </div>
+      </div>
+      {dangerOpen && <DangerZone onBack={() => setDangerOpen(false)} />}
     </>
   );
 };

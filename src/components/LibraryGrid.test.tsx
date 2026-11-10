@@ -33,10 +33,10 @@ const sample = () =>
     [{ platform_slug: "switch", count: 3, installed: 2 }, { platform_slug: "snes", count: 1, installed: 0 }],
   );
 
-async function renderGrid() {
-  const utils = render(<LibraryGrid />);
+async function renderGrid(search = "") {
+  const utils = render(<LibraryGrid search={search} />);
   await flush();
-  return utils;
+  return { ...utils, setSearch: (value: string) => utils.rerender(<LibraryGrid search={value} />) };
 }
 
 describe("LibraryGrid", () => {
@@ -56,12 +56,13 @@ describe("LibraryGrid", () => {
   it("shows every game as a cover with the platform rail and the filter counts", async () => {
     const { getByTestId, getByText } = await renderGrid();
     for (const id of [1, 2, 3, 4]) expect(getByTestId(`cover-${id}`)).toBeTruthy();
-    expect(getByText("All games (4)")).toBeTruthy();
-    expect(getByTestId("rail-switch").textContent).toBe("Nintendo Switch (3)");
-    expect(getByTestId("filter-all").textContent).toBe("All 4");
-    expect(getByTestId("filter-installed").textContent).toBe("Installed 2");
-    expect(getByTestId("filter-romm_only").textContent).toBe("On RomM only 2");
-    expect(getByTestId("filter-attention").textContent).toBe("Needs attention 1");
+    expect(getByTestId("rail-all").textContent).toBe("All games4");
+    expect(getByTestId("rail-switch").textContent).toBe("Nintendo Switch3");
+    expect(getByTestId("filter-all").textContent).toBe("All · 4");
+    expect(getByTestId("filter-installed").textContent).toBe("Installed · 2");
+    expect(getByTestId("filter-romm_only").textContent).toBe("On RomM only · 2");
+    expect(getByTestId("filter-attention").textContent).toBe("Needs attention · 1");
+    expect(getByText("All platforms · 4 shown")).toBeTruthy();
   });
 
   it("badges: installed, cloud, issue (an issue wins), and a disabled platform is dimmed in the rail", async () => {
@@ -93,11 +94,11 @@ describe("LibraryGrid", () => {
   });
 
   it("search filters by name, and says so when nothing matches", async () => {
-    const { getAllByTestId, getByText, queryByTestId } = await renderGrid();
-    fireEvent.change(getAllByTestId("text-field")[0]!, { target: { value: "zel" } });
+    const { getByText, queryByTestId, setSearch } = await renderGrid();
+    setSearch("zel");
     expect([1, 2, 3, 4].filter((id) => queryByTestId(`cover-${id}`))).toEqual([1]);
-    fireEvent.change(getAllByTestId("text-field")[0]!, { target: { value: "nothing" } });
-    expect(getByText("No games match.")).toBeTruthy();
+    setSearch("nothing");
+    expect(getByText("No games match this filter.")).toBeTruthy();
   });
 
   it("A on a cover opens the game's Steam page", async () => {
@@ -212,12 +213,12 @@ describe("LibraryGrid", () => {
     it("lists this device's collections with counts and narrows the grid to one", async () => {
       withCollections();
       const { getByTestId, queryByTestId } = await renderGrid();
-      expect(getByTestId("rail-collection-Favourites").textContent).toBe("Favourites (2)");
+      expect(getByTestId("rail-collection-Favourites").textContent).toBe("Favourites2");
       fireEvent.click(getByTestId("rail-collection-Favourites"));
       expect(getByTestId("cover-1")).toBeTruthy();
       expect(getByTestId("cover-2")).toBeTruthy();
       expect(queryByTestId("cover-3")).toBeNull();
-      expect(getByTestId("filter-all").textContent).toBe("All 2");
+      expect(getByTestId("filter-all").textContent).toBe("All · 2");
     });
 
     it("choosing a platform clears the collection and the other way round", async () => {

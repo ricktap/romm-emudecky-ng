@@ -1,13 +1,16 @@
 /**
- * Library-wide sync preferences. Currently houses the preferred-region
- * dropdown (ADR-0021 §3): which region wins when a game has several dumps
- * (versions) and the plugin must pick one to bind and to name the Steam
- * shortcut after. Pure renderer: parent owns the current value, the list of
- * regions discovered in the local library, and the save/confirm flow.
+ * Library-wide sync preferences, as one settings card: the preferred region
+ * (ADR-0021 §3: which region wins when a game has several dumps and the plugin
+ * must pick one to bind and to name the Steam shortcut after), whether a sync
+ * shows its preview, and the full re-fetch. Pure renderer for the region; the
+ * sync rows read and drive the shared sync preferences themselves.
  */
 
-import { FC } from "react";
-import { PanelSection, PanelSectionRow, DropdownItem } from "@decky/ui";
+import { FC, useEffect, useState } from "react";
+import { clearSyncCache } from "../../api/backend";
+import { getSkipPreview, setSkipPreview, onSyncPreferencesChange } from "../../utils/syncPreferences";
+import { detach } from "../../utils/detach";
+import { RmButton, RmCard, RmChoice, RmRow, RmToggle, RmValueRow } from "../rm";
 
 interface LibrarySectionProps {
   preferredRegion: string;
@@ -21,8 +24,8 @@ interface LibrarySectionProps {
 export const AUTO_REGION = "auto";
 
 // The fixed anchor regions, in the build-time default order. MIRRORS the backend
-// constant DEFAULT_REGION_PRIORITY (py_modules/domain/sibling_resolution.py) —
-// keep the two in sync. This is a fixed order, NOT language/system detection.
+// constant DEFAULT_REGION_PRIORITY — keep the two in sync. This is a fixed order,
+// NOT language/system detection.
 export const ANCHOR_REGIONS: readonly string[] = ["World", "USA", "Europe", "Japan"];
 
 // The default option's label states the order explicitly so it never reads as
@@ -30,7 +33,7 @@ export const ANCHOR_REGIONS: readonly string[] = ["World", "USA", "Europe", "Jap
 export const DEFAULT_REGION_LABEL = "Default (World > USA > Europe)";
 
 /**
- * Build the dropdown options: the "Default" sentinel + the fixed anchors, then
+ * Build the region options: the "Default" sentinel + the fixed anchors, then
  * every OTHER region found in the local library (sorted, de-duped against the
  * anchors). The currently-selected value is always included so a preference for
  * a region no longer in the library still renders as selected.
@@ -54,22 +57,40 @@ export function buildRegionOptions(libraryRegions: string[], selected: string): 
   return options;
 }
 
-export const LibrarySection: FC<LibrarySectionProps> = ({
-  preferredRegion,
-  libraryRegions,
-  onPreferredRegionChange,
-}) => {
+export const LibrarySection: FC<LibrarySectionProps> = ({ preferredRegion, libraryRegions, onPreferredRegionChange }) => {
+  const [skipPreview, setSkipPreviewState] = useState(getSkipPreview());
+  const [note, setNote] = useState("");
+
+  useEffect(() => onSyncPreferencesChange(() => setSkipPreviewState(getSkipPreview())), []);
+
+  const forceFullSync = async () => {
+    try {
+      const result = await clearSyncCache();
+      setNote(result.message);
+    } catch {
+      setNote("Failed to clear sync cache");
+    }
+  };
+
   return (
-    <PanelSection title="Library">
-      <PanelSectionRow>
-        <DropdownItem
+    <RmCard title="Library sync">
+      <RmRow label="Preferred region" sub="Picks the shortcut's version when a game has several (default: World > USA > Europe). Applies from the next sync.">
+        <RmChoice
           label="Preferred region"
-          description="When a game has several regional versions, prefer this region for the shortcut and its name. Applies to games synced from now on; existing shortcuts keep their name."
-          rgOptions={buildRegionOptions(libraryRegions, preferredRegion)}
-          selectedOption={preferredRegion}
-          onChange={(option) => onPreferredRegionChange(option.data)}
+          value={preferredRegion}
+          options={buildRegionOptions(libraryRegions, preferredRegion).map((o) => (o.data === AUTO_REGION ? { ...o, label: "Default" } : o))}
+          onChange={onPreferredRegionChange}
         />
-      </PanelSectionRow>
-    </PanelSection>
+      </RmRow>
+      <RmRow label="Skip preview" sub="Apply changes without review">
+        <RmToggle label="Skip preview" checked={skipPreview} onChange={setSkipPreview} />
+      </RmRow>
+      <RmRow label="Full resync" sub="Clears cached data, re-fetches all platforms">
+        <RmButton variant="sm ghost" testId="full-resync" onActivate={() => detach(forceFullSync())}>
+          Run
+        </RmButton>
+      </RmRow>
+      {note && <RmValueRow label={note} />}
+    </RmCard>
   );
 };

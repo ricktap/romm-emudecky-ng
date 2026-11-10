@@ -6,7 +6,7 @@
 // one with zero expects.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, fireEvent, act } from "@testing-library/react";
+import { render, act } from "@testing-library/react";
 import { createElement, type ComponentProps, type ReactElement } from "react";
 import { SettingsPage } from "./SettingsPage";
 import * as backend from "../api/backend";
@@ -21,8 +21,7 @@ import type { ConnectionSection } from "./settings/ConnectionSection";
 import type { SteamGridDBSection } from "./settings/SteamGridDBSection";
 import type { SaveSyncSection } from "./settings/SaveSyncSection";
 import type { RegisteredDevicesSection } from "./settings/RegisteredDevicesSection";
-import type { ControllerSection } from "./settings/ControllerSection";
-import type { AdvancedSection } from "./settings/AdvancedSection";
+import type { PluginSection } from "./settings/PluginSection";
 import type { LibrarySection } from "./settings/LibrarySection";
 import { showPreferredRegionModal } from "./settings/PreferredRegionModal";
 
@@ -30,8 +29,7 @@ type ConnectionProps = ComponentProps<typeof ConnectionSection>;
 type SteamGridDBProps = ComponentProps<typeof SteamGridDBSection>;
 type SaveSyncProps = ComponentProps<typeof SaveSyncSection>;
 type RegisteredDevicesProps = ComponentProps<typeof RegisteredDevicesSection>;
-type ControllerProps = ComponentProps<typeof ControllerSection>;
-type AdvancedProps = ComponentProps<typeof AdvancedSection>;
+type PluginProps = ComponentProps<typeof PluginSection>;
 type LibraryProps = ComponentProps<typeof LibrarySection>;
 
 // Captured props arrays — reset in beforeEach. Each child mock pushes the
@@ -41,8 +39,7 @@ const capturedConnection: ConnectionProps[] = [];
 const capturedSgdb: SteamGridDBProps[] = [];
 const capturedSaveSync: SaveSyncProps[] = [];
 const capturedDevices: RegisteredDevicesProps[] = [];
-const capturedController: ControllerProps[] = [];
-const capturedAdvanced: AdvancedProps[] = [];
+const capturedPlugin: PluginProps[] = [];
 const capturedLibrary: LibraryProps[] = [];
 
 vi.mock("./settings/ConnectionSection", () => ({
@@ -69,20 +66,14 @@ vi.mock("./settings/RegisteredDevicesSection", () => ({
     return createElement("div", { "data-testid": "devices-section" });
   },
 }));
-vi.mock("./settings/ControllerSection", () => ({
-  ControllerSection: (p: ControllerProps) => {
-    capturedController.push(p);
-    return createElement("div", { "data-testid": "controller-section" });
+vi.mock("./settings/PluginSection", () => ({
+  PluginSection: (p: PluginProps) => {
+    capturedPlugin.push(p);
+    return createElement("div", { "data-testid": "plugin-section" });
   },
 }));
-vi.mock("./settings/AdvancedSection", () => ({
-  AdvancedSection: (p: AdvancedProps) => {
-    capturedAdvanced.push(p);
-    return createElement("div", { "data-testid": "advanced-section" });
-  },
-}));
-vi.mock("./settings/UpdatesSection", () => ({
-  UpdatesSection: () => createElement("div", { "data-testid": "updates-section" }),
+vi.mock("./DangerZone", () => ({
+  DangerZone: () => createElement("div", { "data-testid": "danger-zone" }),
 }));
 vi.mock("./settings/LibrarySection", async (importOriginal) => {
   // Keep the real AUTO_REGION / DEFAULT_REGION_LABEL constants (SettingsPage
@@ -174,8 +165,8 @@ describe("SettingsPage", () => {
     capturedSgdb.length = 0;
     capturedSaveSync.length = 0;
     capturedDevices.length = 0;
-    capturedController.length = 0;
-    capturedAdvanced.length = 0;
+    capturedSgdb.length = 0;
+    capturedPlugin.length = 0;
     capturedLibrary.length = 0;
     for (const k of Object.keys(pendingEdits) as Array<keyof typeof pendingEdits>) {
       delete pendingEdits[k];
@@ -215,10 +206,10 @@ describe("SettingsPage", () => {
       const sgdb = capturedSgdb[capturedSgdb.length - 1];
       expect(sgdb?.sgdbApiKey).toBe("abc");
 
-      const ctrl = capturedController[capturedController.length - 1];
+      const ctrl = capturedSgdb[capturedSgdb.length - 1];
       expect(ctrl?.steamInputMode).toBe("force_on");
 
-      const adv = capturedAdvanced[capturedAdvanced.length - 1];
+      const adv = capturedPlugin[capturedPlugin.length - 1];
       expect(adv?.logLevel).toBe("debug");
     });
 
@@ -1335,10 +1326,10 @@ describe("SettingsPage", () => {
       render(<SettingsPage onBack={vi.fn()} />);
       await flushAsync();
       act(() => {
-        capturedController[capturedController.length - 1]?.onModeChange("force_on");
+        capturedSgdb[capturedSgdb.length - 1]?.onModeChange("force_on");
       });
       expect(vi.mocked(backend.saveSteamInputSetting)).toHaveBeenCalledWith("force_on");
-      expect(capturedController[capturedController.length - 1]?.steamInputMode).toBe("force_on");
+      expect(capturedSgdb[capturedSgdb.length - 1]?.steamInputMode).toBe("force_on");
     });
 
     it("handleApplySteamInput success forwards result.message into steamInputStatus", async () => {
@@ -1349,10 +1340,10 @@ describe("SettingsPage", () => {
       render(<SettingsPage onBack={vi.fn()} />);
       await flushAsync();
       await act(async () => {
-        capturedController[capturedController.length - 1]?.onApplyMode();
+        capturedSgdb[capturedSgdb.length - 1]?.onApplyMode();
         await Promise.resolve();
       });
-      expect(capturedController[capturedController.length - 1]?.steamInputStatus).toBe("Applied");
+      expect(capturedSgdb[capturedSgdb.length - 1]?.steamInputStatus).toBe("Applied");
     });
 
     it("handleApplySteamInput throw → steamInputStatus='Failed to apply'", async () => {
@@ -1360,10 +1351,10 @@ describe("SettingsPage", () => {
       render(<SettingsPage onBack={vi.fn()} />);
       await flushAsync();
       await act(async () => {
-        capturedController[capturedController.length - 1]?.onApplyMode();
+        capturedSgdb[capturedSgdb.length - 1]?.onApplyMode();
         await Promise.resolve();
       });
-      expect(capturedController[capturedController.length - 1]?.steamInputStatus).toBe("Failed to apply");
+      expect(capturedSgdb[capturedSgdb.length - 1]?.steamInputStatus).toBe("Failed to apply");
     });
 
   });
@@ -1373,10 +1364,10 @@ describe("SettingsPage", () => {
       render(<SettingsPage onBack={vi.fn()} />);
       await flushAsync();
       act(() => {
-        capturedAdvanced[capturedAdvanced.length - 1]?.onLogLevelChange("debug");
+        capturedPlugin[capturedPlugin.length - 1]?.onLogLevelChange("debug");
       });
       expect(vi.mocked(backend.saveLogLevel)).toHaveBeenCalledWith("debug");
-      expect(capturedAdvanced[capturedAdvanced.length - 1]?.logLevel).toBe("debug");
+      expect(capturedPlugin[capturedPlugin.length - 1]?.logLevel).toBe("debug");
     });
   });
 
@@ -1465,13 +1456,20 @@ describe("SettingsPage", () => {
     });
   });
 
-  describe("back button", () => {
-    it("calls onBack when the Back button is clicked", async () => {
-      const onBack = vi.fn();
-      const { getByText } = render(<SettingsPage onBack={onBack} />);
+  describe("danger zone", () => {
+    it("opens and closes the danger zone from the plugin card", async () => {
+      const { queryByTestId } = render(<SettingsPage onBack={vi.fn()} />);
       await flushAsync();
-      fireEvent.click(getByText("Back"));
-      expect(onBack).toHaveBeenCalledTimes(1);
+      expect(queryByTestId("danger-zone")).toBeNull();
+      await act(async () => {
+        capturedPlugin[capturedPlugin.length - 1]?.onToggleDanger();
+      });
+      expect(queryByTestId("danger-zone")).not.toBeNull();
+      expect(capturedPlugin[capturedPlugin.length - 1]?.dangerOpen).toBe(true);
+      await act(async () => {
+        capturedPlugin[capturedPlugin.length - 1]?.onToggleDanger();
+      });
+      expect(queryByTestId("danger-zone")).toBeNull();
     });
   });
 });

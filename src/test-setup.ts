@@ -123,6 +123,10 @@ vi.mock("@decky/ui", () => {
         {
           "data-testid": (rest["data-testid"] as string | undefined) ?? "focusable",
           style,
+          className: rest.className as string | undefined,
+          onClick: rest.onClick as never,
+          "aria-label": rest["aria-label"] as string | undefined,
+          title: rest.title as string | undefined,
           ref: (el: HTMLDivElement | null) => {
             if (!el) return;
             // A (onActivate) and X (onSecondaryButton) arrive as "decky-activate" / "decky-secondary" DOM events.
@@ -156,6 +160,8 @@ vi.mock("@decky/ui", () => {
         children as ReactNode,
       ),
     GamepadButton: {
+      BUMPER_LEFT: 5,
+      BUMPER_RIGHT: 6,
       OK: 1,
       CANCEL: 2,
       SECONDARY: 3,

@@ -1,149 +1,86 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
-import { createElement, type ReactElement } from "react";
+import type { ReactElement } from "react";
 import { SteamGridDBSection } from "./SteamGridDBSection";
 import { showModal } from "@decky/ui";
 
-// Local re-mock — we need:
-//  - Field to render its `label` + `description` (the API Key row is a
-//    Field + DialogButton again) so masked-key vs. "Not configured" can be
-//    asserted via field-desc, plus the (Field-based) status row.
-//  - DialogButton to render its `children` ("Edit") and forward `onClick` so
-//    the modal-open wiring stays drivable.
-//  - ButtonItem to forward `onClick` + `disabled` and render its `children`
-//    (the Verify Key row stays a layout="below" ButtonItem).
-type AnyProps = Record<string, unknown> & { children?: unknown };
-vi.mock("@decky/ui", () => ({
-  PanelSection: (p: AnyProps) => createElement("section", {}, p.children as never),
-  PanelSectionRow: (p: AnyProps) => createElement("div", {}, p.children as never),
-  Field: (p: AnyProps & { label?: unknown; description?: unknown }) =>
-    createElement(
-      "div",
-      { "data-testid": "field" },
-      createElement("span", { "data-testid": "field-label" }, p.label as never),
-      createElement("span", { "data-testid": "field-desc" }, p.description as never),
-      p.children as never,
-    ),
-  DialogButton: ({ children, onClick, disabled }: AnyProps & { onClick?: () => void; disabled?: boolean }) =>
-    createElement("button", { onClick, disabled }, children as never),
-  ButtonItem: ({
-    children,
-    onClick,
-    disabled,
-  }: AnyProps & {
-    onClick?: () => void;
-    disabled?: boolean;
-  }) => createElement("button", { onClick, disabled }, children as never),
-  showModal: vi.fn(),
-}));
-
-interface TextInputProps {
-  label: string;
-  value: string;
-  bIsPassword?: boolean;
-  onSubmit: (value: string) => void;
-}
-
-function lastShownModalProps(): TextInputProps | null {
-  const calls = vi.mocked(showModal).mock.calls;
-  if (calls.length === 0) return null;
-  const el = calls[calls.length - 1]?.[0] as ReactElement<TextInputProps> | undefined;
-  return el?.props ?? null;
-}
-
-function defaultProps(overrides: Partial<React.ComponentProps<typeof SteamGridDBSection>> = {}) {
+function props(over: Partial<React.ComponentProps<typeof SteamGridDBSection>> = {}) {
   return {
     sgdbApiKey: "",
     sgdbStatus: "",
     sgdbVerifying: false,
     onSubmitKey: vi.fn(),
     onVerifyKey: vi.fn(),
-    ...overrides,
+    steamInputMode: "default",
+    steamInputStatus: "",
+    loading: false,
+    onModeChange: vi.fn(),
+    onApplyMode: vi.fn(),
+    ...over,
   };
 }
 
-describe("SteamGridDBSection", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+function lastOf<T>(items: T[]): T {
+  return items[items.length - 1]!;
+}
+
+describe("SteamGridDBSection (artwork & controller)", () => {
+  beforeEach(() => vi.mocked(showModal).mockClear());
+
+  it("without a key it offers to set one, hints why, and cannot verify", () => {
+    const p = props();
+    const { getByTestId, container } = render(<SteamGridDBSection {...p} />);
+    expect(getByTestId("edit-sgdb-key").textContent).toBe("Set key");
+    expect(container.textContent).toContain("Needed for hero, logo and wide artwork");
+    fireEvent.click(getByTestId("verify-sgdb-key"));
+    expect(p.onVerifyKey).not.toHaveBeenCalled();
   });
 
-  describe("api key field", () => {
-    it("renders masked '••••' description when a key is set", () => {
-      const { getAllByTestId } = render(<SteamGridDBSection {...defaultProps({ sgdbApiKey: "stored" })} />);
-      const descs = getAllByTestId("field-desc").map((el) => el.textContent);
-      expect(descs).toContain("••••");
-    });
-
-    it("renders 'Not configured' description when the key is empty", () => {
-      const { getAllByTestId } = render(<SteamGridDBSection {...defaultProps()} />);
-      const descs = getAllByTestId("field-desc").map((el) => el.textContent);
-      expect(descs).toContain("Not configured");
-    });
-
-    it("opens a TextInputModal when Edit is clicked, prefilled empty and password-typed", () => {
-      const onSubmitKey = vi.fn();
-      const { getByText } = render(<SteamGridDBSection {...defaultProps({ sgdbApiKey: "stored", onSubmitKey })} />);
-      fireEvent.click(getByText("Edit"));
-      const props = lastShownModalProps();
-      expect(props).not.toBeNull();
-      expect(props?.label).toBe("SteamGridDB API Key");
-      expect(props?.value).toBe("");
-      expect(props?.bIsPassword).toBe(true);
-      expect(props?.onSubmit).toBe(onSubmitKey);
-    });
+  it("editing opens a password modal that submits the key", () => {
+    const p = props({ sgdbApiKey: "x" });
+    const { getByTestId } = render(<SteamGridDBSection {...p} />);
+    expect(getByTestId("edit-sgdb-key").textContent).toBe("•••• Edit");
+    fireEvent.click(getByTestId("edit-sgdb-key"));
+    const el = vi.mocked(showModal).mock.calls[0]![0] as ReactElement<Record<string, unknown>>;
+    expect(el.props).toMatchObject({ label: "SteamGridDB API Key", bIsPassword: true, onSubmit: p.onSubmitKey });
   });
 
-  describe("verify button", () => {
-    it("is disabled while verifying", () => {
-      const { getByText } = render(
-        <SteamGridDBSection {...defaultProps({ sgdbApiKey: "stored", sgdbVerifying: true })} />,
-      );
-      const btn = getByText("Verifying...");
-      expect(btn).toBeDisabled();
-    });
-
-    it("is disabled when no key is configured (even if not verifying)", () => {
-      const { getByText } = render(<SteamGridDBSection {...defaultProps()} />);
-      const btn = getByText("Verify Key");
-      expect(btn).toBeDisabled();
-    });
-
-    it("is enabled when a key is set and not verifying", () => {
-      const { getByText } = render(<SteamGridDBSection {...defaultProps({ sgdbApiKey: "stored" })} />);
-      const btn = getByText("Verify Key");
-      expect(btn).not.toBeDisabled();
-    });
-
-    it("fires onVerifyKey when clicked", () => {
-      const onVerifyKey = vi.fn();
-      const { getByText } = render(<SteamGridDBSection {...defaultProps({ sgdbApiKey: "stored", onVerifyKey })} />);
-      fireEvent.click(getByText("Verify Key"));
-      expect(onVerifyKey).toHaveBeenCalledTimes(1);
-    });
-
-    it("renders 'Verifying...' label while sgdbVerifying is true", () => {
-      const { getByText } = render(
-        <SteamGridDBSection {...defaultProps({ sgdbApiKey: "stored", sgdbVerifying: true })} />,
-      );
-      expect(getByText("Verifying...")).toBeInTheDocument();
-    });
+  it("verifies a set key, and shows 'Verifying...' meanwhile", () => {
+    const p = props({ sgdbApiKey: "x" });
+    const first = render(<SteamGridDBSection {...p} />);
+    fireEvent.click(first.getByTestId("verify-sgdb-key"));
+    expect(p.onVerifyKey).toHaveBeenCalledTimes(1);
+    first.unmount();
+    const busy = render(<SteamGridDBSection {...props({ sgdbApiKey: "x", sgdbVerifying: true })} />);
+    expect(busy.getByTestId("verify-sgdb-key").textContent).toBe("Verifying...");
   });
 
-  describe("status row", () => {
-    it("renders a status Field when sgdbStatus is non-empty", () => {
-      const { getAllByTestId } = render(<SteamGridDBSection {...defaultProps({ sgdbStatus: "Valid key ✓" })} />);
-      const labels = getAllByTestId("field-label").map((el) => el.textContent);
-      expect(labels).toContain("Valid key ✓");
-      // API Key row + status row.
-      expect(getAllByTestId("field")).toHaveLength(2);
-    });
+  it("shows the verification status line", () => {
+    expect(render(<SteamGridDBSection {...props({ sgdbStatus: "Valid" })} />).container.textContent).toContain("Valid");
+  });
 
-    it("omits the status row when sgdbStatus is empty", () => {
-      const { getAllByTestId } = render(<SteamGridDBSection {...defaultProps()} />);
-      // The API Key row is a Field + DialogButton, so with no status the only
-      // remaining Field is the API Key row — exactly one, labelled "API Key".
-      const labels = getAllByTestId("field-label").map((el) => el.textContent);
-      expect(labels).toEqual(["API Key"]);
-    });
+  it("the Steam Input button cycles Default → Force On → Force Off → Default", () => {
+    const p = props();
+    const first = render(<SteamGridDBSection {...p} />);
+    expect(first.getByTestId("choice-Steam Input").textContent).toBe("Default");
+    fireEvent.click(first.getByTestId("choice-Steam Input"));
+    expect(p.onModeChange).toHaveBeenLastCalledWith("force_on");
+    first.unmount();
+    const last = render(<SteamGridDBSection {...props({ steamInputMode: "force_off", onModeChange: p.onModeChange })} />);
+    expect(last.getByTestId("choice-Steam Input").textContent).toBe("Force Off");
+    fireEvent.click(last.getByTestId("choice-Steam Input"));
+    expect(p.onModeChange).toHaveBeenLastCalledWith("default");
+  });
+
+  it("Apply writes the mode to every shortcut (blocked while loading) and shows its result", () => {
+    const p = props({ steamInputStatus: "Applied to 12 shortcuts" });
+    const { getByTestId, container } = render(<SteamGridDBSection {...p} />);
+    expect(container.textContent).toContain("Applied to 12 shortcuts");
+    fireEvent.click(getByTestId("apply-steam-input"));
+    expect(p.onApplyMode).toHaveBeenCalledTimes(1);
+    const busy = props({ loading: true });
+    const second = render(<SteamGridDBSection {...busy} />);
+    fireEvent.click(lastOf(second.getAllByTestId("apply-steam-input")));
+    expect(busy.onApplyMode).not.toHaveBeenCalled();
   });
 });
