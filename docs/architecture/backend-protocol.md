@@ -123,3 +123,11 @@ emulators' own key directories (copied to every installed emulator that lacks th
 `download_all_firmware("switch")` queue the missing pieces and answer at once with `{success, message, queued, kept}`
 (`kept` names key files that exist but differ from RomM's); `save_firmware_version(version)` saves the version to
 download (`""` = newest). See `docs/plans/0.45.0-switch-firmware.md`.
+
+`replace_firmware_key(firmware_id, emulator_id)` is the only call that touches an existing key file, and only for the
+one file and emulator the user named, when it differs from RomM's. It downloads RomM's copy, verifies the SHA-1,
+moves the user's file to `<name>.romm-backup` (`.romm-backup.1`, `.2`, … when earlier backups exist, never over
+one), and installs RomM's; a failure at any step leaves the user's file in place. Keys are a few KB, so it runs
+directly and not through the download queue. Refusals are `{success: false, reason}` with `not_present`,
+`already_matches`, `not_a_key`, `not_used`, `emulator_not_found`, `no_checksum`, `checksum_mismatch`,
+`download_failed`, `backup_failed`, `install_failed`, `server_unreachable` or `not_found`.

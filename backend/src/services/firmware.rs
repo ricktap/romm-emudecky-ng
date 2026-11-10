@@ -21,7 +21,7 @@ use crate::domain::switch_firmware::{
 use crate::services::downloads::DownloadService;
 use crate::services::ports::{
     Clock, DownloadFiles, EmuDeckPaths, EmulatorLocator, FirmwareFileKind, FirmwareJobs, FirmwareTarget,
-    RommFirmwareApi, SettingsPersister, SettingsStore,
+    RommFirmwareApi, SettingsPersister, SettingsStore, TransferHooks, TransferMode,
 };
 use crate::domain::errors::failure;
 use crate::util::path_safety::join;
@@ -271,6 +271,103 @@ impl FirmwareService {
                 failure("save_failed", &format!("Save failed: {e}"))
             }
         }
+    }
+
+    /// The first free backup name next to `dest`: `<dest>.romm-backup`, then `.romm-backup.1`, `.2`, ... An earlier
+    /// backup is never overwritten.
+    async fn free_backup_path(&self, dest: &str) -> String {
+        for n in 0..1000 {
+            let path = if n == 0 { format!("{dest}.romm-backup") } else { format!("{dest}.romm-backup.{n}") };
+            if !self.c.files.exists(&path).await {
+                return path;
+            }
+        }
+        format!("{dest}.romm-backup.{}", self.c.clock.epoch_seconds() as u64)
+    }
+
+    /// Replace one emulator's key file that differs from RomM's with RomM's verified copy. The only operation that
+    /// touches an existing key file, and only because the user asked for exactly this file: the download is checked
+    /// against RomM's SHA-1 first, the user's file is moved aside as `<name>.romm-backup` (never over an earlier
+    /// backup), and a failure at any step leaves the user's file where it was. Keys are a few KB, so this runs
+    /// directly instead of through the download queue.
+    pub async fn replace_key(&self, firmware_id: i64, emulator_id: &str) -> Value {
+        let (switch, offline) = self.switch_entries().await;
+        let Some(entry) = switch.iter().find(|e| e.id == Some(firmware_id)) else {
+            return if offline {
+                failure("server_unreachable", "RomM is unreachable")
+            } else {
+                failure("not_found", "RomM does not list that file")
+            };
+        };
+        let FileKind::Key(key) = classify(&entry.file_name) else {
+            return failure("not_a_key", "Only key files can be replaced");
+        };
+        let emulators = self.emulators();
+        let Some((id, label, dir)) = emulators.iter().find(|(id, _, _)| *id == emulator_id) else {
+            return failure("emulator_not_found", &format!("{emulator_id} is not installed"));
+        };
+        if !key.emulators.contains(id) {
+            return failure("not_used", &format!("{label} does not read {}", key.file_name));
+        }
+        let Some(want) = entry.sha1.clone() else {
+            return failure(
+                "no_checksum",
+                &format!("RomM reports no checksum for {}, so it cannot be verified and will not replace yours", key.file_name),
+            );
+        };
+        let dest = join(dir, &[key.file_name]);
+        match key_state(self.c.files.sha1_hex(&dest).await.as_deref(), Some(&want)) {
+            KeyState::Missing => {
+                return failure("not_present", &format!("{label} has no {} yet: use Download instead", key.file_name));
+            }
+            KeyState::Matches => {
+                return failure("already_matches", &format!("{label}'s {} already matches RomM's", key.file_name));
+            }
+            KeyState::Differs | KeyState::Present => {}
+        }
+
+        let tmp = format!("{dest}.tmp");
+        let _ = self.c.files.remove_file(&tmp).await;
+        let fetched = self
+            .c
+            .romm
+            .download_firmware_content(
+                firmware_id,
+                key.file_name,
+                &tmp,
+                TransferMode::Single { resume: false },
+                TransferHooks::basic(Box::new(|_, _| {}), tokio_util::sync::CancellationToken::new()),
+            )
+            .await;
+        if let Err(e) = fetched {
+            let _ = self.c.files.remove_file(&tmp).await;
+            return failure("download_failed", &format!("Could not download {}: {e:#}", key.file_name));
+        }
+        if self.c.files.sha1_hex(&tmp).await.as_deref() != Some(want.as_str()) {
+            let _ = self.c.files.remove_file(&tmp).await;
+            return failure(
+                "checksum_mismatch",
+                &format!("{} did not match the checksum RomM reports; your file was not changed", key.file_name),
+            );
+        }
+        let backup = self.free_backup_path(&dest).await;
+        if let Err(e) = self.c.files.rename(&dest, &backup).await {
+            let _ = self.c.files.remove_file(&tmp).await;
+            return failure("backup_failed", &format!("Could not back up your {}: {e}", key.file_name));
+        }
+        if let Err(e) = self.c.files.rename(&tmp, &dest).await {
+            // put the user's file back before reporting
+            let _ = self.c.files.rename(&backup, &dest).await;
+            let _ = self.c.files.remove_file(&tmp).await;
+            return failure("install_failed", &format!("Could not install {}: {e}; your file was restored", key.file_name));
+        }
+        tracing::info!("Replaced {dest} with RomM's copy; the previous file is {backup}");
+        let backup_name = backup.rsplit('/').next().unwrap_or(&backup).to_string();
+        json!({
+            "success": true,
+            "message": format!("Replaced {label}'s {} with RomM's. Your old file is kept as {backup_name}.", key.file_name),
+            "backup_path": backup,
+        })
     }
 
     /// The downloads that fill this machine's gaps, without starting them: missing key files (the required ones, or
