@@ -34,19 +34,19 @@ export function romChip({ installed, fileName, download }: RomChipInput): Readin
     const pct = download.total_bytes > 0 ? Math.floor((download.bytes_downloaded / download.total_bytes) * 100) : 0;
     switch (download.status) {
       case "queued":
-        return { id: "rom", title: "ROM", detail: "Queued", tone: "neutral" };
+        return { id: "rom", title: "Queued", detail: "Waiting for the transfer slot", tone: "neutral" };
       case "downloading":
-        return { id: "rom", title: "ROM", detail: `Downloading ${pct}%`, tone: "neutral" };
+        return { id: "rom", title: "Downloading", detail: `${pct}%`, tone: "neutral" };
       case "extracting":
-        return { id: "rom", title: "ROM", detail: "Extracting", tone: "neutral" };
+        return { id: "rom", title: "Extracting", detail: "Unpacking the download", tone: "neutral" };
       case "paused":
-        return { id: "rom", title: "ROM", detail: `Paused at ${pct}%`, tone: "neutral" };
+        return { id: "rom", title: "Download paused", detail: `At ${pct}%`, tone: "neutral" };
       case "interrupted":
-        return { id: "rom", title: "ROM", detail: interruptedLabel(download.reason), tone: "warn" };
+        return { id: "rom", title: "Download interrupted", detail: interruptedLabel(download.reason).replace("Interrupted — ", ""), tone: "warn" };
     }
   }
-  if (installed) return { id: "rom", title: "ROM", detail: fileName ? `Installed · ${fileName}` : "Installed", tone: "ok" };
-  return { id: "rom", title: "ROM", detail: "Not downloaded", tone: "neutral" };
+  if (installed) return { id: "rom", title: "ROM installed", detail: fileName ?? "Ready to play", tone: "ok" };
+  return { id: "rom", title: "Not downloaded", detail: "On RomM", tone: "neutral" };
 }
 
 export interface BiosChipInput {
@@ -59,14 +59,14 @@ export interface BiosChipInput {
 /** Only the Switch has BIOS files today (firmware + keys); every other platform needs none until 0.80. */
 export function biosChip({ platformSlug, firmware, activeCoreLabel }: BiosChipInput): ReadinessChip {
   if (platformSlug !== "switch") {
-    return { id: "bios", title: "BIOS", detail: activeCoreLabel ? `No BIOS needed · ${activeCoreLabel}` : "No BIOS needed", tone: "neutral" };
+    return { id: "bios", title: "No BIOS needed", detail: activeCoreLabel ?? "", tone: "ok" };
   }
-  if (!firmware?.success) return { id: "bios", title: "BIOS", detail: "Keys: status unknown", tone: "neutral" };
+  if (!firmware?.success) return { id: "bios", title: "BIOS status unknown", detail: "Could not read the keys", tone: "neutral" };
   const missing = missingRequiredKeys(firmware);
   if (missing.length > 0) {
-    return { id: "bios", title: "BIOS", detail: `Missing ${missing.join(", ")}`, tone: "warn", fix: "get_bios", fixLabel: "Get" };
+    return { id: "bios", title: "BIOS missing", detail: `${missing.join(", ")} on RomM`, tone: "warn", fix: "get_bios", fixLabel: "Get" };
   }
-  return { id: "bios", title: "BIOS", detail: activeCoreLabel ? `Keys ready · ${activeCoreLabel}` : "Keys ready", tone: "ok" };
+  return { id: "bios", title: "BIOS ready", detail: activeCoreLabel ?? "Keys installed", tone: "ok" };
 }
 
 export interface SavesChipInput {
@@ -76,14 +76,14 @@ export interface SavesChipInput {
 }
 
 export function savesChip({ saveSyncEnabled, status, label }: SavesChipInput): ReadinessChip {
-  if (!saveSyncEnabled) return { id: "saves", title: "Saves", detail: "Save sync off", tone: "neutral" };
+  if (!saveSyncEnabled) return { id: "saves", title: "Save sync off", detail: "Saves stay on this device", tone: "neutral" };
   if (status === "conflict") {
-    return { id: "saves", title: "Saves", detail: "Conflict between this device and RomM", tone: "warn", fix: "resolve_conflict", fixLabel: "Resolve" };
+    return { id: "saves", title: "Save conflict", detail: "This device and RomM both changed", tone: "warn", fix: "resolve_conflict", fixLabel: "Resolve" };
   }
   // The backend cannot locate this game's save yet: one tap opens the chooser.
   if (label === CHOOSE_SAVE_LABEL || label === CHOOSE_PROFILE_LABEL) {
-    return { id: "saves", title: "Saves", detail: label, tone: "warn", fix: "choose_save", fixLabel: "Choose" };
+    return { id: "saves", title: "Save not found", detail: label, tone: "warn", fix: "choose_save", fixLabel: "Choose" };
   }
-  if (status === "synced") return { id: "saves", title: "Saves", detail: label ? `Synced · ${label}` : "Synced", tone: "ok" };
-  return { id: "saves", title: "Saves", detail: label ? `On · ${label}` : "On, nothing uploaded yet", tone: "neutral" };
+  if (status === "synced") return { id: "saves", title: "Saves synced", detail: label, tone: "ok" };
+  return { id: "saves", title: "Save sync on", detail: label || "Uploads after the first session", tone: "ok" };
 }

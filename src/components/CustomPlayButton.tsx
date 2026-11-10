@@ -93,10 +93,8 @@ function lerpColor(a: [number, number, number], b: [number, number, number], t: 
 
 // Download button blue gradient stops
 const BLUE_LEFT: [number, number, number] = [26, 159, 255]; // #1a9fff
-const BLUE_RIGHT: [number, number, number] = [0, 120, 212]; // #0078d4
 // Play button visible green (computed from gradient + backgroundSize 330% + backgroundPosition 25%)
 const GREEN_LEFT: [number, number, number] = [80, 200, 47]; // #50c82f
-const GREEN_RIGHT: [number, number, number] = [24, 177, 78]; // #18b14e
 
 function formatProgress(downloaded: number, total: number): string {
   // Show "x / y MB" with unit only on the total
@@ -890,7 +888,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
   // Dropdown arrow button style. Shared shape for the play-state chevron and
   // the download-state cancel X — both are 36px side actions on the right.
   const dropdownArrowStyle: React.CSSProperties = {
-    height: "48px",
+    height: "52px",
     width: "36px",
     minWidth: "36px",
     padding: 0,
@@ -907,8 +905,8 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
   const btnContainerStyle: React.CSSProperties = {
     display: "flex",
     flexDirection: "row",
-    width: "200px",
-    height: "48px",
+    width: "230px",
+    height: "52px",
   };
 
   const mainBtnStyle: React.CSSProperties = {
@@ -917,8 +915,8 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     padding: "4px 12px",
     border: "none",
     color: "#fff",
-    fontSize: "16px",
-    fontWeight: "bold",
+    fontSize: "17px",
+    fontWeight: 600,
   };
 
   // Running overlay (#1313) — top precedence over install/conflict/download. A
@@ -938,7 +936,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
           style={{
             ...mainBtnStyle,
             borderRadius: "2px",
-            background: "linear-gradient(to right, #70d61d 0%, #01a75b 60%)",
+            background: "#59bf40",
             backgroundPosition: "25%",
             backgroundSize: "330% 100%",
           }}
@@ -969,7 +967,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
           style={{
             ...mainBtnStyle,
             borderRadius: "2px",
-            background: "linear-gradient(to right, #80e62a, #01b866)",
+            background: "#74d65b",
             filter: "brightness(1.2)",
           }}
           disabled
@@ -999,11 +997,11 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     // green fill for visual continuity.
     let fillColor: string;
     if (extracting) {
-      fillColor = `linear-gradient(to right, rgb(${GREEN_LEFT.join(",")}), rgb(${GREEN_RIGHT.join(",")}))`;
+      fillColor = "#59bf40";
     } else if (downloading) {
-      fillColor = `linear-gradient(to right, ${lerpColor(BLUE_LEFT, GREEN_LEFT, t)}, ${lerpColor(BLUE_RIGHT, GREEN_RIGHT, t)})`;
+      fillColor = "#1a9fff";
     } else {
-      fillColor = "linear-gradient(to right, #1a9fff, #0078d4)";
+      fillColor = "#1a9fff";
     }
 
     // Pulse color shifts from blue to green with progress; a paused download
@@ -1041,13 +1039,13 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     // keeps a dim green base (the transfer just completed green).
     let baseBg: string;
     if (isOffline) {
-      baseBg = "linear-gradient(to right, #6b7b8b, #5a6a7a)";
+      baseBg = "#6b7b8b";
     } else if (extracting) {
-      baseBg = "linear-gradient(to right, #1a4d1a, #0f3320)";
+      baseBg = "#1a4d1a";
     } else if (downloading) {
-      baseBg = `linear-gradient(to right, ${lerpColor([10, 50, 90], [5, 35, 65], t)}, ${lerpColor([5, 35, 65], [5, 50, 30], t)})`;
+      baseBg = "#24364a"; // the prototype's dark track; the fill below shows the progress
     } else {
-      baseBg = "linear-gradient(to right, #1a9fff, #0078d4)";
+      baseBg = "#1a9fff";
     }
 
     // While a download is actively running, the main button shares the row
@@ -1076,6 +1074,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
             style={{
               width: `${t * 100}%`,
               background: fillColor,
+              opacity: 0.55,
             }}
           />
         )}
@@ -1196,7 +1195,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
           style={{
             ...mainBtnStyle,
             borderRadius: "2px",
-            background: "linear-gradient(to right, #47b3ff, #1a9fff)",
+            background: "#5cbaff",
             filter: "brightness(1.3)",
           }}
           disabled
@@ -1217,7 +1216,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
           style={{
             ...mainBtnStyle,
             borderRadius: "2px",
-            background: "linear-gradient(to right, #70d61d 0%, #01a75b 60%)",
+            background: "#59bf40",
             backgroundPosition: "25%",
             backgroundSize: "330% 100%",
             display: "flex",
@@ -1244,7 +1243,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
           style={{
             ...mainBtnStyle,
             borderRadius: "2px",
-            background: "linear-gradient(to right, #70d61d 0%, #01a75b 60%)",
+            background: "#59bf40",
             backgroundPosition: "25%",
             backgroundSize: "330% 100%",
             display: "flex",
@@ -1269,7 +1268,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
           style={{
             ...mainBtnStyle,
             borderRadius: "2px",
-            background: "linear-gradient(to right, #d4a72c, #b8941f)",
+            background: "#d4a72c",
           }}
           onClick={() => {
             detach(handleResolveConflict());
@@ -1283,11 +1282,11 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
 
   // state === "play"
   const playBg = isOffline
-    ? "linear-gradient(to right, #6b7b6b 0%, #5a6a5a 60%)"
-    : "linear-gradient(to right, #70d61d 0%, #01a75b 60%)";
+    ? "#6b7b6b"
+    : "#59bf40";
   const dropdownBg = isOffline
-    ? "linear-gradient(to right, #5a6a5a, #4d5d4d)"
-    : "linear-gradient(to right, #4da636, #3f8a2b)";
+    ? "#4d5d4d"
+    : "#4a9e35";
   return (
     <Focusable
       ref={containerRef}
