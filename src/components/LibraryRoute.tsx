@@ -8,6 +8,7 @@ import { SystemPage } from "./SystemPage";
 import { DangerZone } from "./DangerZone";
 import { DownloadQueue } from "./DownloadQueue";
 import { LibrarySyncSection } from "./settings/LibrarySyncSection";
+import { ShortcutIdExperiment } from "../dev/ShortcutIdExperiment";
 
 // The moved pages keep their "Back" button; inside the route it leaves the route (history back).
 const leave = () => Navigation.NavigateBack();
@@ -87,6 +88,7 @@ export const LibraryRoute: FC = () => {
               <>
                 <SettingsPage onBack={leave} />
                 <LibrarySyncSection />
+                <ShortcutIdExperiment />
                 <DangerZone onBack={leave} />
               </>
             ),
