@@ -5,6 +5,7 @@
 //   - refresh try/catch → setError(`Failed to fetch firmware status: ${e}`)
 //   - refresh failure branch → setError(result.message || fallback)
 //   - runDownload catch → setNote(`Download failed: ${e}`)
+//   - chooseVersion catch → setNote(`Could not save the firmware version: ${e}`)
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
@@ -29,6 +30,18 @@ vi.mock("@decky/ui", async () => {
     PanelSectionRow: passthrough("div"),
     ButtonItem: ({ children, onClick, disabled }: AnyProps & { onClick?: () => void; disabled?: boolean }) =>
       ce("button", { onClick, disabled }, children as never),
+    DropdownItem: (
+      p: AnyProps & { selectedOption?: unknown; rgOptions?: { data: string; label: string }[]; onChange?: (o: { data: string }) => void },
+    ) =>
+      ce(
+        "select",
+        {
+          "data-testid": "version-select",
+          value: p.selectedOption as string,
+          onChange: (e: { target: { value: string } }) => p.onChange?.({ data: e.target.value }),
+        },
+        (p.rgOptions ?? []).map((o) => ce("option", { key: o.data, value: o.data }, o.label)),
+      ),
     Field: (p: AnyProps & { label?: unknown; description?: unknown }) =>
       ce(
         "div",
@@ -73,6 +86,8 @@ function status(overrides: Partial<FirmwareStatus> = {}): FirmwareStatus {
       { id: "ryujinx", label: "Ryujinx", keys_dir: "/home/deck/.config/Ryujinx/system" },
     ],
     keys: [key(), key({ file_name: "title.keys", firmware_id: 4, emulators: [{ id: "eden", label: "Eden", state: "missing" }] })],
+    selected_version: "23.0.1",
+    version_pinned: false,
     firmware: [
       { firmware_id: 5, file_name: "Firmware.23.0.1.zip", version: "23.0.1", size: 340422248, selected: true, downloaded: false, local_size: null },
       { firmware_id: 6, file_name: "Firmware.9.2.0.zip", version: "9.2.0", size: 500, selected: false, downloaded: true, local_size: 500 },
@@ -98,6 +113,7 @@ describe("SystemPage — Switch firmware and keys", () => {
   beforeEach(() => {
     vi.mocked(backend.downloadRequiredFirmware).mockReset();
     vi.mocked(backend.downloadAllFirmware).mockReset();
+    vi.mocked(backend.saveFirmwareVersion).mockReset();
   });
 
   it("lists the keys with their state per emulator, marking optional and not-on-RomM files", async () => {
@@ -122,7 +138,7 @@ describe("SystemPage — Switch firmware and keys", () => {
   it("lists firmware versions with the newest marked and the download state, and says where the archive goes", async () => {
     const { container } = await renderPage(status());
     const labels = texts(container, "field-label");
-    expect(labels).toContain("23.0.1 (newest)");
+    expect(labels).toContain("23.0.1 (selected)");
     expect(labels).toContain("9.2.0");
     const descriptions = texts(container, "field-desc");
     expect(descriptions).toContain("324.7 MB — not downloaded");
@@ -155,11 +171,8 @@ describe("SystemPage — Switch firmware and keys", () => {
     expect(texts(thrown.container, "field-desc")).toContain("Failed to fetch firmware status: Error: socket closed");
   });
 
-  it("downloads show the result note; the not-implemented answer is shown instead of a silent no-op", async () => {
-    vi.mocked(backend.downloadRequiredFirmware).mockResolvedValue({
-      success: false,
-      message: "Firmware management is not implemented yet (planned for 0.45.0).",
-    });
+  it("Download Required queues the downloads and points to the Downloads list", async () => {
+    vi.mocked(backend.downloadRequiredFirmware).mockResolvedValue({ success: true, message: "Queued 2 downloads", queued: 2 });
     const { container } = await renderPage(status());
     await act(async () => {
       fireEvent.click(buttonByText(container, "Download Required")!);
@@ -167,30 +180,99 @@ describe("SystemPage — Switch firmware and keys", () => {
       await Promise.resolve();
     });
     expect(backend.downloadRequiredFirmware).toHaveBeenCalledWith("switch");
-    expect(texts(container, "field-label")).toContain("Firmware management is not implemented yet (planned for 0.45.0).");
+    expect(texts(container, "field-label")).toContain("Queued 2 downloads — progress is in Downloads");
   });
 
-  it("Download All uses the all call, refreshes after a success, and shows a thrown download as a failure note", async () => {
-    vi.mocked(backend.downloadAllFirmware).mockResolvedValueOnce({ success: true, message: "Downloaded 2 files" });
+  it("shows the kept-keys message and a plain note when nothing was queued", async () => {
+    vi.mocked(backend.downloadAllFirmware).mockResolvedValue({
+      success: true,
+      message: "Nothing to download — everything is already in place · kept your own prod.keys (differs from RomM's)",
+      queued: 0,
+    });
     const { container } = await renderPage(status());
-    const before = vi.mocked(backend.getFirmwareStatus).mock.calls.length;
     await act(async () => {
       fireEvent.click(buttonByText(container, "Download All")!);
       await Promise.resolve();
       await Promise.resolve();
-      await Promise.resolve();
     });
     expect(backend.downloadAllFirmware).toHaveBeenCalledWith("switch");
-    expect(vi.mocked(backend.getFirmwareStatus).mock.calls.length).toBe(before + 1);
-    expect(texts(container, "field-label")).toContain("Downloaded 2 files");
+    const labels = texts(container, "field-label");
+    expect(labels.some((l) => l?.startsWith("Nothing to download") && l.includes("kept your own prod.keys"))).toBe(true);
+    expect(labels.some((l) => l?.includes("progress is in Downloads"))).toBe(false);
+  });
 
-    vi.mocked(backend.downloadRequiredFirmware).mockRejectedValueOnce(new Error("io"));
+  it("shows a refused download and a thrown one as notes", async () => {
+    vi.mocked(backend.downloadRequiredFirmware).mockResolvedValueOnce({ success: false, message: "RomM is unreachable" });
+    const { container } = await renderPage(status());
     await act(async () => {
       fireEvent.click(buttonByText(container, "Download Required")!);
       await Promise.resolve();
       await Promise.resolve();
     });
+    expect(texts(container, "field-label")).toContain("RomM is unreachable");
+    vi.mocked(backend.downloadAllFirmware).mockRejectedValueOnce(new Error("io"));
+    await act(async () => {
+      fireEvent.click(buttonByText(container, "Download All")!);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     expect(texts(container, "field-label")).toContain("Download failed: Error: io");
+  });
+
+  it("the version dropdown offers the newest-follows option plus every version and saves the choice", async () => {
+    vi.mocked(backend.saveFirmwareVersion).mockResolvedValue({ success: true });
+    const { container, getByTestId } = await renderPage(status());
+    const select = getByTestId("version-select") as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual(["Newest available (23.0.1)", "23.0.1", "9.2.0"]);
+    expect(select.value).toBe(""); // following the newest, nothing pinned
+    const before = vi.mocked(backend.getFirmwareStatus).mock.calls.length;
+    await act(async () => {
+      fireEvent.change(select, { target: { value: "9.2.0" } });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(backend.saveFirmwareVersion).toHaveBeenCalledWith("9.2.0");
+    expect(vi.mocked(backend.getFirmwareStatus).mock.calls.length).toBe(before + 1);
+    expect(container).toBeTruthy();
+  });
+
+  it("shows the pinned version as selected and reports a failed save", async () => {
+    vi.mocked(backend.saveFirmwareVersion).mockResolvedValue({ success: false, message: "Save failed: disk full" });
+    const { container, getByTestId } = await renderPage(status({ version_pinned: true, selected_version: "9.2.0" }));
+    expect((getByTestId("version-select") as HTMLSelectElement).value).toBe("9.2.0");
+    await act(async () => {
+      fireEvent.change(getByTestId("version-select"), { target: { value: "" } });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(backend.saveFirmwareVersion).toHaveBeenCalledWith("");
+    expect(texts(container, "field-label")).toContain("Save failed: disk full");
+    vi.mocked(backend.saveFirmwareVersion).mockRejectedValueOnce(new Error("socket"));
+    await act(async () => {
+      fireEvent.change(getByTestId("version-select"), { target: { value: "23.0.1" } });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(texts(container, "field-label")).toContain("Could not save the firmware version: Error: socket");
+  });
+
+  it("refreshes when a firmware download finishes (the global listener announces it)", async () => {
+    await renderPage(status());
+    const before = vi.mocked(backend.getFirmwareStatus).mock.calls.length;
+    await act(async () => {
+      globalThis.dispatchEvent(new CustomEvent("romm_data_changed", { detail: { type: "save_sync" } }));
+      await Promise.resolve();
+    });
+    expect(vi.mocked(backend.getFirmwareStatus).mock.calls.length).toBe(before);
+    await act(async () => {
+      globalThis.dispatchEvent(new CustomEvent("romm_data_changed", { detail: { type: "firmware" } }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(vi.mocked(backend.getFirmwareStatus).mock.calls.length).toBe(before + 1);
   });
 });
 

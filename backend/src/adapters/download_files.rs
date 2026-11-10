@@ -252,6 +252,24 @@ impl DownloadFiles for LocalFiles {
         tokio::task::spawn_blocking(move || extract_blocking(&archive, &dest, &safe_root, progress)).await?
     }
 
+    async fn copy_file(&self, src: &str, dst: &str) -> std::io::Result<()> {
+        let (src, dst) = (src.to_string(), dst.to_string());
+        tokio::task::spawn_blocking(move || {
+            let dst_path = std::path::Path::new(&dst);
+            if let Some(parent) = dst_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let tmp = format!("{dst}.tmp");
+            if let Err(e) = std::fs::copy(&src, &tmp).and_then(|_| std::fs::rename(&tmp, &dst)) {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(e);
+            }
+            Ok(())
+        })
+        .await
+        .map_err(std::io::Error::other)?
+    }
+
     async fn sha1_hex(&self, path: &str) -> Option<String> {
         let path = path.to_string();
         tokio::task::spawn_blocking(move || sha1_blocking(&path)).await.ok().flatten()
@@ -417,6 +435,22 @@ mod tests {
             );
             assert_eq!(std::fs::read(dest.join("updates/Big Game [v65536].nsp")).unwrap(), b"update");
         }
+    }
+
+    #[tokio::test]
+    async fn copy_file_creates_the_directory_leaves_no_temp_file_and_a_failed_copy_leaves_the_target_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src.bin");
+        std::fs::write(&src, b"keys").unwrap();
+        let dst = dir.path().join("deep/er/dst.bin");
+        LocalFiles.copy_file(&s(&src), &s(&dst)).await.unwrap();
+        assert_eq!(std::fs::read(&dst).unwrap(), b"keys");
+        assert!(!dir.path().join("deep/er/dst.bin.tmp").exists());
+        std::fs::write(&dst, b"keep me").unwrap();
+        let err = LocalFiles.copy_file(&s(&dir.path().join("missing")), &s(&dst)).await;
+        assert!(err.is_err());
+        assert_eq!(std::fs::read(&dst).unwrap(), b"keep me", "a failed copy never replaces the target");
+        assert!(!dir.path().join("deep/er/dst.bin.tmp").exists());
     }
 
     #[tokio::test]

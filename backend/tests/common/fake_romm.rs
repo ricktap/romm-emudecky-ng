@@ -34,6 +34,8 @@ pub struct State {
     pub peak_content: usize,
     /// The JSON `GET /api/firmware` answers (404 when unset).
     pub firmware: Option<Value>,
+    /// Firmware file bytes by firmware id, served at `/api/firmware/{id}/content/{name}`.
+    pub firmware_files: HashMap<i64, Vec<u8>>,
 }
 
 pub struct FakeRomm {
@@ -59,6 +61,10 @@ impl FakeRomm {
 
     pub fn set_firmware(&self, list: Value) {
         self.state.lock().unwrap().firmware = Some(list);
+    }
+
+    pub fn set_firmware_file(&self, id: i64, bytes: Vec<u8>) {
+        self.state.lock().unwrap().firmware_files.insert(id, bytes);
     }
 
     pub fn set_rom(&self, rom: Value) {
@@ -148,11 +154,19 @@ async fn serve(mut sock: TcpStream, state: Arc<Mutex<State>>, release: Arc<Notif
         None => (rest, false),
     };
     let id: Option<i64> = id_part.parse().ok();
+    let firmware_id: Option<i64> = path
+        .strip_prefix("/api/firmware/")
+        .and_then(|r| r.split_once("/content/"))
+        .and_then(|(id, _)| id.parse().ok());
+    let content = content || firmware_id.is_some();
     let (rom, body, stall, etag) = {
         let st = state.lock().unwrap();
         (
             id.and_then(|i| st.roms.get(&i).cloned()),
-            id.and_then(|i| st.content.get(&i).cloned()),
+            match firmware_id {
+                Some(f) => st.firmware_files.get(&f).cloned(),
+                None => id.and_then(|i| st.content.get(&i).cloned()),
+            },
             st.stall_at,
             id.and_then(|i| st.etags.get(&i).cloned()),
         )

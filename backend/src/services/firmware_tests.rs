@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::domain::errors::RommError;
+use crate::services::ports::FirmwareFileKind;
 use crate::services::testing::{FakeFiles, FakeLocator, FixedPaths};
 
 /// SHA-1 of "abc".
@@ -23,6 +24,16 @@ impl RommFirmwareApi for FakeApi {
     async fn list_firmware(&self) -> Result<Value, RommError> {
         *self.calls.lock().unwrap() += 1;
         self.list.lock().unwrap().clone()
+    }
+    async fn download_firmware_content(
+        &self,
+        _firmware_id: i64,
+        _file_name: &str,
+        _dest: &str,
+        _mode: crate::services::ports::TransferMode,
+        _hooks: crate::services::ports::TransferHooks,
+    ) -> anyhow::Result<crate::services::ports::TransferOutcome> {
+        anyhow::bail!("the status tests never download")
     }
 }
 
@@ -100,6 +111,8 @@ fn env(installed: &[&str]) -> Env {
         paths: Arc::new(FixedPaths { roms: String::new(), bios }),
         clock: clock.clone(),
         home,
+        settings: SettingsStore::new(serde_json::Map::new()),
+        persister: Arc::new(crate::services::testing::FakePersister::default()),
     });
     Env { dir, api, clock, locator, svc }
 }
@@ -242,4 +255,140 @@ async fn the_status_never_writes() {
     assert!(!std::path::Path::new(&format!("{}/.local", e.home())).exists());
     assert!(!std::path::Path::new(&format!("{}/.config", e.home())).exists());
     assert!(!std::path::Path::new(&e.bios()).exists());
+}
+
+// ── Planning, targets and the version choice ─────────────────────────────
+
+fn ids(plan: &Result<(Vec<i64>, Vec<String>), Value>) -> Vec<i64> {
+    let mut v = plan.as_ref().unwrap().0.clone();
+    v.sort_unstable();
+    v
+}
+
+#[tokio::test]
+async fn required_downloads_are_the_missing_required_keys_and_the_chosen_archive() {
+    let e = env(&["eden"]);
+    let plan = e.svc.plan_downloads(false).await;
+    // prod.keys (3), title.keys (4) and the newest archive (5); the optional Ryujinx files are not needed for Eden
+    assert_eq!(ids(&plan), [3, 4, 5]);
+    assert!(plan.unwrap().1.is_empty());
+}
+
+#[tokio::test]
+async fn all_adds_the_optional_keys_but_only_for_emulators_that_read_them() {
+    let e = env(&["eden"]);
+    assert_eq!(ids(&e.svc.plan_downloads(true).await), [3, 4, 5], "Eden does not read console.keys / key_retail.bin");
+    let e = env(&["eden", "ryujinx"]);
+    assert_eq!(ids(&e.svc.plan_downloads(false).await), [3, 4, 5]);
+    assert_eq!(ids(&e.svc.plan_downloads(true).await), [1, 2, 3, 4, 5], "Ryujinx also reads console.keys (1) and key_retail.bin (2)");
+}
+
+#[tokio::test]
+async fn keys_that_match_are_skipped_and_keys_that_differ_are_kept_and_named() {
+    let e = env(&["eden", "ryujinx"]);
+    let h = e.home();
+    e.write(&format!("{h}/.local/share/eden/keys/prod.keys"), b"abc"); // matches RomM
+    e.write(&format!("{h}/.config/Ryujinx/system/prod.keys"), b"mine"); // differs
+    e.write(&format!("{h}/.local/share/eden/keys/title.keys"), b"own title keys"); // differs, Ryujinx lacks it
+    let (ids, kept) = e.svc.plan_downloads(false).await.unwrap();
+    let mut ids = ids;
+    ids.sort_unstable();
+    assert_eq!(ids, [4, 5], "title.keys for Ryujinx and the archive; prod.keys needs nothing");
+    assert_eq!(kept, ["prod.keys", "title.keys"], "the user's own files are named, never replaced");
+}
+
+#[tokio::test]
+async fn an_archive_that_is_already_saved_is_not_downloaded_again_and_the_chosen_version_decides() {
+    let e = env(&["eden"]);
+    e.write(&format!("{}/switch/Firmware.23.0.1.zip", e.bios()), &vec![0u8; 1000]);
+    assert_eq!(ids(&e.svc.plan_downloads(false).await), [3, 4], "the newest is already there");
+    assert_eq!(e.svc.set_firmware_version("9.2.0").await["success"], true);
+    assert_eq!(ids(&e.svc.plan_downloads(false).await), [3, 4, 6], "the chosen 9.2.0 is not saved yet");
+    let status = e.svc.get_firmware_status().await;
+    assert_eq!(status["selected_version"], "9.2.0");
+    let fw = status["firmware"].as_array().unwrap();
+    assert_eq!((fw[0]["selected"].clone(), fw[1]["selected"].clone()), (json!(false), json!(true)));
+}
+
+#[tokio::test]
+async fn the_version_choice_is_validated_normalised_persisted_and_falls_back_when_romm_dropped_it() {
+    let e = env(&["eden"]);
+    assert_eq!(e.svc.set_firmware_version(" 18.1.0 ").await["success"], true);
+    assert_eq!(e.svc.c.settings.get_str("switch_firmware_version").as_deref(), Some("18.1.0"));
+    let status = e.svc.get_firmware_status().await;
+    assert_eq!(status["selected_version"], "23.0.1", "RomM does not have 18.1.0: the newest is used");
+    assert_eq!(status["version_pinned"], false, "a version RomM dropped is not a pin");
+    e.svc.set_firmware_version("9.2.0").await;
+    assert_eq!(e.svc.get_firmware_status().await["version_pinned"], true);
+    assert_eq!(e.svc.set_firmware_version("").await["success"], true, "empty means newest");
+    assert_eq!(e.svc.c.settings.get_str("switch_firmware_version").as_deref(), Some(""));
+    let bad = e.svc.set_firmware_version("latest").await;
+    assert_eq!((bad["success"].clone(), bad["reason"].clone()), (json!(false), json!("invalid_version")));
+    assert_eq!(e.svc.c.settings.get_str("switch_firmware_version").as_deref(), Some(""), "nothing saved for bad input");
+}
+
+#[tokio::test]
+async fn a_failed_save_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let persister = Arc::new(crate::services::testing::FakePersister::default());
+    persister.fail_with("disk full");
+    let svc = FirmwareService::new(FirmwareServiceConfig {
+        romm: Arc::new(FakeApi { list: Mutex::new(Ok(romm_list())), calls: Mutex::new(0) }),
+        files: Arc::new(FakeFiles::default()),
+        locator: Arc::new(FakeLocator::default()),
+        paths: Arc::new(FixedPaths { roms: String::new(), bios: dir.path().display().to_string() }),
+        clock: Arc::new(TestClock(Mutex::new(0.0))),
+        home: dir.path().display().to_string(),
+        settings: SettingsStore::new(serde_json::Map::new()),
+        persister,
+    });
+    let r = svc.set_firmware_version("23.0.1").await;
+    assert_eq!((r["success"].clone(), r["reason"].clone()), (json!(false), json!("save_failed")));
+}
+
+#[tokio::test]
+async fn planning_says_why_when_there_is_nothing_to_plan_from() {
+    let e = env(&["eden"]);
+    *e.api.list.lock().unwrap() = Err(RommError::Connection("down".into()));
+    let err = e.svc.plan_downloads(false).await.unwrap_err();
+    assert_eq!(err["reason"], "server_unreachable");
+    e.set_list(json!([{"id": 90, "file_name": "scph.bin", "file_path": "bios/ps", "file_size_bytes": 1}]));
+    e.svc.invalidate();
+    assert_eq!(e.svc.plan_downloads(false).await.unwrap_err()["reason"], "not_found");
+}
+
+#[tokio::test]
+async fn a_key_target_writes_to_the_first_emulator_that_lacks_it_and_copies_to_the_rest() {
+    let e = env(&["eden", "yuzu", "ryujinx"]);
+    let h = e.home();
+    e.write(&format!("{h}/.local/share/yuzu/keys/prod.keys"), b"abc"); // yuzu already has RomM's
+    let t = e.svc.target(3).await.unwrap();
+    assert_eq!((t.kind, t.file_name.as_str(), t.size), (FirmwareFileKind::Key, "prod.keys", 3));
+    assert_eq!(t.sha1.as_deref(), Some(ABC_SHA1));
+    assert_eq!(t.dest_path, format!("{h}/.local/share/eden/keys/prod.keys"));
+    assert_eq!(t.copy_to, [format!("{h}/.config/Ryujinx/system/prod.keys")]);
+    // everyone has it now: nothing to do
+    e.write(&format!("{h}/.local/share/eden/keys/prod.keys"), b"abc");
+    e.write(&format!("{h}/.config/Ryujinx/system/prod.keys"), b"abc");
+    assert!(e.svc.target(3).await.is_none());
+    // a differing file is not "missing": it is not a download target either
+    e.write(&format!("{h}/.config/Ryujinx/system/title.keys"), b"mine");
+    let t = e.svc.target(4).await.unwrap();
+    assert_eq!(t.dest_path, format!("{h}/.local/share/eden/keys/title.keys"));
+    assert_eq!(t.copy_to, [format!("{h}/.local/share/yuzu/keys/title.keys")], "Ryujinx keeps its own");
+}
+
+#[tokio::test]
+async fn an_archive_target_is_the_bios_switch_folder_and_other_files_have_none() {
+    let e = env(&[]);
+    let t = e.svc.target(5).await.unwrap();
+    assert_eq!((t.kind, t.size), (FirmwareFileKind::Archive, 1000));
+    assert_eq!(t.dest_path, format!("{}/switch/Firmware.23.0.1.zip", e.bios()));
+    assert!(t.copy_to.is_empty());
+    e.write(&t.dest_path, &vec![0u8; 1000]);
+    assert!(e.svc.target(5).await.is_none(), "already saved");
+    assert!(e.svc.target(999).await.is_none(), "not on RomM");
+    assert!(e.svc.target(90).await.is_none(), "another platform's file");
+    // a key needs an emulator to put it in
+    assert!(e.svc.target(3).await.is_none(), "no emulator installed");
 }

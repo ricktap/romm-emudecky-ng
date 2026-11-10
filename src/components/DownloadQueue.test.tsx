@@ -99,6 +99,12 @@ async function flushMount(): Promise<void> {
   });
 }
 
+async function renderQueue() {
+  const utils = render(<DownloadQueue onBack={() => {}} />);
+  await flushMount();
+  return utils;
+}
+
 describe("DownloadQueue", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -431,9 +437,10 @@ describe("DownloadQueue", () => {
       await flushMount();
       expect(queryByTestId("dl-waiting")).not.toBeNull();
       await act(async () => {
-        setDownloads([
-          waitingItem({ phase: undefined, phase_since: undefined, bytes_downloaded: 512, total_bytes: 1024, resumable: true }),
-        ]);
+        const flowing = waitingItem({ bytes_downloaded: 512, total_bytes: 1024, resumable: true });
+        delete flowing.phase;
+        delete flowing.phase_since;
+        setDownloads([flowing]);
         await vi.advanceTimersByTimeAsync(600);
       });
       expect(queryByTestId("dl-waiting")).toBeNull();
@@ -441,9 +448,9 @@ describe("DownloadQueue", () => {
     });
 
     it("a partial that cannot be verified offers Restart instead of Resume", async () => {
-      vi.mocked(backend.getDownloadQueue).mockResolvedValue({
-        downloads: [waitingItem({ status: "interrupted", reason: "needs_recovery", phase: undefined })],
-      });
+      const stopped = waitingItem({ status: "interrupted", reason: "needs_recovery" });
+      delete stopped.phase;
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({ downloads: [stopped] });
       const { container } = render(<DownloadQueue onBack={() => {}} />);
       await flushMount();
       expect(container.querySelector('[data-testid="dl-caption"]')?.textContent).toContain("restart needed");
@@ -453,6 +460,72 @@ describe("DownloadQueue", () => {
         await Promise.resolve();
       });
       expect(backend.resumeDownload).toHaveBeenCalledWith(9);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Firmware downloads share the list
+  // ---------------------------------------------------------------------------
+  describe("firmware downloads", () => {
+    function fw(overrides: Partial<DownloadItem> = {}): DownloadItem {
+      return makeItem({
+        kind: "firmware",
+        rom_id: 0,
+        firmware_id: 7,
+        rom_name: "Firmware.23.0.1.zip",
+        platform_name: "Switch firmware",
+        status: "downloading",
+        resumable: true,
+        ...overrides,
+      });
+    }
+
+    it("lists a firmware file next to a ROM with the same number as two separate rows", async () => {
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({
+        downloads: [makeItem({ rom_id: 7, rom_name: "Zelda" }), fw()],
+      });
+      const { container } = await renderQueue();
+      const captions = Array.from(container.querySelectorAll('[data-testid="dl-caption"]')).map((e) => e.textContent);
+      expect(captions).toHaveLength(2);
+      expect(captions.some((c) => c?.startsWith("Zelda"))).toBe(true);
+      expect(captions.some((c) => c?.startsWith("Firmware.23.0.1.zip (Switch firmware)"))).toBe(true);
+    });
+
+    it("pause, resume and cancel address a firmware download by its kind and a ROM by its id alone", async () => {
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({
+        downloads: [makeItem({ rom_id: 7, rom_name: "Zelda", resumable: true }), fw({ status: "paused" })],
+      });
+      const { container } = await renderQueue();
+      await act(async () => {
+        fireEvent.click(buttonByText(container, "Pause Zelda")!);
+        await Promise.resolve();
+      });
+      expect(backend.pauseDownload).toHaveBeenCalledWith(7);
+      await act(async () => {
+        fireEvent.click(buttonByText(container, "Resume Firmware.23.0.1.zip")!);
+        await Promise.resolve();
+      });
+      expect(backend.resumeDownload).toHaveBeenCalledWith(7, "firmware");
+      await act(async () => {
+        fireEvent.click(buttonByText(container, "Cancel Firmware.23.0.1.zip")!);
+        await Promise.resolve();
+      });
+      expect(backend.cancelDownload).toHaveBeenCalledWith(7, "firmware");
+      expect(backend.cancelDownload).not.toHaveBeenCalledWith(7);
+    });
+
+    it("a finished firmware row can be cleared without clearing the ROM with the same number", async () => {
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({
+        downloads: [makeItem({ rom_id: 7, rom_name: "Zelda", status: "completed" }), fw({ status: "completed" })],
+      });
+      const { container } = await renderQueue();
+      expect(container.textContent).toContain("Zelda");
+      await act(async () => {
+        fireEvent.click(buttonByText(container, "Clear Completed")!);
+        await Promise.resolve();
+      });
+      expect(container.textContent).not.toContain("Zelda");
+      expect(container.textContent).not.toContain("Firmware.23.0.1.zip");
     });
   });
 

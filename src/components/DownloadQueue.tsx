@@ -13,6 +13,7 @@ import {
   stoppedCaptionSuffix,
 } from "../utils/downloadStatus";
 import { phaseLines, useNowMs } from "../utils/downloadPhase";
+import { callArgs, downloadKey } from "../utils/downloadKey";
 import type { DownloadItem } from "../types";
 
 interface DownloadQueueProps {
@@ -45,7 +46,7 @@ const WaitingNote: FC<{ item: DownloadItem }> = ({ item }) => {
 
 export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
   const [downloads, setLocalDownloads] = useState<DownloadItem[]>([]); // NOSONAR(typescript:S6754) — setter intentionally renamed (local wrapper around global download state).
-  const [cleared, setCleared] = useState<Set<number>>(new Set());
+  const [cleared, setCleared] = useState<Set<string>>(new Set());
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopPolling = () => {
@@ -58,11 +59,11 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
   // Un-clear rom_ids that have new active downloads (re-download case)
   const unclearRestarted =
     (current: DownloadItem[]) =>
-    (prev: Set<number>): Set<number> => {
-      const restarted = current.filter((d) => isUnfinishedStatus(d.status) && prev.has(d.rom_id));
+    (prev: Set<string>): Set<string> => {
+      const restarted = current.filter((d) => isUnfinishedStatus(d.status) && prev.has(downloadKey(d)));
       if (restarted.length === 0) return prev;
       const next = new Set(prev);
-      for (const d of restarted) next.delete(d.rom_id);
+      for (const d of restarted) next.delete(downloadKey(d));
       return next;
     };
 
@@ -92,25 +93,26 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
     return () => stopPolling();
   }, []);
 
-  const handleCancel = async (romId: number) => {
+  // A ROM is addressed by its id alone; firmware also names its kind (see downloadKey).
+  const handleCancel = async (item: DownloadItem) => {
     try {
-      await cancelDownload(romId);
+      await cancelDownload(...callArgs(item));
     } catch {
       // ignore
     }
   };
 
-  const handlePause = async (romId: number) => {
+  const handlePause = async (item: DownloadItem) => {
     try {
-      await pauseDownload(romId);
+      await pauseDownload(...callArgs(item));
     } catch {
       // ignore
     }
   };
 
-  const handleResume = async (romId: number) => {
+  const handleResume = async (item: DownloadItem) => {
     try {
-      const result = await resumeDownload(romId);
+      const result = await resumeDownload(...callArgs(item));
       // A refused resume (server unreachable, sign-in rejected, superseded, ...) used to vanish silently.
       if (result && !result.success) {
         toaster.toast({ title: "EmuDecky RomM Manager", body: result.message || "Could not resume the download" });
@@ -123,7 +125,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
   const handleClearCompleted = () => {
     const finishedIds = downloads
       .filter((d) => d.status === "completed" || d.status === "failed" || d.status === "cancelled")
-      .map((d) => d.rom_id);
+      .map(downloadKey);
     setCleared((prev) => {
       const next = new Set(prev);
       finishedIds.forEach((id) => next.add(id));
@@ -131,7 +133,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
     });
   };
 
-  const visible = downloads.filter((d) => !cleared.has(d.rom_id));
+  const visible = downloads.filter((d) => !cleared.has(downloadKey(d)));
   // Paused, interrupted and extracting downloads stay in the active section —
   // they're not finished. Paused/interrupted hold the partial transfer for
   // resume; extracting is the post-transfer ZIP unpack (not cancellable, no
@@ -139,7 +141,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
   const active = visible.filter((d) => isUnfinishedStatus(d.status));
   const finished = visible.filter((d) => d.status === "completed" || d.status === "failed" || d.status === "cancelled");
   const hasFinished = downloads.some(
-    (d) => !cleared.has(d.rom_id) && (d.status === "completed" || d.status === "failed" || d.status === "cancelled"),
+    (d) => !cleared.has(downloadKey(d)) && (d.status === "completed" || d.status === "failed" || d.status === "cancelled"),
   );
 
   return (
@@ -165,7 +167,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
         ) : (
           <>
             {active.map((item) => (
-              <PanelSectionRow key={item.rom_id}>
+              <PanelSectionRow key={downloadKey(item)}>
                 {/* Own the caption in a full-width row and use the bare ProgressBar.
                     ProgressBarWithInfo is a Steam Field (label column | bar column);
                     with the rom name in sOperationText the empty bar column gets
@@ -209,13 +211,13 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
               // post-transfer unpack runs to completion. Offer no action row,
               // matching the game-detail button's disabled throbber.
               item.status === "extracting" ? null : (
-                <Fragment key={`actions-${item.rom_id}`}>
+                <Fragment key={`actions-${downloadKey(item)}`}>
                   {item.status === "downloading" && (item.resumable || item.phase) && (
                     <PanelSectionRow>
                       <ButtonItem
                         layout="below"
                         onClick={() => {
-                          detach(handlePause(item.rom_id));
+                          detach(handlePause(item));
                         }}
                       >
                         Pause {item.rom_name}
@@ -227,7 +229,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
                       <ButtonItem
                         layout="below"
                         onClick={() => {
-                          detach(handleResume(item.rom_id));
+                          detach(handleResume(item));
                         }}
                       >
                         {resumeActionLabel(item.reason)} {item.rom_name}
@@ -238,7 +240,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
                     <ButtonItem
                       layout="below"
                       onClick={() => {
-                        detach(handleCancel(item.rom_id));
+                        detach(handleCancel(item));
                       }}
                     >
                       Cancel {item.rom_name}
@@ -249,7 +251,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
             )}
 
             {finished.map((item) => (
-              <PanelSectionRow key={item.rom_id}>
+              <PanelSectionRow key={downloadKey(item)}>
                 <Field label={item.rom_name} description={formatFinishedDescription(item)} />
               </PanelSectionRow>
             ))}

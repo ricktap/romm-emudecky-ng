@@ -110,9 +110,16 @@ reasons `timeout` and `needs_recovery` (see `docs/architecture/multipart-downloa
 ## Download kinds
 
 The durable download queue holds more than one kind of download, so a job is identified by `(kind, id)` (migration
-`014_download_job_kinds.sql`). `download_progress` frames and `get_download_queue` rows carry `kind` (`"rom"` or
-`"firmware"`) and the id under the name consumers use: `rom_id` for a ROM, `firmware_id` for firmware. The callables
-`start_download`, `resume_download`, `cancel_download` and `pause_download` take an optional second argument, the kind
-(default `"rom"`). Until the firmware handler exists, kind `"firmware"` answers
-`{success: false, reason: "unsupported_kind"}`; any other kind is a protocol error. Only ROM downloads count for
-`active_download_rom_ids` (version switch and uninstall guards).
+`014_download_job_kinds.sql`). `download_progress` / `download_complete` / `download_failed` frames and
+`get_download_queue` rows carry `kind` (`"rom"` or `"firmware"`) and the id under the name consumers use: `rom_id` for a
+ROM, `firmware_id` for firmware (a firmware frame never carries `rom_id`). The callables `start_download`,
+`resume_download`, `cancel_download` and `pause_download` take an optional second argument, the kind (default `"rom"`);
+any other kind is a protocol error. Firmware downloads share the single transfer slot with ROM downloads, and only ROM
+downloads count for `active_download_rom_ids` (version switch and uninstall guards).
+
+A firmware download writes `<destination>.tmp`, verifies RomM's SHA-1, and only then installs: key files go to the
+emulators' own key directories (copied to every installed emulator that lacks the file), firmware archives to
+`<Emulation>/bios/switch/`. An existing file is never replaced. `download_required_firmware("switch")` and
+`download_all_firmware("switch")` queue the missing pieces and answer at once with `{success, message, queued, kept}`
+(`kept` names key files that exist but differ from RomM's); `save_firmware_version(version)` saves the version to
+download (`""` = newest). See `docs/plans/0.45.0-switch-firmware.md`.

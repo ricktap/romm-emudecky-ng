@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import callablesJson from "../../backend/callables.json";
+import appRs from "../../backend/src/app.rs?raw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { call, toast } = vi.hoisted(() => ({ call: vi.fn(), toast: vi.fn() }));
@@ -45,13 +46,7 @@ describe("unportedCallable", () => {
       message: "Save sync is not implemented yet (planned for 0.55.0).",
     });
     expect(toast).toHaveBeenCalledTimes(1);
-    expect(toast.mock.calls[0][0].body).toContain("Save sync is not implemented yet");
-  });
-
-  it("names firmware separately from save sync", async () => {
-    call.mockResolvedValue(NOT_IMPLEMENTED);
-    await unportedCallable("download_all_firmware")("switch");
-    expect(toast.mock.calls[0][0].body).toContain("Firmware management is not implemented yet");
+    expect(toast.mock.calls[0]?.[0].body).toContain("Save sync is not implemented yet");
   });
 
   it("resolves the pre-launch sync to a not_implemented failure without a toast: launches treat it as a benign skip", async () => {
@@ -81,11 +76,9 @@ describe("unportedCallable", () => {
     await sync(2);
     await unportedCallable("switch_slot")(1, "a");
     expect(toast).toHaveBeenCalledTimes(1);
-    await unportedCallable("download_all_firmware")("switch");
-    expect(toast).toHaveBeenCalledTimes(2);
     vi.advanceTimersByTime(TOAST_THROTTLE_MS + 1);
     await sync(3);
-    expect(toast).toHaveBeenCalledTimes(3);
+    expect(toast).toHaveBeenCalledTimes(2);
   });
 
   it("propagates a real transport failure unchanged", async () => {
@@ -101,10 +94,8 @@ describe("unportedCallable", () => {
 
 describe("the registered names", () => {
   it("are exactly the callables the Rust backend has not ported", () => {
-    const root = `${process.cwd()}/`; // vitest runs from the repo root
-    const all: string[] = JSON.parse(readFileSync(`${root}backend/callables.json`, "utf8"));
-    const app = readFileSync(`${root}backend/src/app.rs`, "utf8");
-    const block = app.slice(app.indexOf("PORTED_CALLABLES"));
+    const all: string[] = callablesJson;
+    const block = appRs.slice(appRs.indexOf("PORTED_CALLABLES"));
     const ported = new Set([...block.slice(0, block.indexOf("];")).matchAll(/"([a-z_0-9]+)"/g)].map((m) => m[1]));
     const unported = all.filter((name) => !ported.has(name)).sort();
     // When a callable is ported, switch it from unportedCallable() back to callable()

@@ -2,7 +2,7 @@ import { callable, toaster } from "@decky/api";
 import { NOT_IMPLEMENTED_REASON } from "../types/saves";
 
 /**
- * Callables whose Rust port is still pending (firmware: 0.45.0, save sync: 0.55.0).
+ * Callables whose Rust port is still pending (save sync: 0.55.0).
  * The UI for them stays visible; the backend answers `reason: "not_implemented"` and this wrapper
  * turns that into a toast + a normal failure.
  *
@@ -11,10 +11,9 @@ import { NOT_IMPLEMENTED_REASON } from "../types/saves";
  */
 export { NOT_IMPLEMENTED_REASON };
 
-type Feature = "firmware" | "saves";
+type Feature = "saves";
 
 const FEATURE_MESSAGES: Record<Feature, string> = {
-  firmware: "Firmware management is not implemented yet (planned for 0.45.0).",
   saves: "Save sync is not implemented yet (planned for 0.55.0).",
 };
 
@@ -35,9 +34,6 @@ interface Entry {
 }
 
 const UNPORTED: Record<string, Entry> = {
-  // firmware (get_firmware_status is ported; the downloads come with the firmware queue work)
-  download_all_firmware: { feature: "firmware" },
-  download_required_firmware: { feature: "firmware" },
   // save sync — passive reads (rejecting, like any unreachable backend call; callers catch it)
   ensure_device_registered: { feature: "saves", silent: true, throws: true },
   list_devices: { feature: "saves", silent: true, throws: true },

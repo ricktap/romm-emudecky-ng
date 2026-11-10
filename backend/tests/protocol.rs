@@ -25,7 +25,7 @@ fn list_methods_flag_prints_the_surface_without_any_environment() {
     let out = cmd.output().unwrap();
     assert!(out.status.success());
     let names: Vec<String> = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(names.len(), 106);
+    assert_eq!(names.len(), 107);
     assert_eq!(names, expected_names());
 }
 

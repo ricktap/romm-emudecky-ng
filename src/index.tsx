@@ -5,6 +5,7 @@ import { MainPage } from "./components/MainPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { LibraryPage } from "./components/LibraryPage";
 import { SystemPage } from "./components/SystemPage";
+import { downloadKey } from "./utils/downloadKey";
 import { DangerZone } from "./components/DangerZone";
 import { DownloadQueue } from "./components/DownloadQueue";
 import { initUnitSyncManager, resetSyncCancel } from "./utils/syncManager";
@@ -450,9 +451,11 @@ export default definePlugin(() => {
     (data: DownloadProgressEvent) => {
       // Carry the server's resumability verdict from the frame; a frame that
       // omits it (older shape) keeps the prior value instead of clobbering it.
-      const prev = getDownloadState().find((d) => d.rom_id === data.rom_id);
+      const key = downloadKey(data);
+      const prev = getDownloadState().find((d) => downloadKey(d) === key);
       updateDownload({
-        rom_id: data.rom_id,
+        ...(data.kind === "firmware" ? { kind: "firmware" as const, firmware_id: data.firmware_id as number } : {}),
+        rom_id: data.rom_id ?? 0,
         rom_name: data.rom_name,
         platform_name: data.platform_name,
         file_name: data.file_name,
@@ -479,13 +482,35 @@ export default definePlugin(() => {
   const downloadCompleteListener = addEventListener<[DownloadCompleteEvent]>(
     "download_complete",
     (data: DownloadCompleteEvent) => {
+      // A firmware file is not a ROM: no shortcut, no launch options. Mark it done, say so, and let the System page
+      // refresh its list.
+      if (data.kind === "firmware") {
+        const key = downloadKey(data);
+        const prev = getDownloadState().find((d) => downloadKey(d) === key);
+        updateDownload({
+          kind: "firmware",
+          firmware_id: data.firmware_id as number,
+          rom_id: 0,
+          rom_name: data.rom_name,
+          platform_name: data.platform_name,
+          file_name: prev?.file_name ?? data.rom_name,
+          status: "completed",
+          progress: 1,
+          bytes_downloaded: prev?.bytes_downloaded ?? 0,
+          total_bytes: prev?.total_bytes ?? 0,
+          resumable: false,
+        });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: `Downloaded ${data.rom_name}` });
+        globalThis.dispatchEvent(new CustomEvent("romm_data_changed", { detail: { type: "firmware" } }));
+        return;
+      }
       // An adopted ROM (files already on disk, nothing downloaded) never went
       // through the queue: no queue entry, no "Downloaded" toast — only the
       // launch-options update below applies.
       if (!data.adopted) {
         const prev = getDownloadState().find((d) => d.rom_id === data.rom_id);
         updateDownload({
-          rom_id: data.rom_id,
+          rom_id: data.rom_id as number,
           rom_name: data.rom_name,
           platform_name: data.platform_name,
           file_name: prev?.file_name ?? "",

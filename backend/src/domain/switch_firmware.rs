@@ -139,6 +139,26 @@ pub fn newest<'a>(versions: impl IntoIterator<Item = &'a Version>) -> Option<&'a
     versions.into_iter().max()
 }
 
+/// `"23.0.1"` → `[23, 0, 1]` (the text a version is saved and shown as); `None` for anything else.
+pub fn parse_version_text(text: &str) -> Option<Version> {
+    let parts: Vec<&str> = text.trim().split('.').collect();
+    if parts.is_empty() || parts.len() > 4 {
+        return None;
+    }
+    parts
+        .iter()
+        .map(|p| (!p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())).then(|| p.parse().ok()).flatten())
+        .collect()
+}
+
+/// The firmware version to use: the saved choice when RomM still has it, else the newest. An empty or unknown
+/// setting means "newest", so a version RomM dropped never leaves the user with nothing selected.
+pub fn selected_version<'a>(available: &'a [Version], setting: &str) -> Option<&'a Version> {
+    parse_version_text(setting)
+        .and_then(|wanted| available.iter().find(|v| **v == wanted))
+        .or_else(|| newest(available.iter()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +200,21 @@ mod tests {
         assert_eq!(newest(versions.iter()), Some(&vec![23, 0, 1]), "9 < 18 < 23, not lexicographic");
         assert_eq!(newest(std::iter::empty()), None);
         assert_eq!(version_text(&[23, 0, 1]), "23.0.1");
+    }
+
+    #[test]
+    fn the_saved_version_is_used_when_romm_has_it_else_the_newest() {
+        let available = vec![vec![23, 0, 1], vec![18, 1, 0], vec![9, 2, 0]];
+        assert_eq!(selected_version(&available, "18.1.0"), Some(&vec![18, 1, 0]));
+        assert_eq!(selected_version(&available, ""), Some(&vec![23, 0, 1]), "empty means newest");
+        assert_eq!(selected_version(&available, "20.0.0"), Some(&vec![23, 0, 1]), "a version RomM dropped falls back");
+        assert_eq!(selected_version(&available, "garbage"), Some(&vec![23, 0, 1]));
+        assert_eq!(selected_version(&available, " 9.2.0 "), Some(&vec![9, 2, 0]));
+        assert_eq!(selected_version(&[], "9.2.0"), None);
+        assert_eq!(parse_version_text("23.0.1"), Some(vec![23, 0, 1]));
+        for bad in ["", "1..2", "a.b", "1.2.3.4.5", "v23.0.1", "-1"] {
+            assert_eq!(parse_version_text(bad), None, "{bad}");
+        }
     }
 
     #[test]

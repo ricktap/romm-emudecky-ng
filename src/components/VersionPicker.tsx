@@ -139,8 +139,9 @@ export const VersionPicker: FC<VersionPickerProps> = ({ appId }) => {
     // install state. download_failed matters too: the sibling supersede removes
     // the old install when the download STARTS, so a failed download has still
     // changed the on-disk picture.
-    const onInstallChanged = (romId: number) => {
-      if (memberIdsRef.current.has(romId)) detach(load());
+    const onInstallChanged = (romId: number | undefined) => {
+      // A firmware download has no ROM id and changes no install.
+      if (romId !== undefined && memberIdsRef.current.has(romId)) detach(load());
     };
     const dlComplete = addEventListener<[DownloadCompleteEvent]>("download_complete", (evt) =>
       onInstallChanged(evt.rom_id),

@@ -68,7 +68,7 @@ export interface SwitchFirmwareArchive {
   file_name: string;
   version: string;
   size: number | null;
-  /** The version "Download required" will fetch (the newest, until it becomes selectable). */
+  /** The version "Download required" fetches (the chosen one, else the newest RomM has). */
   selected: boolean;
   downloaded: boolean;
   local_size: number | null;
@@ -95,15 +95,21 @@ export interface FirmwareStatus {
   emulators?: SwitchEmulator[];
   keys?: SwitchKeyFile[];
   firmware?: SwitchFirmwareArchive[];
+  /** The chosen firmware version (the newest when none is chosen or RomM no longer has it); `null` without firmware. */
+  selected_version?: string | null;
+  /** `true` when the user chose that version (and RomM still has it); `false` when it simply follows the newest. */
+  version_pinned?: boolean;
   /** Files under `bios/Switch` that are neither keys nor firmware archives. */
   unrecognized?: number;
 }
 
+/** The answer of `download_required_firmware` / `download_all_firmware`: what was queued, not what finished. */
 export interface FirmwareDownloadResult {
   success: boolean;
   message?: string;
-  file_path?: string;
-  md5_match?: boolean | null;
-  downloaded?: number;
-  blocked_by_migration?: boolean;
+  /** How many downloads were put in the download queue. */
+  queued?: number;
+  /** Key files that exist but differ from RomM's: kept, never replaced. */
+  kept?: string[];
+  reason?: string;
 }

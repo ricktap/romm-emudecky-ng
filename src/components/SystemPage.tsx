@@ -1,6 +1,11 @@
 import { useState, useEffect, FC } from "react";
-import { PanelSection, PanelSectionRow, ButtonItem, Field } from "@decky/ui";
-import { getFirmwareStatus, downloadAllFirmware, downloadRequiredFirmware } from "../api/backend";
+import { PanelSection, PanelSectionRow, ButtonItem, Field, DropdownItem } from "@decky/ui";
+import {
+  getFirmwareStatus,
+  downloadAllFirmware,
+  downloadRequiredFirmware,
+  saveFirmwareVersion,
+} from "../api/backend";
 import type { FirmwareStatus, KeyState, SwitchKeyFile } from "../types";
 import { formatBytes } from "../utils/formatters";
 import { scrollToTop } from "../utils/scrollHelpers";
@@ -25,8 +30,9 @@ interface SystemPageProps {
 
 /**
  * Top-level QAM destination for the Switch firmware and keys RomM hosts: the key files with their state in every
- * installed emulator, and the firmware versions. Reading never changes anything; an existing key file that differs
- * from RomM's is reported, not replaced. Downloads arrive with the firmware queue work.
+ * installed emulator, and the firmware versions. The buttons put downloads in the shared download queue (progress,
+ * pause and cancel are in the Downloads list). Downloads only fill gaps: an existing key file that differs from
+ * RomM's is reported and kept, never replaced.
  */
 export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
   const [status, setStatus] = useState<FirmwareStatus | null>(null);
@@ -54,15 +60,35 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- initial async data load on mount
     detach(refresh());
+    // A finished firmware download (announced by the global listener) changes what is on disk.
+    const onChanged = (e: Event) => {
+      if ((e as CustomEvent<{ type?: string }>).detail?.type === "firmware") detach(refresh());
+    };
+    globalThis.addEventListener("romm_data_changed", onChanged);
+    return () => globalThis.removeEventListener("romm_data_changed", onChanged);
   }, []);
 
-  const runDownload = async (download: (slug: string) => Promise<{ success: boolean; message?: string }>) => {
+  const chooseVersion = async (version: string) => {
+    setNote("");
+    try {
+      const result = await saveFirmwareVersion(version);
+      if (!result.success) setNote(result.message || "Could not save the firmware version");
+      await refresh();
+    } catch (e) {
+      setNote(`Could not save the firmware version: ${e}`);
+    }
+  };
+
+  const runDownload = async (
+    download: (slug: string) => Promise<{ success: boolean; message?: string; queued?: number }>,
+  ) => {
     setDownloading(true);
     setNote("");
     try {
       const result = await download("switch");
-      setNote(result.message || (result.success ? "Done" : "Download failed"));
-      if (result.success) await refresh();
+      const text = result.message || (result.success ? "Done" : "Download failed");
+      // The transfers run in the Downloads list; point there instead of implying they are done.
+      setNote(result.queued ? `${text} — progress is in Downloads` : text);
     } catch (e) {
       setNote(`Download failed: ${e}`);
     }
@@ -151,10 +177,22 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
 
       {status && firmware.length > 0 && (
         <PanelSection title="Firmware">
+          <PanelSectionRow>
+            <DropdownItem
+              label="Firmware version"
+              description="The version Download Required fetches"
+              rgOptions={[
+                { data: "", label: `Newest available (${firmware[0]?.version ?? ""})` },
+                ...firmware.map((fw) => ({ data: fw.version, label: fw.version })),
+              ]}
+              selectedOption={status.version_pinned ? (status.selected_version ?? "") : ""}
+              onChange={(option) => detach(chooseVersion(option.data as string))}
+            />
+          </PanelSectionRow>
           {firmware.map((fw) => (
             <PanelSectionRow key={fw.file_name}>
               <Field
-                label={`${fw.version}${fw.selected ? " (newest)" : ""}`}
+                label={`${fw.version}${fw.selected ? " (selected)" : ""}`}
                 description={`${fw.size != null ? formatBytes(fw.size) : "size unknown"} — ${
                   fw.downloaded ? "downloaded" : "not downloaded"
                 }`}

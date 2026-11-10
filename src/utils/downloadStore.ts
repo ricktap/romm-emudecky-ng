@@ -11,6 +11,7 @@
  */
 
 import type { DownloadItem } from "../types";
+import { downloadKey } from "./downloadKey";
 
 let _downloads: DownloadItem[] = [];
 
@@ -19,7 +20,8 @@ export function setDownloads(items: DownloadItem[]): void {
 }
 
 export function updateDownload(item: DownloadItem): void {
-  const idx = _downloads.findIndex((d) => d.rom_id === item.rom_id);
+  const key = downloadKey(item);
+  const idx = _downloads.findIndex((d) => downloadKey(d) === key);
   if (idx >= 0) _downloads[idx] = item;
   else _downloads.push(item);
 }

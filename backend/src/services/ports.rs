@@ -231,6 +231,48 @@ pub trait RommRomApi: Send + Sync {
 pub trait RommFirmwareApi: Send + Sync {
     /// Every firmware / BIOS file RomM hosts, as the API lists them.
     async fn list_firmware(&self) -> Result<Value, RommError>;
+    /// Stream one firmware file into `dest` as `mode` says (see [`TransferMode`]); the same resumable transfer
+    /// as a ROM.
+    async fn download_firmware_content(
+        &self,
+        firmware_id: i64,
+        file_name: &str,
+        dest: &str,
+        mode: TransferMode,
+        hooks: TransferHooks,
+    ) -> anyhow::Result<TransferOutcome>;
+}
+
+/// Whether a firmware file is a key file (copied into emulator key directories) or a firmware archive (saved for
+/// the emulator's own Install Firmware dialog).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FirmwareFileKind {
+    Key,
+    Archive,
+}
+
+/// What one queued firmware download has to do, as things stand now.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FirmwareTarget {
+    pub firmware_id: i64,
+    pub file_name: String,
+    /// RomM's size in bytes (0 when it reports none).
+    pub size: u64,
+    /// RomM's SHA-1 (lower-case hex); the download is verified against it when present.
+    pub sha1: Option<String>,
+    pub kind: FirmwareFileKind,
+    /// The final path of the first destination; the transfer writes `<dest_path>.tmp` next to it.
+    pub dest_path: String,
+    /// Other full paths a key file is copied to afterwards (the other emulators that still lack it).
+    pub copy_to: Vec<String>,
+}
+
+/// Resolves a queued firmware job to its target.
+#[async_trait]
+pub trait FirmwareJobs: Send + Sync {
+    /// The target of RomM firmware `firmware_id`, or `None` when RomM does not list it or this machine needs nothing
+    /// from it (every emulator already has the key, the archive is already saved).
+    async fn target(&self, firmware_id: i64) -> Option<FirmwareTarget>;
 }
 
 /// `(extracted bytes, total bytes)` while a ZIP extracts.
@@ -268,6 +310,8 @@ pub trait DownloadFiles: Send + Sync {
         safe_root: &str,
         progress: ExtractProgress,
     ) -> anyhow::Result<()>;
+    /// Copy `src` to `dst` through a temporary file next to `dst`, creating `dst`'s directory.
+    async fn copy_file(&self, src: &str, dst: &str) -> std::io::Result<()>;
     /// Lower-case hex SHA-1 of the regular file at `path`; `None` when it is missing or unreadable.
     async fn sha1_hex(&self, path: &str) -> Option<String>;
     /// Check that `archive` is a structurally valid ZIP whose every member

@@ -35,12 +35,15 @@ use crate::domain::rom_install::RomInstall;
 use crate::services::launch::LaunchService;
 use crate::services::ports::{
     Clock, DownloadFiles, DownloadJobRepo, EmuDeckPaths, EventSink, IdentitySink, LibraryRepo, RommRomApi,
-    SystemResolver, TransferHooks, TransferMode, TransferOutcome, TransferPhase,
+    SystemResolver, TransferHooks, TransferMode, TransferOutcome, TransferPhase, FirmwareFileKind, FirmwareJobs,
+    FirmwareTarget, RommFirmwareApi,
 };
 use crate::services::rom_removal::RomRemovalService;
 use crate::util::path_safety::{basename, join, safe_join_lexical};
 
 const MAX_TERMINAL: usize = 50;
+/// Shown as the platform of a firmware download in the queue.
+const FIRMWARE_LABEL: &str = "Switch firmware";
 const ZIP_TMP_EXT: &str = ".zip.tmp";
 const TMP_EXT: &str = ".tmp";
 /// Free space kept on top of what a download needs.
@@ -244,6 +247,8 @@ pub struct DownloadServiceConfig {
     pub removal: Arc<RomRemovalService>,
     pub events: Arc<dyn EventSink>,
     pub clock: Arc<dyn Clock>,
+    pub firmware_api: Arc<dyn RommFirmwareApi>,
+    pub firmware_jobs: Arc<dyn FirmwareJobs>,
 }
 
 pub struct DownloadService {
@@ -260,6 +265,8 @@ pub struct DownloadService {
     removal: Arc<RomRemovalService>,
     events: Arc<dyn EventSink>,
     clock: Arc<dyn Clock>,
+    firmware_api: Arc<dyn RommFirmwareApi>,
+    firmware_jobs: Arc<dyn FirmwareJobs>,
     state: Mutex<State>,
     /// Serializes every read-modify-write of a `download_jobs` row.
     job_lock: AsyncMutex<()>,
@@ -275,7 +282,12 @@ enum Ended {
 /// The fixed facts of one download attempt.
 #[derive(Clone)]
 struct Plan {
+    /// What is downloading; its id is `rom_id` for a ROM and the firmware id for firmware.
+    key: JobKey,
+    /// The ROM id (a firmware plan carries its firmware id here and never reads it as a ROM).
     rom_id: i64,
+    /// The firmware file to fetch and where it goes; `None` for a ROM.
+    firmware: Option<FirmwareTarget>,
     rom: Value,
     target_path: String,
     system: String,
@@ -302,6 +314,8 @@ impl DownloadService {
             removal: config.removal,
             events: config.events,
             clock: config.clock,
+            firmware_api: config.firmware_api,
+            firmware_jobs: config.firmware_jobs,
             state: Mutex::new(State::default()),
             job_lock: AsyncMutex::new(()),
         })
@@ -585,7 +599,7 @@ impl DownloadService {
         } else {
             0
         };
-        let cleaned = rom_cleaned + self.clean_bios_tmp_files().await;
+        let cleaned = rom_cleaned + self.clean_bios_tmp_files(&keep).await;
         if cleaned > 0 {
             tracing::info!("Cleaned {cleaned} orphan tmp file(s)");
         }
@@ -625,14 +639,15 @@ impl DownloadService {
         self.remove_tmp_files(&orphans).await
     }
 
-    /// Firmware has no durable queue yet: every BIOS `.tmp` is stale.
-    async fn clean_bios_tmp_files(&self) -> usize {
+    /// A `.tmp` under the BIOS folder that no download job owns is stale (a firmware archive in progress is a job).
+    async fn clean_bios_tmp_files(&self, keep: &HashSet<String>) -> usize {
         let base = self.paths.bios_path();
         if base.is_empty() {
             return 0;
         }
         let found = self.files.walk_files_matching_suffixes(&base, &[TMP_EXT]).await;
-        self.remove_tmp_files(&found).await
+        let orphans: Vec<String> = found.into_iter().filter(|p| !keep.contains(p)).collect();
+        self.remove_tmp_files(&orphans).await
     }
 
     /// Resume interrupted jobs in order; stop at the first unreachable server
@@ -641,8 +656,7 @@ impl DownloadService {
         for (index, key) in keys.iter().enumerate() {
             let result = match key.kind {
                 JobKind::Rom => self.resume_inner(key.id, false).await,
-                // No firmware handler yet (it arrives with the firmware queue work): leave it interrupted.
-                JobKind::Firmware => failure("unsupported_kind", "Firmware downloads are not supported yet"),
+                JobKind::Firmware => self.resume_firmware_download(key.id).await,
             };
             if result["success"] == true {
                 continue;
@@ -938,10 +952,20 @@ impl DownloadService {
             has_multiple: is_multi,
             extract_dir_name: names.extract_dir_name.clone(),
             restart,
+            key: JobKey::rom(rom_id),
+            firmware: None,
         };
+        self.launch_transfer(plan, partial_bytes, total_bytes, required, resume);
+        json!({"success": true, "message": "Download started"})
+    }
+
+    /// Register the queue entry, the disk reservation and the cancellation handles of `plan`, then spawn its
+    /// transfer. The status stays `queued` until the scheduler hands over the transfer slot.
+    fn launch_transfer(self: &Arc<Self>, plan: Plan, partial_bytes: u64, total_bytes: u64, required: u64, resume: bool) {
+        let key = plan.key;
         let control = {
             let mut st = self.st();
-            st.persisted_totals.remove(&JobKey::rom(rom_id));
+            st.persisted_totals.remove(&key);
             st.next_control += 1;
             let control = Arc::new(Control {
                 id: st.next_control,
@@ -950,16 +974,15 @@ impl DownloadService {
                 paused: AtomicBool::new(false),
                 shutdown: AtomicBool::new(false),
             });
-            let resumable = st.queue.get(&JobKey::rom(rom_id)).is_some_and(|e| e.resumable);
-            // Status stays "queued" until the scheduler hands over the slot.
+            let resumable = st.queue.get(&key).is_some_and(|e| e.resumable);
             st.queue.insert(
-                JobKey::rom(rom_id),
+                key,
                 QueueEntry {
-                    kind: JobKind::Rom,
-                    item_id: rom_id,
-                    rom_name,
-                    platform_name,
-                    file_name,
+                    kind: key.kind,
+                    item_id: key.id,
+                    rom_name: plan.rom_name.clone(),
+                    platform_name: plan.platform_name.clone(),
+                    file_name: plan.file_name.clone(),
                     status: "queued".into(),
                     progress: ratio(partial_bytes, total_bytes),
                     bytes_downloaded: partial_bytes,
@@ -970,9 +993,9 @@ impl DownloadService {
                     ..QueueEntry::default()
                 },
             );
-            st.reserved.insert(JobKey::rom(rom_id), required);
+            st.reserved.insert(key, required);
             st.attempts.insert(
-                JobKey::rom(rom_id),
+                key,
                 Attempt {
                     control: control.clone(),
                     handle: None,
@@ -983,12 +1006,165 @@ impl DownloadService {
         let me = self.clone();
         let task_control = control.clone();
         let handle = tokio::spawn(async move { me.do_download(plan, task_control, resume).await });
-        if let Some(attempt) = self.st().attempts.get_mut(&JobKey::rom(rom_id))
+        if let Some(attempt) = self.st().attempts.get_mut(&key)
             && Arc::ptr_eq(&attempt.control, &control)
         {
             attempt.handle = Some(handle);
         }
+    }
+
+    // ── Firmware ────────────────────────────────────────────────────────
+
+    /// Queue the download of RomM firmware `firmware_id` (a key file or a firmware archive). What it fetches and
+    /// where it goes is decided by the firmware service at this moment; nothing is downloaded when this machine
+    /// already has what the file would provide.
+    pub async fn start_firmware_download(self: &Arc<Self>, firmware_id: i64) -> Value {
+        let _mutation = self.mutation_lock.lock().await;
+        if !self.st().in_progress.insert(JobKey::firmware(firmware_id)) {
+            return failure("already_downloading", "Already downloading");
+        }
+        self.begin_firmware(firmware_id, false).await
+    }
+
+    /// Resume a paused or interrupted firmware download from its partial.
+    pub async fn resume_firmware_download(self: &Arc<Self>, firmware_id: i64) -> Value {
+        let _mutation = self.mutation_lock.lock().await;
+        let key = JobKey::firmware(firmware_id);
+        let resumable = self.st().queue.get(&key).is_some_and(|e| e.status == "paused" || e.status == "interrupted");
+        if !resumable {
+            return failure("not_paused", "No paused download for this firmware");
+        }
+        if !self.st().in_progress.insert(key) {
+            return failure("already_downloading", "Already downloading");
+        }
+        self.begin_firmware(firmware_id, true).await
+    }
+
+    async fn begin_firmware(self: &Arc<Self>, firmware_id: i64, resume: bool) -> Value {
+        let key = JobKey::firmware(firmware_id);
+        let release = |me: &Self| {
+            me.st().in_progress.remove(&key);
+        };
+        let Some(target) = self.firmware_jobs.target(firmware_id).await else {
+            release(self);
+            if resume {
+                // Nothing left to fetch (the key appeared, the archive was saved): the stopped job is obsolete.
+                self.evict_job(key).await;
+            }
+            return failure("nothing_to_download", "Nothing to download for this firmware file");
+        };
+        let dest_dir = dirname(&target.dest_path).to_string();
+        let tmp_path = format!("{}{TMP_EXT}", target.dest_path);
+        let partial_bytes = if resume { self.files.file_size(&tmp_path).await } else { 0 };
+        if !resume && let Err(e) = self.files.remove_file(&tmp_path).await {
+            tracing::warn!("Could not remove a stale {tmp_path}: {e}");
+        }
+        // Keys are a few KB, the archive hundreds of MB: only the archive needs the generous buffer.
+        let buffer = if target.kind == FirmwareFileKind::Archive { SPACE_BUFFER } else { 1024 * 1024 };
+        let required = target.size.saturating_sub(partial_bytes) + buffer;
+        let preflight: anyhow::Result<Option<Value>> = async {
+            self.files.make_dirs(&dest_dir).await?;
+            let free = self.files.disk_free(&dest_dir).await?;
+            let reserved: u64 = self.st().reserved.values().sum();
+            let available = i128::from(free) - i128::from(reserved);
+            if target.size > 0 && available < i128::from(required) {
+                let free_mb = available.max(0) / (1024 * 1024);
+                return Ok(Some(failure(
+                    "insufficient_space",
+                    &format!("Not enough disk space ({free_mb}MB free, need {}MB)", required / (1024 * 1024)),
+                )));
+            }
+            Ok(None)
+        }
+        .await;
+        match preflight {
+            Ok(None) => {}
+            Ok(Some(no_space)) => {
+                release(self);
+                if resume {
+                    self.mark_interrupted(key, INTERRUPT_DISK_FULL).await;
+                }
+                return no_space;
+            }
+            Err(e) => {
+                release(self);
+                tracing::error!("Failed to prepare firmware download {firmware_id}: {e:#}");
+                return failure(reason::UNKNOWN, "Failed to start download");
+            }
+        }
+        let job = self
+            .enqueue_job(NewJob {
+                kind: JobKind::Firmware,
+                item_id: firmware_id,
+                rom_name: target.file_name.clone(),
+                platform_name: FIRMWARE_LABEL.into(),
+                file_name: target.file_name.clone(),
+                target_path: target.dest_path.clone(),
+                tmp_path,
+                is_multi: false,
+                position: 0,
+                total_bytes: (target.size > 0).then_some(target.size),
+            })
+            .await;
+        let total_bytes = job.and_then(|j| j.total_bytes).unwrap_or(target.size);
+        let plan = Plan {
+            key,
+            rom_id: firmware_id,
+            firmware: Some(target.clone()),
+            rom: Value::Null,
+            target_path: target.dest_path.clone(),
+            system: String::new(),
+            file_name: target.file_name.clone(),
+            rom_name: target.file_name.clone(),
+            platform_name: FIRMWARE_LABEL.into(),
+            has_multiple: false,
+            extract_dir_name: String::new(),
+            restart: false,
+        };
+        self.launch_transfer(plan, partial_bytes, total_bytes, required, resume);
         json!({"success": true, "message": "Download started"})
+    }
+
+    /// Resume a firmware file: verify it, store it, copy keys to the other emulators.
+    async fn post_download_firmware(&self, plan: &Plan, tmp: &str) -> anyhow::Result<String> {
+        let target = plan.firmware.as_ref().ok_or_else(|| anyhow::anyhow!("a firmware plan without a target"))?;
+        if let Some(want) = target.sha1.as_deref() {
+            let got = self.files.sha1_hex(tmp).await;
+            if got.as_deref() != Some(want) {
+                anyhow::bail!("{} does not match the checksum RomM reports; it was not installed", target.file_name);
+            }
+        }
+        // Other emulators that still lack the key get a copy of the verified file; existing files are never replaced.
+        for dst in &target.copy_to {
+            if !self.files.exists(dst).await {
+                self.files.copy_file(tmp, dst).await.map_err(|e| anyhow::anyhow!("copying to {dst}: {e}"))?;
+            }
+        }
+        if self.files.exists(&target.dest_path).await {
+            tracing::info!("{} appeared while downloading; keeping the existing file", target.dest_path);
+            let _ = self.files.remove_file(tmp).await;
+        } else {
+            self.files.rename(tmp, &target.dest_path).await?;
+        }
+        Ok(target.dest_path.clone())
+    }
+
+    async fn finalize_firmware_complete(&self, plan: &Plan, final_path: &str) {
+        let key = plan.key;
+        self.drop_job(key).await;
+        self.update_entry(key, |e| {
+            e.status = "completed".into();
+            e.progress = 1.0;
+            e.reason = None;
+        });
+        let mut payload = json!({
+            "rom_name": plan.rom_name,
+            "platform_name": plan.platform_name,
+            "file_path": final_path,
+        });
+        set_identity(&mut payload, key);
+        self.emit("download_complete", payload);
+        tracing::info!("Firmware download complete: {} -> {final_path}", plan.rom_name);
     }
 
     // ── Terminal state helpers ──────────────────────────────────────────
@@ -1047,7 +1223,7 @@ impl DownloadService {
 
     fn progress_hook(self: &Arc<Self>, plan: &Plan) -> Box<dyn FnMut(u64, u64) + Send> {
         let me = self.clone();
-        let rom_id = plan.rom_id;
+        let key = plan.key;
         let rom_name = plan.rom_name.clone();
         let (mut last_emit, mut last_log) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
         Box::new(move |downloaded, total| {
@@ -1067,7 +1243,7 @@ impl DownloadService {
             last_emit = now;
             let frame = {
                 let mut st = me.st();
-                let Some(entry) = st.queue.get_mut(&JobKey::rom(rom_id)) else {
+                let Some(entry) = st.queue.get_mut(&key) else {
                     return; // evicted mid-download: never resurrect
                 };
                 entry.progress = ratio(downloaded, total);
@@ -1079,17 +1255,17 @@ impl DownloadService {
                 frame
             };
             let observer = me.clone();
-            tokio::spawn(async move { observer.persist_transfer_observation(JobKey::rom(rom_id), total).await });
+            tokio::spawn(async move { observer.persist_transfer_observation(key, total).await });
             me.emit("download_progress", frame);
         })
     }
 
-    fn meta_hook(self: &Arc<Self>, rom_id: i64) -> Box<dyn FnOnce(bool) + Send> {
+    fn meta_hook(self: &Arc<Self>, key: JobKey) -> Box<dyn FnOnce(bool) + Send> {
         let me = self.clone();
         Box::new(move |range_supported| {
             let frame = {
                 let mut st = me.st();
-                let Some(entry) = st.queue.get_mut(&JobKey::rom(rom_id)) else {
+                let Some(entry) = st.queue.get_mut(&key) else {
                     return;
                 };
                 entry.resumable = range_supported;
@@ -1103,7 +1279,7 @@ impl DownloadService {
 
     fn extract_hook(self: &Arc<Self>, plan: &Plan) -> Box<dyn FnMut(u64, u64) + Send> {
         let me = self.clone();
-        let rom_id = plan.rom_id;
+        let key = plan.key;
         let rom_name = plan.rom_name.clone();
         let (mut last_emit, mut last_log) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
         Box::new(move |extracted, total| {
@@ -1123,7 +1299,7 @@ impl DownloadService {
             last_emit = now;
             let frame = {
                 let mut st = me.st();
-                let Some(entry) = st.queue.get_mut(&JobKey::rom(rom_id)) else {
+                let Some(entry) = st.queue.get_mut(&key) else {
                     return;
                 };
                 entry.status = "extracting".into();
@@ -1142,7 +1318,7 @@ impl DownloadService {
     /// The full size of the transfer file: the persisted server total, else
     /// RomM's `fs_size_bytes` for a single file (unknown for a ZIP).
     async fn expected_transfer_total(&self, plan: &Plan) -> u64 {
-        if let Some(total) = self.load_job(JobKey::rom(plan.rom_id)).await.and_then(|j| j.total_bytes) {
+        if let Some(total) = self.load_job(plan.key).await.and_then(|j| j.total_bytes) {
             return total;
         }
         if plan.has_multiple {
@@ -1153,13 +1329,13 @@ impl DownloadService {
 
     /// Live phase changes (waiting for headers, retry back-off, bytes flowing)
     /// as queue frames, so the UI can show an honest waiting state.
-    fn phase_hook(self: &Arc<Self>, rom_id: i64) -> Box<dyn FnMut(TransferPhase) + Send> {
+    fn phase_hook(self: &Arc<Self>, key: JobKey) -> Box<dyn FnMut(TransferPhase) + Send> {
         let me = self.clone();
         Box::new(move |phase| {
             let now = me.clock.epoch_seconds();
             let frame = {
                 let mut st = me.st();
-                let Some(entry) = st.queue.get_mut(&JobKey::rom(rom_id)) else {
+                let Some(entry) = st.queue.get_mut(&key) else {
                     return;
                 };
                 match phase {
@@ -1191,14 +1367,14 @@ impl DownloadService {
     /// The transfer awaits this before it writes the first byte of that
     /// representation, so a crash can never leave bytes the row vouches for
     /// wrongly. A failed write is an error, not a log line.
-    fn identity_sink(self: &Arc<Self>, rom_id: i64) -> IdentitySink {
+    fn identity_sink(self: &Arc<Self>, key: JobKey) -> IdentitySink {
         let me = self.clone();
         Box::new(move |identity: Option<ArchiveIdentity>| {
             let me = me.clone();
             Box::pin(async move {
                 let now = me.clock.now_iso();
                 let _guard = me.job_lock.lock().await;
-                let Some(mut job) = me.jobs.get(JobKey::rom(rom_id)).await? else {
+                let Some(mut job) = me.jobs.get(key).await? else {
                     return Ok(());
                 };
                 job.record_archive_identity(identity.as_ref(), &now);
@@ -1213,9 +1389,9 @@ impl DownloadService {
     fn hooks(self: &Arc<Self>, plan: &Plan, control: &Control) -> TransferHooks {
         TransferHooks {
             progress: self.progress_hook(plan),
-            on_meta: Some(self.meta_hook(plan.rom_id)),
-            on_phase: self.phase_hook(plan.rom_id),
-            on_identity: plan.has_multiple.then(|| self.identity_sink(plan.rom_id)),
+            on_meta: Some(self.meta_hook(plan.key)),
+            on_phase: self.phase_hook(plan.key),
+            on_identity: plan.has_multiple.then(|| self.identity_sink(plan.key)),
             cancel: control.token.clone(),
         }
     }
@@ -1227,6 +1403,9 @@ impl DownloadService {
         if plan.has_multiple {
             return self.transfer_archive(plan, tmp_path, control).await;
         }
+        if plan.key.kind == JobKind::Firmware {
+            return self.transfer_firmware(plan, tmp_path, control, resume).await;
+        }
         let mut resume = resume;
         if resume {
             let expected = self.expected_transfer_total(plan).await;
@@ -1236,7 +1415,7 @@ impl DownloadService {
                     "Partial for ROM {} is already complete ({on_disk} bytes); skipping transfer",
                     plan.rom_id
                 );
-                self.update_entry(JobKey::rom(plan.rom_id), |e| {
+                self.update_entry(plan.key, |e| {
                     e.progress = ratio(on_disk, expected);
                     e.bytes_downloaded = on_disk;
                     e.total_bytes = expected;
@@ -1264,6 +1443,38 @@ impl DownloadService {
         Ok(false)
     }
 
+    /// One firmware file: continue the partial when the server honours `Range`, skip the transfer when the partial
+    /// is already complete, restart when it is longer than the file.
+    async fn transfer_firmware(self: &Arc<Self>, plan: &Plan, tmp_path: &str, control: &Control, resume: bool) -> anyhow::Result<bool> {
+        let target = plan.firmware.as_ref().ok_or_else(|| anyhow::anyhow!("a firmware plan without a target"))?;
+        let mut resume = resume;
+        if resume {
+            let on_disk = self.files.file_size(tmp_path).await;
+            if target.size > 0 && on_disk == target.size {
+                self.update_entry(plan.key, |e| {
+                    e.progress = 1.0;
+                    e.bytes_downloaded = on_disk;
+                    e.total_bytes = on_disk;
+                });
+                return Ok(true);
+            }
+            if target.size > 0 && on_disk > target.size {
+                self.remove_tmp_files(&[tmp_path.to_string()]).await;
+                resume = false;
+            }
+        }
+        self.firmware_api
+            .download_firmware_content(
+                target.firmware_id,
+                &target.file_name,
+                tmp_path,
+                TransferMode::Single { resume },
+                self.hooks(plan, control),
+            )
+            .await?;
+        Ok(false)
+    }
+
     /// A multipart ROM as RomM's cached ZIP. The first request already asks for
     /// the cached archive (`Range: bytes=0-`); a partial is continued only
     /// against the strong validator saved with it, and a partial that predates
@@ -1276,7 +1487,7 @@ impl DownloadService {
     async fn transfer_archive(self: &Arc<Self>, plan: &Plan, tmp_path: &str, control: &Control) -> anyhow::Result<bool> {
         let mut restart = plan.restart;
         for pass in 0..2 {
-            let job = self.load_job(JobKey::rom(plan.rom_id)).await;
+            let job = self.load_job(plan.key).await;
             let partial = self.files.file_size(tmp_path).await;
             let identity = job.as_ref().and_then(DownloadJob::archive_identity);
             let needs_recovery = job.as_ref().is_some_and(|j| j.needs_recovery);
@@ -1304,7 +1515,7 @@ impl DownloadService {
             match self.files.verify_zip(tmp_path).await {
                 Ok(()) => {
                     let on_disk = self.files.file_size(tmp_path).await;
-                    self.update_entry(JobKey::rom(plan.rom_id), |e| {
+                    self.update_entry(plan.key, |e| {
                         e.progress = 1.0;
                         e.bytes_downloaded = on_disk;
                         e.total_bytes = on_disk;
@@ -1318,7 +1529,7 @@ impl DownloadService {
                     );
                     self.remove_tmp_files(&[tmp_path.to_string()]).await;
                     let now = self.clock.now_iso();
-                    self.mutate_job(JobKey::rom(plan.rom_id), |job| {
+                    self.mutate_job(plan.key, |job| {
                         job.record_archive_identity(None, &now);
                         Ok(())
                     })
@@ -1401,19 +1612,19 @@ impl DownloadService {
             plan.target_path
         );
         let slot_taken = self.st().active.is_some_and(|id| id != control.id);
-        if slot_taken && self.update_entry(JobKey::rom(plan.rom_id), |e| e.status = "queued".into()) {
-            self.emit_entry(JobKey::rom(plan.rom_id));
+        if slot_taken && self.update_entry(plan.key, |e| e.status = "queued".into()) {
+            self.emit_entry(plan.key);
         }
-        if !self.acquire_slot(JobKey::rom(plan.rom_id), control).await {
+        if !self.acquire_slot(plan.key, control).await {
             return Ended::Stopped;
         }
-        self.update_entry(JobKey::rom(plan.rom_id), |e| {
+        self.update_entry(plan.key, |e| {
             e.status = "downloading".into();
             e.reason = None;
             e.clear_phase();
         });
         let now = self.clock.now_iso();
-        self.mutate_job(JobKey::rom(plan.rom_id), |job| job.start(&now)).await;
+        self.mutate_job(plan.key, |job| job.start(&now)).await;
 
         let suffix = if plan.has_multiple { ZIP_TMP_EXT } else { TMP_EXT };
         let tmp = format!("{}{suffix}", plan.target_path);
@@ -1426,8 +1637,10 @@ impl DownloadService {
         // stop that raced a committed install is honoured as completed.
         let committed = if plan.has_multiple {
             let now = self.clock.now_iso();
-            self.mutate_job(JobKey::rom(plan.rom_id), |job| job.begin_extract(&now)).await;
+            self.mutate_job(plan.key, |job| job.begin_extract(&now)).await;
             self.post_download_multi(plan, skipped).await
+        } else if plan.key.kind == JobKind::Firmware {
+            self.post_download_firmware(plan, &tmp).await
         } else {
             self.post_download_single(plan).await
         };
@@ -1440,7 +1653,7 @@ impl DownloadService {
 
     async fn do_download(self: Arc<Self>, plan: Plan, control: Arc<Control>, resume: bool) {
         let ended = self.run_attempt(&plan, &control, resume).await;
-        let rom_id = plan.rom_id;
+        let key = plan.key;
         match ended {
             Ended::Committed(path) => {
                 if control.token.is_cancelled() {
@@ -1458,22 +1671,22 @@ impl DownloadService {
             }
             Ended::Stopped if control.paused.load(Ordering::SeqCst) => {
                 let now = self.clock.now_iso();
-                self.mutate_job(JobKey::rom(rom_id), |job| job.pause(&now)).await;
-                self.update_entry(JobKey::rom(rom_id), |e| {
+                self.mutate_job(key, |job| job.pause(&now)).await;
+                self.update_entry(key, |e| {
                     e.status = "paused".into();
                     e.reason = None;
                 });
-                self.emit_entry(JobKey::rom(rom_id));
+                self.emit_entry(key);
                 tracing::info!("Download paused: {}", plan.rom_name);
             }
             Ended::Stopped => {
-                self.update_entry(JobKey::rom(rom_id), |e| {
+                self.update_entry(key, |e| {
                     e.status = "cancelled".into();
                     e.reason = None;
                 });
-                self.drop_job(JobKey::rom(rom_id)).await;
+                self.drop_job(key).await;
                 self.cleanup_partial_download(&plan).await;
-                self.emit_entry(JobKey::rom(rom_id));
+                self.emit_entry(key);
                 tracing::info!("Download cancelled: {}", plan.rom_name);
             }
             Ended::Error(e) => match classify_download_failure(&e) {
@@ -1482,43 +1695,41 @@ impl DownloadService {
                     if why == INTERRUPT_NEEDS_RECOVERY {
                         // The partial stays untouched; it is no longer auto-resumed.
                         let now = self.clock.now_iso();
-                        self.mutate_job(JobKey::rom(rom_id), |job| {
+                        self.mutate_job(key, |job| {
                             job.flag_needs_recovery(&now);
                             Ok(())
                         })
                         .await;
                     }
-                    self.mark_interrupted(JobKey::rom(rom_id), why).await;
+                    self.mark_interrupted(key, why).await;
                 }
                 Outcome::Failed => {
                     let message = format!("{e:#}");
-                    self.update_entry(JobKey::rom(rom_id), |entry| {
+                    self.update_entry(key, |entry| {
                         entry.status = "failed".into();
                         entry.error = Some(message.clone());
                         entry.reason = None;
                     });
-                    self.drop_job(JobKey::rom(rom_id)).await;
+                    self.drop_job(key).await;
                     self.cleanup_partial_download(&plan).await;
                     tracing::error!("Download failed for {}: {e:#}", plan.rom_name);
-                    self.emit(
-                        "download_failed",
-                        json!({
-                            "rom_id": rom_id,
-                            "rom_name": plan.rom_name,
-                            "platform_name": plan.platform_name,
-                            "error_message": message,
-                        }),
-                    );
+                    let mut payload = json!({
+                        "rom_name": plan.rom_name,
+                        "platform_name": plan.platform_name,
+                        "error_message": message,
+                    });
+                    set_identity(&mut payload, key);
+                    self.emit("download_failed", payload);
                 }
             },
         }
         self.release_slot(control.id);
         let mut st = self.st();
         // A newer attempt may already own these registrations.
-        if st.attempts.get(&JobKey::rom(rom_id)).is_some_and(|a| Arc::ptr_eq(&a.control, &control)) {
-            st.attempts.remove(&JobKey::rom(rom_id));
-            st.in_progress.remove(&JobKey::rom(rom_id));
-            st.reserved.remove(&JobKey::rom(rom_id));
+        if st.attempts.get(&key).is_some_and(|a| Arc::ptr_eq(&a.control, &control)) {
+            st.attempts.remove(&key);
+            st.in_progress.remove(&key);
+            st.reserved.remove(&key);
         }
         st.prune();
     }
@@ -1527,6 +1738,14 @@ impl DownloadService {
     /// ROM, the extract folder this download created. Never the bare target:
     /// that would destroy a pre-existing install.
     async fn cleanup_partial_download(&self, plan: &Plan) {
+        if plan.key.kind == JobKind::Firmware {
+            // A firmware download only ever owns its `<dest>.tmp`; the destination may be the user's own file.
+            let tmp = format!("{}{TMP_EXT}", plan.target_path);
+            if let Err(e) = self.files.remove_file(&tmp).await {
+                tracing::warn!("Cleanup failed for {tmp}: {e}");
+            }
+            return;
+        }
         for suffix in [ZIP_TMP_EXT, TMP_EXT] {
             let path = format!("{}{suffix}", plan.target_path);
             if let Err(e) = self.files.remove_file(&path).await {
@@ -1544,10 +1763,15 @@ impl DownloadService {
     /// Mark the entry completed and emit `download_complete` with the bound
     /// shortcut's app id and the re-baked launch command.
     async fn finalize_download_complete(&self, plan: &Plan, final_path: &str) {
+        let key = plan.key;
+        if key.kind == JobKind::Firmware {
+            self.finalize_firmware_complete(plan, final_path).await;
+            return;
+        }
         let rom_id = plan.rom_id;
-        self.drop_job(JobKey::rom(rom_id)).await;
+        self.drop_job(key).await;
         let mut resumable = false;
-        self.update_entry(JobKey::rom(rom_id), |e| {
+        self.update_entry(key, |e| {
             e.status = "completed".into();
             e.progress = 1.0;
             e.reason = None;
@@ -1589,19 +1813,24 @@ impl DownloadService {
 
     /// Cancel a download: abort a live one, or discard a paused/interrupted one.
     pub fn cancel_download(self: &Arc<Self>, rom_id: i64) -> Value {
+        self.cancel_job(JobKey::rom(rom_id))
+    }
+
+    /// Cancel a download of any kind.
+    pub fn cancel_job(self: &Arc<Self>, key: JobKey) -> Value {
         let st = self.st();
-        if let Some(attempt) = st.attempts.get(&JobKey::rom(rom_id)) {
+        if let Some(attempt) = st.attempts.get(&key) {
             attempt.control.stop(&attempt.control.cancelled);
             return json!({"success": true, "message": "Download cancelled"});
         }
         let stopped = st
             .queue
-            .get(&JobKey::rom(rom_id))
+            .get(&key)
             .is_some_and(|e| e.status == "paused" || e.status == "interrupted");
         drop(st);
         if stopped {
             let me = self.clone();
-            tokio::spawn(async move { me.discard_resumable(JobKey::rom(rom_id), "cancelled", None).await });
+            tokio::spawn(async move { me.discard_resumable(key, "cancelled", None).await });
             return json!({"success": true, "message": "Download cancelled"});
         }
         failure("no_active_download", "No active download for this ROM")
@@ -1609,7 +1838,12 @@ impl DownloadService {
 
     /// Pause a live download, keeping the partial for resume.
     pub fn pause_download(&self, rom_id: i64) -> Value {
-        match self.st().attempts.get(&JobKey::rom(rom_id)) {
+        self.pause_job(JobKey::rom(rom_id))
+    }
+
+    /// Pause a live download of any kind.
+    pub fn pause_job(&self, key: JobKey) -> Value {
+        match self.st().attempts.get(&key) {
             Some(attempt) => {
                 attempt.control.stop(&attempt.control.paused);
                 json!({"success": true, "message": "Download paused"})

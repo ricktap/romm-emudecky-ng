@@ -26,6 +26,7 @@ import { formatBytes } from "../utils/formatters";
 import { getSyncProgress, setSyncProgress as setStoredSyncProgress, onSyncProgressChange } from "../utils/syncProgress";
 import { scrollToTop } from "../utils/scrollHelpers";
 import { getDownloadState } from "../utils/downloadStore";
+import { downloadKey } from "../utils/downloadKey";
 import { isUnfinishedStatus, interruptedLabel } from "../utils/downloadStatus";
 import { getSettingsResetState, onSettingsResetChange } from "../utils/settingsResetStore";
 import { getPlaytimeScopeState, onPlaytimeScopeChange, fetchPlaytimeScopeState } from "../utils/playtimeScopeStore";
@@ -726,7 +727,7 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
       {hasDownloads && (
         <PanelSection title="Downloads">
           {activeDownloads.slice(0, 2).map((item) => (
-            <PanelSectionRow key={item.rom_id}>
+            <PanelSectionRow key={downloadKey(item)}>
               {/* Own the caption row and use the bare ProgressBar — ProgressBarWithInfo
                   is a Steam Field (label column | bar column) that shoves the bar and
                   text into the right half and clips them (same fix as #751). */}

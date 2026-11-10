@@ -12,6 +12,7 @@
  */
 
 import type { DownloadFailedEvent, DownloadItem } from "../types";
+import { downloadKey } from "./downloadKey";
 
 export interface ToasterLike {
   toast: (msg: { title: string; body: string }) => void;
@@ -33,9 +34,11 @@ export function handleGlobalDownloadFailure(
   store: DownloadStoreLike,
   toast: ToasterLike,
 ): void {
-  const prev = store.getDownloadState().find((d) => d.rom_id === event.rom_id);
+  const key = downloadKey(event);
+  const prev = store.getDownloadState().find((d) => downloadKey(d) === key);
   store.updateDownload({
-    rom_id: event.rom_id,
+    ...(event.kind === "firmware" ? { kind: "firmware" as const, firmware_id: event.firmware_id as number } : {}),
+    rom_id: event.rom_id ?? 0,
     rom_name: event.rom_name,
     platform_name: event.platform_name,
     file_name: prev?.file_name ?? "",

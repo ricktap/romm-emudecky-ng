@@ -13,13 +13,15 @@
 export type DownloadStatus =
   "queued" | "downloading" | "extracting" | "completed" | "failed" | "cancelled" | "paused" | "interrupted";
 
-/** What a queued download is. ROM frames carry `rom_id`; firmware frames will carry `firmware_id` (0.45.0). */
+/** What a queued download is. ROM frames carry `rom_id`; firmware frames carry `firmware_id`. */
 export type DownloadKind = "rom" | "firmware";
 
 export interface DownloadItem {
   /** Absent on frames from before kinds existed: a ROM. */
   kind?: DownloadKind;
+  /** The ROM id; `0` for a firmware download, which is identified by `firmware_id` (use `downloadKey`). */
   rom_id: number;
+  firmware_id?: number;
   rom_name: string;
   platform_name: string;
   file_name: string;
@@ -59,7 +61,9 @@ export type DownloadPhase = "waiting" | "retrying";
 
 export interface DownloadProgressEvent {
   kind?: DownloadKind;
-  rom_id: number;
+  /** Absent on firmware frames. */
+  rom_id?: number;
+  firmware_id?: number;
   rom_name: string;
   platform_name: string;
   file_name: string;
@@ -80,7 +84,10 @@ export interface DownloadProgressEvent {
 }
 
 export interface DownloadCompleteEvent {
-  rom_id: number;
+  kind?: DownloadKind;
+  /** Absent for firmware. */
+  rom_id?: number;
+  firmware_id?: number;
   rom_name: string;
   platform_name: string;
   file_path: string;
@@ -104,7 +111,10 @@ export interface DownloadCompleteEvent {
 }
 
 export interface DownloadFailedEvent {
-  rom_id: number;
+  kind?: DownloadKind;
+  /** Absent for firmware. */
+  rom_id?: number;
+  firmware_id?: number;
   rom_name: string;
   platform_name: string;
   error_message: string;

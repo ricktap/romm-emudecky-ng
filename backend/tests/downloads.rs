@@ -306,14 +306,15 @@ async fn rom_frames_and_queue_rows_carry_their_kind_and_the_download_callables_t
     romm.release.notify_waiters();
     b.wait_event("download_progress", |p| p["rom_id"] == 7 && p["status"] == "paused").await;
 
-    // Firmware has no handler yet: every download callable says so instead of touching a ROM with the same id.
-    for call in ["start_download", "resume_download", "cancel_download", "pause_download"] {
-        let r = b.call(call, json!([7, "firmware"])).await;
-        assert_eq!(r["success"], false, "{call}");
-        assert_eq!(r["reason"], "unsupported_kind", "{call}");
-    }
+    // The same id as a *firmware* download is a different job: RomM lists no firmware 7 here, so each call
+    // answers for the firmware (nothing to download / nothing to pause) and the ROM download is not disturbed.
+    let r = b.call("start_download", json!([7, "firmware"])).await;
+    assert_eq!((r["success"].clone(), r["reason"].clone()), (json!(false), json!("nothing_to_download")));
+    assert_eq!(b.call("resume_download", json!([7, "firmware"])).await["reason"], "not_paused");
+    assert_eq!(b.call("cancel_download", json!([7, "firmware"])).await["reason"], "no_active_download");
+    assert_eq!(b.call("pause_download", json!([7, "firmware"])).await["reason"], "no_active_download");
     let still = queue_entry(&b.call("get_download_queue", json!([])).await, 7);
-    assert_eq!(still["status"], "paused", "the firmware request did not disturb the ROM download");
+    assert_eq!(still["status"], "paused", "the firmware requests did not disturb the ROM download");
 
     // Bad kind and bad arity are protocol errors.
     let bad = b.request("start_download", json!([7, "save"])).await;
