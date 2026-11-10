@@ -1,4 +1,5 @@
 [
+  "accept_emudeck_storage_path",
   "apply_sgdb_game_id",
   "apply_steam_input_setting",
   "cancel_download",
@@ -32,6 +33,7 @@
   "get_collections",
   "get_disc_selection",
   "get_download_queue",
+  "get_emudeck_health",
   "get_firmware_status",
   "get_installed_relaunch_options",
   "get_installed_rom",

@@ -140,6 +140,49 @@ describe("SystemPage — the table", () => {
   });
 });
 
+describe("SystemPage — moved storage location", () => {
+  const moved = { health: "ok", ok: true, message: "", storage_path: "/new/card", moved: true, accepted_path: "/old/card", installed: 4, missing: 3 };
+  beforeEach(() => {
+    vi.mocked(backend.getEmudeckHealth).mockReset();
+    vi.mocked(backend.acceptEmudeckStoragePath).mockReset();
+  });
+
+  it("shows nothing when the location did not move", async () => {
+    vi.mocked(backend.getEmudeckHealth).mockResolvedValue({ health: "ok", ok: true, message: "", storage_path: "/sd" });
+    expect((await renderPage(status())).queryByTestId("storage-moved")).toBeNull();
+  });
+
+  it("names the old and new location, says nothing was moved, and what was not found", async () => {
+    vi.mocked(backend.getEmudeckHealth).mockResolvedValue(moved as never);
+    const { getByTestId } = await renderPage(status());
+    const card = getByTestId("storage-moved").textContent!;
+    expect(card).toContain("/old/card");
+    expect(card).toContain("/new/card");
+    expect(card).toContain("3 of 4 installed games were not found");
+    expect(card).toContain("Nothing was moved or deleted");
+  });
+
+  it("Use this location accepts it and the card goes away", async () => {
+    vi.mocked(backend.getEmudeckHealth).mockResolvedValueOnce(moved as never);
+    vi.mocked(backend.acceptEmudeckStoragePath).mockResolvedValue({ success: true, message: "Using the new EmuDeck location" });
+    const { getByTestId, queryByTestId } = await renderPage(status());
+    vi.mocked(backend.getEmudeckHealth).mockResolvedValue({ health: "ok", ok: true, message: "", storage_path: "/new/card", moved: false });
+    await press(getByTestId("accept-storage"));
+    expect(backend.acceptEmudeckStoragePath).toHaveBeenCalledTimes(1);
+    expect(getByTestId("systems-note").textContent).toBe("Using the new EmuDeck location");
+    expect(queryByTestId("storage-moved")).toBeNull();
+  });
+
+  it("a failed accept says so and keeps the card", async () => {
+    vi.mocked(backend.getEmudeckHealth).mockResolvedValue(moved as never);
+    vi.mocked(backend.acceptEmudeckStoragePath).mockRejectedValue(new Error("x"));
+    const { getByTestId } = await renderPage(status());
+    await press(getByTestId("accept-storage"));
+    expect(getByTestId("systems-note").textContent).toBe("Could not save the location");
+    expect(getByTestId("storage-moved")).toBeTruthy();
+  });
+});
+
 describe("SystemPage — Switch firmware and keys", () => {
   beforeEach(() => {
     vi.mocked(backend.downloadRequiredFirmware).mockReset();

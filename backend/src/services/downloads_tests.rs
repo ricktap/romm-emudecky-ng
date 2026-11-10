@@ -475,6 +475,32 @@ async fn three_roms(env: &DownloadEnv) {
 }
 
 #[tokio::test]
+async fn nothing_is_started_or_written_while_emudeck_storage_is_unavailable() {
+    use crate::domain::emudeck_health::EmuDeckHealth;
+    let env = DownloadEnv::new().await;
+    three_roms(&env).await;
+    for health in [EmuDeckHealth::RootMissing, EmuDeckHealth::Absent, EmuDeckHealth::Unreadable, EmuDeckHealth::Invalid] {
+        *env.health.lock().unwrap() = health;
+        let r = env.svc.start_download(1).await;
+        assert_eq!(r["success"], false, "{health:?}");
+        assert_eq!(r["reason"], "emudeck_unavailable", "{health:?}");
+        assert_eq!(r["message"], health.message());
+        let fw = env.svc.start_firmware_download(5).await;
+        assert_eq!(fw["reason"], "emudeck_unavailable");
+    }
+    assert!(env.romm.calls().is_empty(), "no transfer was attempted");
+    assert!(env.romm.get_rom_calls.lock().unwrap().is_empty(), "RomM was not even asked");
+    assert!(env.jobs.all().await.unwrap().is_empty(), "no job was queued");
+    assert_eq!(env.svc.emudeck_health()["health"], "invalid");
+
+    // The card is back: the same download goes through.
+    *env.health.lock().unwrap() = EmuDeckHealth::Ok;
+    assert_eq!(env.svc.start_download(1).await["success"], true);
+    env.wait_status(1, "completed").await;
+    assert_eq!(env.svc.emudeck_health()["ok"], true);
+}
+
+#[tokio::test]
 async fn one_transfer_at_a_time_in_position_order_with_move_to_front() {
     let env = DownloadEnv::new().await;
     three_roms(&env).await;

@@ -361,6 +361,10 @@ pub trait DownloadFiles: Send + Sync {
 pub trait EmuDeckPaths: Send + Sync {
     fn roms_path(&self) -> String;
     fn bios_path(&self) -> String;
+    /// Whether the roots above can be trusted right now. Nothing is written under them unless this is `Ok`.
+    fn health(&self) -> crate::domain::emudeck_health::EmuDeckHealth;
+    /// The `storagePath` EmuDeck's settings name (the parent of `Emulation/`), when it could be read.
+    fn storage_path(&self) -> Option<String>;
 }
 
 /// RomM platform slug → ROM folder / system name.

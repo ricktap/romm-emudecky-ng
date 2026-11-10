@@ -3,6 +3,9 @@
 pub mod adoption;
 pub mod connection;
 pub mod downloads;
+pub mod emudeck_location;
+#[cfg(test)]
+mod emudeck_location_tests;
 pub mod firmware;
 pub mod saves;
 pub mod launch;

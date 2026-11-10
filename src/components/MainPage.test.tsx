@@ -332,6 +332,40 @@ describe("MainPage", () => {
       expect(titles).not.toContain("Needs attention");
     });
 
+    it("puts EmuDeck's storage problem first, in words, and opens the Systems tab", async () => {
+      vi.mocked(backend.getEmudeckHealth).mockResolvedValue({
+        health: "root_missing",
+        ok: false,
+        message: "EmuDeck's storage is not available. Insert the SD card or mount the drive.",
+        storage_path: "/run/media/sd",
+      });
+      const { container, getAllByTestId } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      const rows = getAllByTestId("attention-row");
+      expect(rows[0]!.textContent).toContain("EmuDeck storage not available");
+      expect(rows[0]!.textContent).toContain("Insert the SD card");
+      expect(container.textContent).toContain("Needs attention");
+      fireEvent.click(rows[0]!);
+      expect(Navigation.Navigate).toHaveBeenCalledWith("/romm-library");
+    });
+
+    it("a moved storage location is its own row with the number of games not found", async () => {
+      vi.mocked(backend.getEmudeckHealth).mockResolvedValue({
+        health: "ok", ok: true, message: "", storage_path: "/new", moved: true, accepted_path: "/old", installed: 4, missing: 3,
+      });
+      const { getByTestId } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      expect(getByTestId("attention-row").textContent).toContain("EmuDeck storage moved");
+      expect(getByTestId("attention-row").textContent).toContain("3 of 4 installed games were not found");
+    });
+
+    it("shows no EmuDeck row while EmuDeck is healthy", async () => {
+      vi.mocked(backend.getEmudeckHealth).mockResolvedValue({ health: "ok", ok: true, message: "", storage_path: "/sd" });
+      const { queryByTestId } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      expect(queryByTestId("attention-row")).toBeNull();
+    });
+
     it("lists a missing required Switch key and opens the Systems tab on click", async () => {
       vi.mocked(backend.getFirmwareStatus).mockResolvedValue({
         success: true,
