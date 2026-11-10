@@ -145,6 +145,53 @@ pub fn choose_user_profile(folders: &[String], configured: Option<&str>) -> Prof
     }
 }
 
+/// One entry of Eden's/yuzu's `profiles.dat`: the profile folder name and the name the emulator shows for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileInfo {
+    /// The 32-hex folder name under `nand/user/save/0000000000000000/`.
+    pub id: String,
+    pub name: String,
+}
+
+const PROFILES_HEADER: usize = 0x10;
+const PROFILE_RECORD: usize = 0xC8;
+const PROFILE_SLOTS: usize = 8;
+const PROFILE_NAME_AT: usize = 0x28;
+const PROFILE_NAME_LEN: usize = 0x20;
+
+/// The profiles in `profiles.dat` (`nand/system/save/8000000000000010/su/avators/profiles.dat`): a 16-byte header and 8
+/// records of 200 bytes. A record holds the user UUID twice (16 bytes each), a timestamp and a 32-byte name; the folder name
+/// is the UUID with all 16 bytes **reversed**, in upper-case hex (verified against the real save folder on a Deck). Empty
+/// slots (an all-zero UUID) are skipped; a file of any other size is not trusted.
+pub fn parse_profiles_dat(bytes: &[u8]) -> Option<Vec<ProfileInfo>> {
+    if bytes.len() != PROFILES_HEADER + PROFILE_SLOTS * PROFILE_RECORD {
+        return None;
+    }
+    let mut out = Vec::new();
+    for slot in 0..PROFILE_SLOTS {
+        let record = &bytes[PROFILES_HEADER + slot * PROFILE_RECORD..][..PROFILE_RECORD];
+        let uuid = &record[..16];
+        if uuid.iter().all(|b| *b == 0) {
+            continue;
+        }
+        let id: String = uuid.iter().rev().map(|b| format!("{b:02X}")).collect();
+        let raw = &record[PROFILE_NAME_AT..PROFILE_NAME_AT + PROFILE_NAME_LEN];
+        let end = raw.iter().position(|b| *b == 0).unwrap_or(raw.len());
+        let name = String::from_utf8_lossy(&raw[..end]).trim().to_string();
+        out.push(ProfileInfo { id, name });
+    }
+    Some(out)
+}
+
+/// The shown name of a profile folder, or the folder name itself when `profiles.dat` does not know it.
+pub fn profile_label(profiles: &[ProfileInfo], folder: &str) -> String {
+    profiles
+        .iter()
+        .find(|p| p.id.eq_ignore_ascii_case(folder))
+        .filter(|p| !p.name.is_empty())
+        .map_or_else(|| folder.to_string(), |p| p.name.clone())
+}
+
 /// What a title's save folder looked like at one moment: enough to see that anything changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FolderStamp {
@@ -288,5 +335,38 @@ mod tests {
         let before = BTreeMap::from([(b, stamp(1, 5, 7))]);
         let after = BTreeMap::from([(a, stamp(1, 1, 1))]);
         assert_eq!(changed_titles(&before, &after), vec![a]);
+    }
+
+    fn profiles_dat_with(uuid: [u8; 16], name: &str) -> Vec<u8> {
+        let mut bytes = vec![0u8; 0x10 + 8 * 0xC8];
+        let rec = &mut bytes[0x10..0x10 + 0xC8];
+        rec[..16].copy_from_slice(&uuid);
+        rec[16..32].copy_from_slice(&uuid);
+        rec[0x28..0x28 + name.len()].copy_from_slice(name.as_bytes());
+        bytes
+    }
+
+    const DECK_UUID: [u8; 16] = [0x3c, 0xdb, 0xbc, 0xa0, 0xd7, 0xa9, 0x56, 0x17, 0x57, 0x40, 0x46, 0x5b, 0x30, 0xcc, 0xbd, 0x7e];
+
+    #[test]
+    fn profiles_dat_gives_the_folder_name_by_reversing_the_uuid_bytes_and_the_shown_name() {
+        // The record of the real Deck (hex dump in ADR-0023): the reversed bytes are the save folder name.
+        let profiles = parse_profiles_dat(&profiles_dat_with(DECK_UUID, "Eden")).unwrap();
+        assert_eq!(profiles, vec![ProfileInfo { id: "7EBDCC305B4640571756A9D7A0BCDB3C".into(), name: "Eden".into() }]);
+        assert_eq!(profile_label(&profiles, "7ebdcc305b4640571756a9d7a0bcdb3c"), "Eden");
+        assert_eq!(profile_label(&profiles, ZERO_PROFILE), ZERO_PROFILE, "an unknown folder keeps its folder name");
+    }
+
+    #[test]
+    fn profiles_dat_skips_empty_slots_and_distrusts_a_file_of_the_wrong_size() {
+        assert_eq!(parse_profiles_dat(&vec![0u8; 0x10 + 8 * 0xC8]), Some(vec![]));
+        assert_eq!(parse_profiles_dat(&[0u8; 1615]), None);
+        assert_eq!(parse_profiles_dat(&[]), None);
+    }
+
+    #[test]
+    fn a_profile_without_a_name_is_labelled_by_its_folder() {
+        let profiles = parse_profiles_dat(&profiles_dat_with(DECK_UUID, "")).unwrap();
+        assert_eq!(profile_label(&profiles, "7EBDCC305B4640571756A9D7A0BCDB3C"), "7EBDCC305B4640571756A9D7A0BCDB3C");
     }
 }

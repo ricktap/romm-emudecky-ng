@@ -171,7 +171,8 @@ come from the emulator config, the all-zero profile is part of a save, and Ryuji
    hold the user ID (`01 00 …`), byte 0x20 is `01` (account save). The numeric index is machine-specific and never generalised.
 3. **yuzu `nand_directory`** on the Deck: `/run/media/mmcblk0p1/Emulation/storage/yuzu/nand` (SD card), so saves are under
    `…/nand/user/save`, found through the config as designed.
-4. **Eden profile `7EBDCC30…`**: display name `Eden`, the only non-empty record in `profiles.dat` (slot 0), read from
+4. **Profile names** (`profiles.dat`, verified with a hex dump of the Deck's file): 16-byte header, 8 records of 200 bytes; a record holds the UUID twice, a timestamp and a 32-byte name; the save folder name is the UUID with **all 16 bytes reversed**, upper-case hex (`3cdbbca0…bd7e` → `7EBDCC305B4640571756A9D7A0BCDB3C`, name `Eden`). The plugin shows these names instead of the hex folders.
+   Eden profile `7EBDCC30…`: display name `Eden`, the only non-empty record in `profiles.dat` (slot 0), read from
    `<nand>/system/save/8000000000000010/su/avators/profiles.dat`. The single user profile is therefore chosen automatically; the all-zero
    folder keeps its role.
 5. Deck internal drive vs SD: the temp-directory-next-to-target rule keeps the rename atomic; no action needed.
