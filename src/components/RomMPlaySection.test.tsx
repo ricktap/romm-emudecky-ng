@@ -11,11 +11,13 @@
 // `beforeEach`) — Option A in the playbook.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { emitDeckyEvent } from "../test-utils/decky-api-mock";
 import { render, act, waitFor } from "@testing-library/react";
 import { createElement, type ComponentProps, type ReactElement } from "react";
 import { RomMPlaySection } from "./RomMPlaySection";
 import * as backend from "../api/backend";
-import { showContextMenu, showModal } from "@decky/ui";
+import { Navigation, showContextMenu, showModal } from "@decky/ui";
+import { getLibraryPlatformFilter } from "../utils/libraryRoute";
 import { toaster } from "@decky/api";
 import {
   installDomEventListenerSpy,
@@ -43,6 +45,14 @@ vi.mock("./VersionErrorCard", () => ({
 // ----- CustomPlayButton — capture props per render -----
 type CapturedPlayButton = ComponentProps<typeof CustomPlayButton>;
 const capturedPlayButton: CapturedPlayButton[] = [];
+// The readiness strip has its own tests; here it only proves it is wired with the loaded game's data.
+const capturedStrip: Record<string, unknown>[] = [];
+vi.mock("./ReadinessStrip", () => ({
+  ReadinessStrip: (props: Record<string, unknown>) => {
+    capturedStrip.push(props);
+    return createElement("div", { "data-testid": "readiness-strip" });
+  },
+}));
 vi.mock("./CustomPlayButton", () => ({
   CustomPlayButton: (props: CapturedPlayButton) => {
     capturedPlayButton.push(props);
@@ -193,6 +203,7 @@ vi.mock("@decky/ui", async () => {
     MenuSeparator: () => ce("hr", { "data-testid": "menu-separator" }),
     showContextMenu: vi.fn(),
     showModal: vi.fn(),
+    Navigation: { Navigate: vi.fn(), CloseSideMenus: vi.fn() },
   };
 });
 
@@ -250,6 +261,9 @@ describe("RomMPlaySection", () => {
     // neutral verdict and no version error leaks across tests (#1345).
     connectionState.setRommConnectionState("checking");
     connectionState.setVersionError(null);
+
+    // The ROM is installed by default: the Remove group of the RomM menu only exists for an installed ROM.
+    vi.mocked(backend.getInstalledRom).mockResolvedValue({ rom_id: 42, file_name: "game.sfc" } as never);
 
     // resetAllMocks wipes module-mock impls — re-stub below.
     // Default sibling-hook stubs — no version error.
@@ -406,6 +420,41 @@ describe("RomMPlaySection", () => {
       render(<RomMPlaySection appId={testAppId} />);
       await flushAsync();
       expect(sectionRefresh.refreshActiveSlotInBackground).not.toHaveBeenCalled();
+    });
+
+    it("Show in RomM Library opens the library narrowed to the game's platform", async () => {
+      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({ found: true, rom_id: 77, platform_slug: "switch" });
+      render(<RomMPlaySection appId={testAppId} />);
+      await flushAsync();
+      const btn = document.querySelector('button[title="Show in RomM Library"]') as HTMLButtonElement;
+      act(() => btn.click());
+      expect(Navigation.Navigate).toHaveBeenCalledWith("/romm-library");
+      expect(getLibraryPlatformFilter()).toBe("switch");
+    });
+
+    it("has no Show in RomM Library button until the platform is known", async () => {
+      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({ found: false });
+      render(<RomMPlaySection appId={testAppId} />);
+      await flushAsync();
+      expect(document.querySelector('button[title="Show in RomM Library"]')).toBeNull();
+    });
+
+    it("shows the readiness strip once the game is known, fed with its rom id, platform and save state", async () => {
+      capturedStrip.length = 0;
+      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
+        found: true,
+        rom_id: 77,
+        rom_name: "Zelda",
+        platform_slug: "switch",
+        save_sync_enabled: true,
+        save_sync_display: { status: "conflict", label: "Conflict", last_sync_check_at: null },
+      });
+      const { queryByTestId } = render(<RomMPlaySection appId={testAppId} />);
+      expect(queryByTestId("readiness-strip")).toBeNull();
+      await flushAsync();
+      expect(queryByTestId("readiness-strip")).not.toBeNull();
+      const last = capturedStrip[capturedStrip.length - 1]!;
+      expect(last).toMatchObject({ romId: 77, platformSlug: "switch", saveSyncEnabled: true });
     });
 
     it("applies cached fields and dispatches active-slot/core background refreshes", async () => {
@@ -1903,6 +1952,25 @@ describe("RomMPlaySection", () => {
       return openRomMMenuAndGetItems(testAppId);
     }
 
+    // Uninstall asks first: the menu item opens a ConfirmModal and only its OK removes the ROM.
+    async function confirmUninstall(items: MenuItemElement[]) {
+      items[items.length - 1]!.props.onClick?.();
+      const props = lastShowModalProps<{ onOK?: () => void }>();
+      props?.onOK?.();
+      await Promise.resolve();
+    }
+
+    it("opens a ConfirmModal that says what is kept, and removes nothing until OK", async () => {
+      const items = await setupUninstallAction("Mario");
+      items[items.length - 1]!.props.onClick?.();
+      const props = lastShowModalProps<{ strTitle?: string; strDescription?: string }>();
+      expect(props?.strTitle).toBe("Uninstall ROM");
+      expect(props?.strDescription).toContain("Steam shortcut");
+      expect(props?.strDescription).toContain("playtime");
+      expect(props?.strDescription).toContain("saves on RomM");
+      expect(vi.mocked(backend.removeRom)).not.toHaveBeenCalled();
+    });
+
     it("happy path: dispatches romm_rom_uninstalled + toast", async () => {
       const items = await setupUninstallAction("Mario");
       vi.mocked(backend.removeRom).mockResolvedValue({
@@ -1920,8 +1988,7 @@ describe("RomMPlaySection", () => {
           // only, so it's index 5 (after delete-saves at 4).
           // Actually after dropping the separator from filtered MenuItems,
           // uninstall is the last one (index 5).
-          const uninstall = items[items.length - 1]!;
-          await uninstall.props.onClick?.();
+          await confirmUninstall(items);
         });
         expect(vi.mocked(backend.removeRom)).toHaveBeenCalledWith(42);
         const ev = listener.mock.calls[0]?.[0] as CustomEvent;
@@ -1940,7 +2007,7 @@ describe("RomMPlaySection", () => {
       });
       vi.mocked(toaster.toast).mockClear();
       await act(async () => {
-        await items[items.length - 1]!.props.onClick?.();
+        await confirmUninstall(items);
       });
       expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(expect.objectContaining({ body: "ROM uninstalled" }));
     });
@@ -1953,7 +2020,7 @@ describe("RomMPlaySection", () => {
       });
       vi.mocked(toaster.toast).mockClear();
       await act(async () => {
-        await items[items.length - 1]!.props.onClick?.();
+        await confirmUninstall(items);
       });
       expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(expect.objectContaining({ body: "locked" }));
     });
@@ -1966,7 +2033,7 @@ describe("RomMPlaySection", () => {
       });
       vi.mocked(toaster.toast).mockClear();
       await act(async () => {
-        await items[items.length - 1]!.props.onClick?.();
+        await confirmUninstall(items);
       });
       expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(expect.objectContaining({ body: "Uninstall failed" }));
     });
@@ -1976,7 +2043,7 @@ describe("RomMPlaySection", () => {
       vi.mocked(backend.removeRom).mockRejectedValue(new Error("io"));
       vi.mocked(toaster.toast).mockClear();
       await act(async () => {
-        await items[items.length - 1]!.props.onClick?.();
+        await confirmUninstall(items);
       });
       expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(expect.objectContaining({ body: "Uninstall failed" }));
     });
@@ -2505,7 +2572,7 @@ describe("RomMPlaySection", () => {
   // ------------------------------------------------------------------
 
   describe("context menus", () => {
-    it("showRomMMenu yields 5 MenuItems + 1 separator (Refresh artwork/metadata, sync saves + delete-saves + uninstall; no BIOS item)", async () => {
+    it("showRomMMenu groups Game / Saves / Remove: 6 MenuItems for an installed ROM (refresh artwork/metadata, sync saves, save history, delete saves, uninstall)", async () => {
       vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
         found: true,
         rom_id: 42,
@@ -2513,10 +2580,70 @@ describe("RomMPlaySection", () => {
       render(<RomMPlaySection appId={testAppId} />);
       await flushAsync();
       const items = await openRomMMenuAndGetItems(testAppId);
-      expect(items).toHaveLength(5);
+      expect(items).toHaveLength(6);
+      expect(items.map((i) => i.props.children)).toEqual([
+        "Refresh Artwork",
+        "Refresh Metadata",
+        "Sync Save Files",
+        "Save History",
+        "Delete Local Saves…",
+        "Uninstall ROM…",
+      ]);
       // tone="destructive" on the delete-saves + uninstall ones.
       const destructive = items.filter((i) => i.props.tone === "destructive");
       expect(destructive).toHaveLength(2);
+    });
+
+    it("showRomMMenu has no Remove group for a ROM that is not installed", async () => {
+      vi.mocked(backend.getInstalledRom).mockResolvedValue(null);
+      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({ found: true, rom_id: 42 });
+      render(<RomMPlaySection appId={testAppId} />);
+      await flushAsync();
+      const items = await openRomMMenuAndGetItems(testAppId);
+      expect(items.map((i) => i.props.children)).toEqual([
+        "Refresh Artwork",
+        "Refresh Metadata",
+        "Sync Save Files",
+        "Save History",
+      ]);
+    });
+
+    it("Save History opens the SAVES tab", async () => {
+      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({ found: true, rom_id: 42 });
+      render(<RomMPlaySection appId={testAppId} />);
+      await flushAsync();
+      const items = await openRomMMenuAndGetItems(testAppId);
+      const seen: unknown[] = [];
+      const rec = (e: Event) => seen.push((e as CustomEvent).detail);
+      globalThis.addEventListener("romm_tab_switch", rec);
+      act(() => {
+        items[3]!.props.onClick?.();
+      });
+      globalThis.removeEventListener("romm_tab_switch", rec);
+      expect(seen).toEqual([{ tab: "saves" }]);
+    });
+
+    it("the Remove group appears when the ROM's download completes and goes when it is uninstalled", async () => {
+      vi.mocked(backend.getInstalledRom).mockResolvedValue(null);
+      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({ found: true, rom_id: 42 });
+      render(<RomMPlaySection appId={testAppId} />);
+      await flushAsync();
+      expect(await openRomMMenuAndGetItems(testAppId)).toHaveLength(4);
+      vi.mocked(backend.getInstalledRom).mockResolvedValue({ rom_id: 42, file_name: "g" } as never);
+      act(() => {
+        emitDeckyEvent("download_complete", { rom_id: 7 });
+      });
+      await flushAsync();
+      expect(await openRomMMenuAndGetItems(testAppId)).toHaveLength(4);
+      act(() => {
+        emitDeckyEvent("download_complete", { rom_id: 42 });
+      });
+      await flushAsync();
+      expect(await openRomMMenuAndGetItems(testAppId)).toHaveLength(6);
+      act(() => {
+        globalThis.dispatchEvent(new CustomEvent("romm_rom_uninstalled", { detail: { rom_id: 42 } }));
+      });
+      expect(await openRomMMenuAndGetItems(testAppId)).toHaveLength(4);
     });
 
     async function setupCoreMenuStructure(extractCore: ReturnType<typeof playSectionUtils.extractCoreInfo>) {

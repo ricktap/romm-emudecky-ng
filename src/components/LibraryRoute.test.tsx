@@ -10,7 +10,7 @@ vi.mock("./DownloadQueue", () => ({ DownloadQueue: ({ onBack }: { onBack: () => 
 
 import { getLibraryOverview } from "../api/backend";
 import { LibraryRoute } from "./LibraryRoute";
-import { LIBRARY_ROUTE, openLibraryRoute } from "../utils/libraryRoute";
+import { LIBRARY_ROUTE, openLibraryRoute, getLibraryPlatformFilter, setLibraryPlatformFilter } from "../utils/libraryRoute";
 
 const overview = {
   success: true,
@@ -31,6 +31,35 @@ describe("LibraryRoute", () => {
     render(<LibraryRoute />);
     expect(await screen.findByText("2 games, 1 installed")).toBeTruthy();
     expect(screen.getByText("switch: 2 games, 1 installed")).toBeTruthy();
+  });
+
+  it("narrows the Library tab to one platform when opened from a game page, and Show all clears it", async () => {
+    vi.mocked(getLibraryOverview).mockResolvedValue({
+      success: true,
+      roms: [
+        { rom_id: 1, app_id: 10, name: "A", platform_slug: "switch", cover_path: null, installed: true, download: null, issues: [] },
+        { rom_id: 2, app_id: 11, name: "B", platform_slug: "snes", cover_path: null, installed: false, download: null, issues: [] },
+      ],
+      platforms: [
+        { platform_slug: "switch", count: 1, installed: 1 },
+        { platform_slug: "snes", count: 1, installed: 0 },
+      ],
+    } as never);
+    openLibraryRoute("library", { platform: "snes" });
+    const { findByTestId, getByText, queryByText, queryByTestId } = render(<LibraryRoute />);
+    expect((await findByTestId("library-filter")).textContent).toBe("Showing snes only");
+    expect(getByText("1 games, 0 installed")).toBeTruthy();
+    expect(queryByText("switch: 1 games, 1 installed")).toBeNull();
+    fireEvent.click(getByText("Show all"));
+    expect(queryByTestId("library-filter")).toBeNull();
+    expect(getByText("2 games, 1 installed")).toBeTruthy();
+    expect(getLibraryPlatformFilter()).toBeNull();
+  });
+
+  it("opening the library without a platform clears an earlier filter", () => {
+    setLibraryPlatformFilter("snes");
+    openLibraryRoute("library");
+    expect(getLibraryPlatformFilter()).toBeNull();
   });
 
   it("shows the failure message when the overview cannot be loaded", async () => {

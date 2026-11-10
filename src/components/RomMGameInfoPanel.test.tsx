@@ -11,7 +11,7 @@
 // any module-scope mock state isolated.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, act } from "@testing-library/react";
+import { render, act, fireEvent } from "@testing-library/react";
 import { createElement, type ComponentProps } from "react";
 import { RomMGameInfoPanel } from "./RomMGameInfoPanel";
 import * as backend from "../api/backend";
@@ -59,6 +59,14 @@ vi.mock("./SavesTab", () => ({
   SavesTab: (props: SavesTabProps) => {
     capturedSavesTab.push(props);
     return createElement("div", { "data-testid": "saves-tab" });
+  },
+}));
+
+const capturedBiosCoreTab: Record<string, unknown>[] = [];
+vi.mock("./BiosCoreTab", () => ({
+  BiosCoreTab: (props: Record<string, unknown>) => {
+    capturedBiosCoreTab.push(props);
+    return createElement("div", { "data-testid": "bios-core-tab" });
   },
 }));
 
@@ -933,6 +941,32 @@ describe("RomMGameInfoPanel", () => {
   // ------------------------------------------------------------------
 
   describe("tab switching + visibility", () => {
+    it("offers OVERVIEW and BIOS & CORE once the ROM is known; BIOS & CORE shows its tab with the ROM and platform", async () => {
+      capturedBiosCoreTab.length = 0;
+      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
+        found: true,
+        rom_id: 55,
+        platform_slug: "switch",
+        metadata: makeMetadata(),
+        stale_fields: [],
+      });
+      const { container, getByText, queryByTestId } = render(<RomMGameInfoPanel appId={testAppId} />);
+      await flushAsync();
+      expect(container.textContent).toContain("OVERVIEW");
+      expect(container.textContent).not.toContain("GAME INFO");
+      expect(queryByTestId("bios-core-tab")).toBeNull();
+      fireEvent.click(getByText("BIOS & CORE"));
+      expect(queryByTestId("bios-core-tab")).not.toBeNull();
+      expect(capturedBiosCoreTab[capturedBiosCoreTab.length - 1]).toMatchObject({ appId: testAppId, romId: 55, platformSlug: "switch" });
+    });
+
+    it("has no BIOS & CORE tab while the game is unknown", async () => {
+      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({ found: false });
+      const { container } = render(<RomMGameInfoPanel appId={testAppId} />);
+      await flushAsync();
+      expect(container.textContent).not.toContain("BIOS & CORE");
+    });
+
     it("default activeTab is 'info' — only GAME INFO content renders", async () => {
       vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
         found: true,
