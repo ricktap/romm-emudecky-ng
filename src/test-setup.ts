@@ -110,7 +110,8 @@ vi.mock("@decky/ui", () => {
       children,
       style,
       onButtonDown,
-    }: AnyProps & { style?: unknown; onButtonDown?: (evt: unknown) => void }) =>
+      onCancel,
+    }: AnyProps & { style?: unknown; onButtonDown?: (evt: unknown) => void; onCancel?: (evt: unknown) => void }) =>
       createElement(
         "div",
         {
@@ -120,6 +121,14 @@ vi.mock("@decky/ui", () => {
             if (!el) return;
             const prev = (el as unknown as { _deckyButtonDown?: EventListener })._deckyButtonDown;
             if (prev) el.removeEventListener("decky-button-down", prev);
+            const prevCancel = (el as unknown as { _deckyCancel?: EventListener })._deckyCancel;
+            if (prevCancel) el.removeEventListener("decky-cancel", prevCancel);
+            if (onCancel) {
+              // onCancel is forwarded as a "decky-cancel" DOM listener: fireEvent(el, new CustomEvent("decky-cancel")).
+              const cancelListener = ((e: Event) => onCancel(e)) as EventListener;
+              (el as unknown as { _deckyCancel?: EventListener })._deckyCancel = cancelListener;
+              el.addEventListener("decky-cancel", cancelListener);
+            }
             if (!onButtonDown) return;
             const listener = ((e: Event) => onButtonDown(e)) as EventListener;
             (el as unknown as { _deckyButtonDown?: EventListener })._deckyButtonDown = listener;
