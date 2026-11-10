@@ -1,12 +1,62 @@
-//! DownloadJob — one ROM download that has not finished yet.
+//! DownloadJob — one download (a ROM or a firmware file) that has not finished yet.
 //!
-//! The durable half of the download queue: a row exists exactly while a ROM's
+//! The durable half of the download queue: a row exists exactly while a
 //! download is queued, transferring, extracting, paused by the user, or
 //! interrupted by a transient failure. Finished downloads (completed,
 //! cancelled, failed) have no job. The partial transfer file at `tmp_path` is
 //! the progress record; the job only changes on status transitions.
 
 use crate::domain::archive_transfer::{ArchiveIdentity, is_strong_etag};
+
+/// What a queued download is. A job is identified by [`JobKey`] — `(kind, id)` —
+/// because a ROM id and a firmware id are different number spaces.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum JobKind {
+    #[default]
+    Rom,
+    Firmware,
+}
+
+impl JobKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Rom => "rom",
+            Self::Firmware => "firmware",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "rom" => Some(Self::Rom),
+            "firmware" => Some(Self::Firmware),
+            _ => None,
+        }
+    }
+}
+
+/// The identity of one download: its kind and the id within that kind (a RomM
+/// `rom_id` or `firmware_id`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct JobKey {
+    pub kind: JobKind,
+    pub id: i64,
+}
+
+impl JobKey {
+    pub fn rom(id: i64) -> Self {
+        Self { kind: JobKind::Rom, id }
+    }
+
+    pub fn firmware(id: i64) -> Self {
+        Self { kind: JobKind::Firmware, id }
+    }
+}
+
+impl std::fmt::Display for JobKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}", self.kind.as_str(), self.id)
+    }
+}
 
 /// Why a job is `interrupted`.
 pub const INTERRUPT_SERVER_UNREACHABLE: &str = "server_unreachable";
@@ -68,7 +118,9 @@ pub enum JobError {
 /// What [`DownloadJob::enqueue`] needs.
 #[derive(Debug, Clone)]
 pub struct NewJob {
-    pub rom_id: i64,
+    pub kind: JobKind,
+    /// The RomM id within `kind`.
+    pub item_id: i64,
     pub rom_name: String,
     pub platform_name: String,
     pub file_name: String,
@@ -79,10 +131,11 @@ pub struct NewJob {
     pub total_bytes: Option<u64>,
 }
 
-/// One unfinished ROM download, keyed by `rom_id`, ordered by `position`.
+/// One unfinished download, keyed by `(kind, item_id)`, ordered by `position`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DownloadJob {
-    pub rom_id: i64,
+    pub kind: JobKind,
+    pub item_id: i64,
     pub rom_name: String,
     pub platform_name: String,
     pub file_name: String,
@@ -110,8 +163,8 @@ pub struct DownloadJob {
 impl DownloadJob {
     /// Register a new download waiting for its turn at `position`.
     pub fn enqueue(new: NewJob, now: &str) -> Result<Self, JobError> {
-        if new.rom_id <= 0 {
-            return Err(JobError::Invalid(format!("rom_id must be positive, got {}", new.rom_id)));
+        if new.item_id <= 0 {
+            return Err(JobError::Invalid(format!("item_id must be positive, got {}", new.item_id)));
         }
         if new.target_path.is_empty() || new.tmp_path.is_empty() {
             return Err(JobError::Invalid("target_path and tmp_path are required".into()));
@@ -120,7 +173,8 @@ impl DownloadJob {
             return Err(JobError::Invalid("tmp_path must differ from target_path".into()));
         }
         Ok(Self {
-            rom_id: new.rom_id,
+            kind: new.kind,
+            item_id: new.item_id,
             rom_name: new.rom_name,
             platform_name: new.platform_name,
             file_name: new.file_name,
@@ -140,6 +194,10 @@ impl DownloadJob {
             cached_zip: false,
             needs_recovery: false,
         })
+    }
+
+    pub fn key(&self) -> JobKey {
+        JobKey { kind: self.kind, id: self.item_id }
     }
 
     /// The saved identity of the cached archive, when it is complete enough to
@@ -283,7 +341,8 @@ mod tests {
 
     fn new_job() -> NewJob {
         NewJob {
-            rom_id: 7,
+            kind: JobKind::Rom,
+            item_id: 7,
             rom_name: "Zelda".into(),
             platform_name: "Nintendo 64".into(),
             file_name: "zelda.z64".into(),
@@ -332,6 +391,22 @@ mod tests {
         assert_eq!(j.interrupt_reason, None);
         assert_eq!(j.range_supported, None);
         assert_eq!(j.total_bytes, Some(1024));
+    }
+
+    #[test]
+    fn a_job_is_identified_by_kind_and_id() {
+        let j = job();
+        assert_eq!(j.key(), JobKey::rom(7));
+        assert_ne!(JobKey::rom(7), JobKey::firmware(7), "a ROM id and a firmware id are different things");
+        assert_eq!(JobKey::firmware(3).to_string(), "firmware 3");
+        for kind in [JobKind::Rom, JobKind::Firmware] {
+            assert_eq!(JobKind::parse(kind.as_str()), Some(kind));
+        }
+        assert_eq!(JobKind::parse("save"), None);
+        assert_eq!(JobKind::default(), JobKind::Rom);
+        let mut n = new_job();
+        n.kind = JobKind::Firmware;
+        assert_eq!(DownloadJob::enqueue(n, T0).unwrap().key(), JobKey::firmware(7));
     }
 
     #[test]
@@ -384,8 +459,8 @@ mod tests {
         assert_eq!(DownloadJob::enqueue(n, T0).unwrap().total_bytes, None);
         for id in [0, -1] {
             let mut n = new_job();
-            n.rom_id = id;
-            assert!(DownloadJob::enqueue(n, T0).unwrap_err().to_string().contains("rom_id"));
+            n.item_id = id;
+            assert!(DownloadJob::enqueue(n, T0).unwrap_err().to_string().contains("item_id"));
         }
         let mut n = new_job();
         n.tmp_path = String::new();

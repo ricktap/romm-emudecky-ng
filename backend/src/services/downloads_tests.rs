@@ -26,7 +26,7 @@ fn target(env: &DownloadEnv, name: &str) -> String {
 }
 
 async fn job_row(env: &DownloadEnv, rom_id: i64) -> Option<DownloadJob> {
-    env.jobs.get(rom_id).await.unwrap()
+    env.jobs.get(JobKey::rom(rom_id)).await.unwrap()
 }
 
 #[tokio::test]
@@ -533,7 +533,8 @@ async fn pausing_active_starts_next_and_pausing_waiting_skips_it() {
 fn job(rom_id: i64, tmp: &str, status: JobStatus, position: i64, total: Option<u64>) -> DownloadJob {
     let mut j = DownloadJob::enqueue(
         NewJob {
-            rom_id,
+            kind: JobKind::Rom,
+            item_id: rom_id,
             rom_name: format!("Game {rom_id}"),
             platform_name: "Nintendo Switch".into(),
             file_name: "f".into(),
@@ -758,9 +759,10 @@ async fn queue_prunes_oldest_terminal_entries() {
         let mut st = env.svc.st();
         for id in 0..55 {
             st.queue.insert(
-                id,
+                JobKey::rom(id),
                 QueueEntry {
-                    rom_id: id,
+                    kind: JobKind::Rom,
+                    item_id: id,
                     rom_name: String::new(),
                     platform_name: String::new(),
                     file_name: String::new(),
@@ -777,7 +779,7 @@ async fn queue_prunes_oldest_terminal_entries() {
         }
         st.prune();
         assert_eq!(st.queue.len(), 51);
-        assert!(st.queue.contains_key(&0) && !st.queue.contains_key(&1) && st.queue.contains_key(&54));
+        assert!(st.queue.contains_key(&JobKey::rom(0)) && !st.queue.contains_key(&JobKey::rom(1)) && st.queue.contains_key(&JobKey::rom(54)));
     }
 }
 
@@ -827,9 +829,10 @@ async fn progress_is_throttled_but_the_final_tick_always_emits() {
     hook(1, 10); // no entry yet: nothing
     assert!(env.events.named("download_progress").is_empty());
     svc.st().queue.insert(
-        ROM,
+        JobKey::rom(ROM),
         QueueEntry {
-            rom_id: ROM,
+            kind: JobKind::Rom,
+            item_id: ROM,
             rom_name: "r".into(),
             platform_name: "p".into(),
             file_name: "f".into(),
@@ -859,7 +862,7 @@ async fn progress_is_throttled_but_the_final_tick_always_emits() {
     for _ in 0..20 {
         tokio::task::yield_now().await;
     }
-    assert!(svc.st().persisted_totals.contains(&ROM));
+    assert!(svc.st().persisted_totals.contains(&JobKey::rom(ROM)));
 }
 
 // ── Multipart archives (RomM's cached ZIP) ───────────────────────────────
@@ -1119,5 +1122,71 @@ mod archives {
         assert!(job_row(&env, 9).await.is_none());
         assert!(!std::path::Path::new(&tmp).exists());
         assert!(env.svc.active_download_rom_ids().is_empty(), "no worker keeps the destination");
+    }
+}
+
+// ── Job kinds ────────────────────────────────────────────────────────────
+
+mod kinds {
+    use super::*;
+
+    fn entry(kind: JobKind, id: i64, status: &str) -> QueueEntry {
+        QueueEntry {
+            kind,
+            item_id: id,
+            rom_name: "n".into(),
+            status: status.into(),
+            ..QueueEntry::default()
+        }
+    }
+
+    #[test]
+    fn a_rom_row_and_frame_carry_kind_and_rom_id_a_firmware_one_firmware_id() {
+        let rom = entry(JobKind::Rom, 7, "queued");
+        let fw = entry(JobKind::Firmware, 7, "queued");
+        for v in [rom.frame(), rom.row()] {
+            assert_eq!((v["kind"].clone(), v["rom_id"].clone()), (json!("rom"), json!(7)));
+            assert!(v.get("firmware_id").is_none());
+        }
+        for v in [fw.frame(), fw.row()] {
+            assert_eq!((v["kind"].clone(), v["firmware_id"].clone()), (json!("firmware"), json!(7)));
+            assert!(v.get("rom_id").is_none(), "a firmware id must never be read as a ROM id");
+        }
+        assert_eq!(rom.key(), JobKey::rom(7));
+        assert_eq!(fw.key(), JobKey::firmware(7));
+    }
+
+    #[tokio::test]
+    async fn the_same_id_in_two_kinds_is_two_independent_queue_entries() {
+        let env = DownloadEnv::new().await;
+        {
+            let mut st = env.svc.st();
+            st.queue.insert(JobKey::rom(7), entry(JobKind::Rom, 7, "downloading"));
+            st.queue.insert(JobKey::firmware(7), entry(JobKind::Firmware, 7, "paused"));
+            st.in_progress.insert(JobKey::firmware(7));
+        }
+        let rows = env.svc.get_download_queue();
+        let rows = rows["downloads"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(env.svc.update_entry(JobKey::firmware(7), |e| e.status = "interrupted".into()));
+        assert_eq!(env.svc.st().queue[&JobKey::rom(7)].status, "downloading", "the ROM entry is untouched");
+        // Only ROM downloads block version switches and uninstalls.
+        assert!(env.svc.active_download_rom_ids().is_empty());
+        env.svc.st().in_progress.insert(JobKey::rom(7));
+        assert_eq!(env.svc.active_download_rom_ids(), HashSet::from([7]));
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_rom_never_touches_a_firmware_job_with_the_same_id() {
+        let env = env_with_rom().await;
+        // A stopped firmware download with the same number as the ROM.
+        env.svc.st().queue.insert(JobKey::firmware(ROM), entry(JobKind::Firmware, ROM, "paused"));
+        *env.romm.stall_at.lock().unwrap() = Some(100);
+        env.svc.start_download(ROM).await;
+        env.romm.stalled.notified().await;
+        env.svc.cancel_download(ROM);
+        env.wait_status(ROM, "cancelled").await;
+        let st = env.svc.st();
+        assert_eq!(st.queue[&JobKey::firmware(ROM)].status, "paused");
     }
 }

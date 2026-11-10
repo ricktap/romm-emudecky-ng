@@ -31,7 +31,8 @@ fn place(env: &DownloadEnv, rel: &str, size: usize) -> String {
 async fn job_for(env: &DownloadEnv, rom_id: i64) {
     let job = DownloadJob::enqueue(
         NewJob {
-            rom_id,
+            kind: crate::domain::download_job::JobKind::Rom,
+            item_id: rom_id,
             rom_name: "x".into(),
             platform_name: "x".into(),
             file_name: "x".into(),

@@ -26,7 +26,7 @@ use crate::domain::archive_transfer::{ArchiveIdentity, ResumePlan, plan_resume};
 use crate::domain::download_failure::{ArchiveRecoveryNeeded, Outcome, TransferCancelled, classify_download_failure};
 use crate::domain::download_job::{
     DownloadJob, INTERRUPT_AUTH_FAILED, INTERRUPT_DISK_FULL, INTERRUPT_NEEDS_RECOVERY, INTERRUPT_SERVER_UNREACHABLE,
-    INTERRUPT_TIMEOUT, JobError, JobStatus, NewJob,
+    INTERRUPT_TIMEOUT, JobError, JobKey, JobKind, JobStatus, NewJob,
 };
 use crate::domain::errors::{failure, reason};
 use crate::domain::install_layout::resolve_download_names;
@@ -58,7 +58,12 @@ fn dirname(path: &str) -> &str {
 /// and the `download_progress` frames mirror.
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct QueueEntry {
-    pub rom_id: i64,
+    /// What this download is; with `item_id` it is the entry's identity. Both are written into
+    /// the frames by [`QueueEntry::identity`] (`rom_id` for a ROM, `firmware_id` for firmware).
+    #[serde(skip)]
+    pub kind: JobKind,
+    #[serde(skip)]
+    pub item_id: i64,
     pub rom_name: String,
     pub platform_name: String,
     pub file_name: String,
@@ -88,9 +93,25 @@ pub struct QueueEntry {
 }
 
 impl QueueEntry {
+    pub fn key(&self) -> JobKey {
+        JobKey { kind: self.kind, id: self.item_id }
+    }
+
+    /// The identity fields every frame and queue row carries: `kind`, plus the id under the name its
+    /// consumers already use (`rom_id` for a ROM; `firmware_id` for firmware).
+    fn identity(&self, v: &mut Value) {
+        set_identity(v, self.key());
+    }
+
+    /// The row `get_download_queue` returns.
+    fn row(&self) -> Value {
+        let mut v = serde_json::to_value(self).unwrap_or(Value::Null);
+        self.identity(&mut v);
+        v
+    }
+
     fn frame(&self) -> Value {
         let mut v = json!({
-            "rom_id": self.rom_id,
             "rom_name": self.rom_name,
             "platform_name": self.platform_name,
             "file_name": self.file_name,
@@ -100,6 +121,7 @@ impl QueueEntry {
             "total_bytes": self.total_bytes,
             "resumable": self.resumable,
         });
+        self.identity(&mut v);
         if let Some(reason) = self.reason.as_deref().filter(|r| !r.is_empty()) {
             v["reason"] = json!(reason);
         }
@@ -123,6 +145,16 @@ impl QueueEntry {
         self.attempt = None;
         self.max_attempts = None;
         self.retry_delay_s = None;
+    }
+}
+
+/// Write a job's identity into a frame: `kind`, plus the id under the name its consumers use
+/// (`rom_id` for a ROM, `firmware_id` for firmware).
+fn set_identity(v: &mut Value, key: JobKey) {
+    v["kind"] = json!(key.kind.as_str());
+    match key.kind {
+        JobKind::Rom => v["rom_id"] = json!(key.id),
+        JobKind::Firmware => v["firmware_id"] = json!(key.id),
     }
 }
 
@@ -164,30 +196,30 @@ struct Attempt {
 }
 
 struct Waiter {
-    rom_id: i64,
+    key: JobKey,
     control_id: u64,
     tx: oneshot::Sender<()>,
 }
 
 #[derive(Default)]
 struct State {
-    in_progress: HashSet<i64>,
-    queue: IndexMap<i64, QueueEntry>,
-    attempts: HashMap<i64, Attempt>,
+    in_progress: HashSet<JobKey>,
+    queue: IndexMap<JobKey, QueueEntry>,
+    attempts: HashMap<JobKey, Attempt>,
     /// Control id holding the single transfer slot.
     active: Option<u64>,
     waiters: Vec<Waiter>,
     /// Mirror of each persisted job's queue position (the scheduler never reads SQLite).
-    positions: HashMap<i64, i64>,
-    persisted_totals: HashSet<i64>,
-    reserved: HashMap<i64, u64>,
+    positions: HashMap<JobKey, i64>,
+    persisted_totals: HashSet<JobKey>,
+    reserved: HashMap<JobKey, u64>,
     auto_resume: Option<JoinHandle<()>>,
     next_control: u64,
 }
 
 impl State {
     fn prune(&mut self) {
-        let terminal: Vec<i64> = self
+        let terminal: Vec<JobKey> = self
             .queue
             .iter()
             .filter(|(_, e)| matches!(e.status.as_str(), "completed" | "failed" | "cancelled"))
@@ -283,15 +315,15 @@ impl DownloadService {
         self.events.emit(event, payload);
     }
 
-    fn emit_entry(&self, rom_id: i64) {
-        let frame = self.st().queue.get(&rom_id).map(QueueEntry::frame);
+    fn emit_entry(&self, key: JobKey) {
+        let frame = self.st().queue.get(&key).map(QueueEntry::frame);
         if let Some(frame) = frame {
             self.emit("download_progress", frame);
         }
     }
 
-    fn update_entry(&self, rom_id: i64, f: impl FnOnce(&mut QueueEntry)) -> bool {
-        match self.st().queue.get_mut(&rom_id) {
+    fn update_entry(&self, key: JobKey, f: impl FnOnce(&mut QueueEntry)) -> bool {
+        match self.st().queue.get_mut(&key) {
             Some(entry) => {
                 f(entry);
                 true
@@ -302,11 +334,11 @@ impl DownloadService {
 
     // ── Durable queue (download_jobs rows) ──────────────────────────────
 
-    async fn load_job(&self, rom_id: i64) -> Option<DownloadJob> {
-        match self.jobs.get(rom_id).await {
+    async fn load_job(&self, key: JobKey) -> Option<DownloadJob> {
+        match self.jobs.get(key).await {
             Ok(job) => job,
             Err(e) => {
-                tracing::warn!("Failed to read download job for ROM {rom_id}: {e:#}");
+                tracing::warn!("Failed to read download job for {key}: {e:#}");
                 None
             }
         }
@@ -317,38 +349,38 @@ impl DownloadService {
     /// persistence never breaks the transfer itself.
     async fn mutate_job(
         &self,
-        rom_id: i64,
+        key: JobKey,
         verb: impl FnOnce(&mut DownloadJob) -> Result<(), JobError>,
     ) -> Option<DownloadJob> {
         let _guard = self.job_lock.lock().await;
-        let mut job = match self.jobs.get(rom_id).await {
+        let mut job = match self.jobs.get(key).await {
             Ok(Some(job)) => job,
             Ok(None) => return None,
             Err(e) => {
-                tracing::warn!("Failed to persist download job for ROM {rom_id}: {e:#}");
+                tracing::warn!("Failed to persist download job for {key}: {e:#}");
                 return None;
             }
         };
         if let Err(e) = verb(&mut job) {
-            tracing::warn!("Download job {rom_id}: {e}");
+            tracing::warn!("Download job {key}: {e}");
             return None;
         }
         if let Err(e) = self.jobs.save(&job).await {
-            tracing::warn!("Failed to persist download job for ROM {rom_id}: {e:#}");
+            tracing::warn!("Failed to persist download job for {key}: {e:#}");
             return None;
         }
-        self.st().positions.insert(rom_id, job.position);
+        self.st().positions.insert(key, job.position);
         Some(job)
     }
 
     /// Persist the job as `queued`: a paused/interrupted row is requeued in
     /// place (resume never jumps the line), else it is appended.
     async fn enqueue_job(&self, new: NewJob) -> Option<DownloadJob> {
-        let rom_id = new.rom_id;
+        let key = JobKey { kind: new.kind, id: new.item_id };
         let now = self.clock.now_iso();
         let _guard = self.job_lock.lock().await;
         let result: anyhow::Result<DownloadJob> = async {
-            let existing = self.jobs.get(rom_id).await?;
+            let existing = self.jobs.get(key).await?;
             let job = match existing {
                 Some(mut job) if job.status.is_resumable() => {
                     job.requeue(&now)?;
@@ -368,40 +400,40 @@ impl DownloadService {
         .await;
         match result {
             Ok(job) => {
-                self.st().positions.insert(rom_id, job.position);
+                self.st().positions.insert(key, job.position);
                 Some(job)
             }
             Err(e) => {
-                tracing::warn!("Failed to persist queued download job for ROM {rom_id}: {e:#}");
+                tracing::warn!("Failed to persist queued download job for {key}: {e:#}");
                 None
             }
         }
     }
 
     /// Delete the job row (completed / cancelled / failed / evicted).
-    async fn drop_job(&self, rom_id: i64) {
+    async fn drop_job(&self, key: JobKey) {
         {
             let mut st = self.st();
-            st.positions.remove(&rom_id);
-            st.persisted_totals.remove(&rom_id);
+            st.positions.remove(&key);
+            st.persisted_totals.remove(&key);
         }
         let _guard = self.job_lock.lock().await;
-        if let Err(e) = self.jobs.delete(rom_id).await {
-            tracing::warn!("Failed to delete download job for ROM {rom_id}: {e:#}");
+        if let Err(e) = self.jobs.delete(key).await {
+            tracing::warn!("Failed to delete download job for {key}: {e:#}");
         }
     }
 
     /// Record the transfer's full size + Range verdict once per attempt.
-    async fn persist_transfer_observation(&self, rom_id: i64, total: u64) {
+    async fn persist_transfer_observation(&self, key: JobKey, total: u64) {
         let resumable = {
             let mut st = self.st();
-            if total == 0 || !st.persisted_totals.insert(rom_id) {
+            if total == 0 || !st.persisted_totals.insert(key) {
                 return;
             }
-            st.queue.get(&rom_id).map(|e| e.resumable)
+            st.queue.get(&key).map(|e| e.resumable)
         };
         let now = self.clock.now_iso();
-        self.mutate_job(rom_id, |job| {
+        self.mutate_job(key, |job| {
             job.observe_transfer(Some(total), resumable, &now);
             Ok(())
         })
@@ -414,7 +446,7 @@ impl DownloadService {
         let now = self.clock.now_iso();
         let _guard = self.job_lock.lock().await;
         let result: anyhow::Result<Option<i64>> = async {
-            let Some(mut job) = self.jobs.get(rom_id).await? else {
+            let Some(mut job) = self.jobs.get(JobKey::rom(rom_id)).await? else {
                 return Ok(None);
             };
             if let Some(lowest) = self.jobs.min_position().await?
@@ -428,7 +460,7 @@ impl DownloadService {
         .await;
         match result {
             Ok(Some(position)) => {
-                self.st().positions.insert(rom_id, position);
+                self.st().positions.insert(JobKey::rom(rom_id), position);
                 json!({"success": true, "message": "Moved to front"})
             }
             Ok(None) => failure("not_queued", "No queued download for this ROM"),
@@ -443,7 +475,7 @@ impl DownloadService {
 
     /// Wait for the single transfer slot. Returns `false` when the attempt
     /// was stopped while waiting (the slot is released again if granted).
-    async fn acquire_slot(&self, rom_id: i64, control: &Control) -> bool {
+    async fn acquire_slot(&self, key: JobKey, control: &Control) -> bool {
         let rx = {
             let mut st = self.st();
             if st.active.is_none() {
@@ -452,7 +484,7 @@ impl DownloadService {
             }
             let (tx, rx) = oneshot::channel();
             st.waiters.push(Waiter {
-                rom_id,
+                key,
                 control_id: control.id,
                 tx,
             });
@@ -482,7 +514,7 @@ impl DownloadService {
                 .waiters
                 .iter()
                 .enumerate()
-                .min_by_key(|(i, w)| (st.positions.get(&w.rom_id).copied().unwrap_or(i64::MAX), *i))
+                .min_by_key(|(i, w)| (st.positions.get(&w.key).copied().unwrap_or(i64::MAX), *i))
                 .map(|(i, _)| i);
             let Some(index) = chosen else {
                 return;
@@ -530,7 +562,8 @@ impl DownloadService {
             let on_disk = self.files.file_size(&job.tmp_path).await;
             let total = job.total_bytes.unwrap_or(0);
             let entry = QueueEntry {
-                rom_id: job.rom_id,
+                kind: job.kind,
+                item_id: job.item_id,
                 rom_name: job.rom_name.clone(),
                 platform_name: job.platform_name.clone(),
                 file_name: job.file_name.clone(),
@@ -544,8 +577,8 @@ impl DownloadService {
                 ..QueueEntry::default()
             };
             let mut st = self.st();
-            st.positions.insert(job.rom_id, job.position);
-            st.queue.insert(job.rom_id, entry);
+            st.positions.insert(job.key(), job.position);
+            st.queue.insert(job.key(), entry);
         }
         let rom_cleaned = if jobs_loaded {
             self.clean_orphan_rom_tmp_files(&keep).await
@@ -559,10 +592,10 @@ impl DownloadService {
         if !jobs.is_empty() {
             tracing::info!("Restored {} unfinished download(s)", jobs.len());
         }
-        let to_resume: Vec<i64> = jobs
+        let to_resume: Vec<JobKey> = jobs
             .iter()
             .filter(|j| j.status == JobStatus::Interrupted)
-            .map(|j| j.rom_id)
+            .map(DownloadJob::key)
             .collect();
         if !to_resume.is_empty() {
             let me = self.clone();
@@ -604,20 +637,24 @@ impl DownloadService {
 
     /// Resume interrupted jobs in order; stop at the first unreachable server
     /// or rejected login, marking the rest with that reason (no retry loop).
-    async fn auto_resume(self: Arc<Self>, rom_ids: Vec<i64>) {
-        for (index, rom_id) in rom_ids.iter().enumerate() {
-            let result = self.resume_inner(*rom_id, false).await;
+    async fn auto_resume(self: Arc<Self>, keys: Vec<JobKey>) {
+        for (index, key) in keys.iter().enumerate() {
+            let result = match key.kind {
+                JobKind::Rom => self.resume_inner(key.id, false).await,
+                // No firmware handler yet (it arrives with the firmware queue work): leave it interrupted.
+                JobKind::Firmware => failure("unsupported_kind", "Firmware downloads are not supported yet"),
+            };
             if result["success"] == true {
                 continue;
             }
             let why = result["reason"].as_str().unwrap_or_default();
             if why == INTERRUPT_SERVER_UNREACHABLE || why == INTERRUPT_TIMEOUT || why == INTERRUPT_AUTH_FAILED {
-                for remaining in &rom_ids[index + 1..] {
+                for remaining in &keys[index + 1..] {
                     self.mark_interrupted(*remaining, why).await;
                 }
                 return;
             }
-            tracing::info!("Auto-resume of ROM {rom_id} skipped: {}", result["message"]);
+            tracing::info!("Auto-resume of {key} skipped: {}", result["message"]);
         }
     }
 
@@ -628,11 +665,11 @@ impl DownloadService {
     /// unbound) is removed first; a removal failure aborts the download.
     pub async fn start_download(self: &Arc<Self>, rom_id: i64) -> Value {
         let _mutation = self.mutation_lock.lock().await;
-        if !self.st().in_progress.insert(rom_id) {
+        if !self.st().in_progress.insert(JobKey::rom(rom_id)) {
             return failure("already_downloading", "Already downloading");
         }
         if let Some(fail) = self.remove_conflicting_sibling_installs(rom_id).await {
-            self.st().in_progress.remove(&rom_id);
+            self.st().in_progress.remove(&JobKey::rom(rom_id));
             return fail;
         }
         self.begin_download(rom_id, false, false).await
@@ -655,19 +692,19 @@ impl DownloadService {
         let resumable = self
             .st()
             .queue
-            .get(&rom_id)
+            .get(&JobKey::rom(rom_id))
             .is_some_and(|e| e.status == "paused" || e.status == "interrupted");
         if !resumable {
             return failure("not_paused", "No paused download for this ROM");
         }
-        if self.st().in_progress.contains(&rom_id) {
+        if self.st().in_progress.contains(&JobKey::rom(rom_id)) {
             return failure("already_downloading", "Already downloading");
         }
         if self.resume_target_superseded(rom_id).await {
             self.evict(rom_id).await;
             return failure("superseded", "Another version is now active");
         }
-        let job = self.load_job(rom_id).await;
+        let job = self.load_job(JobKey::rom(rom_id)).await;
         // A partial of unknown origin waits for the user, unless it is already as long as the
         // whole archive: the transfer then validates it (structure + CRCs) and finishes it.
         let unverified = match &job {
@@ -678,15 +715,15 @@ impl DownloadService {
             _ => false,
         };
         if unverified && !user_initiated {
-            self.mark_interrupted(rom_id, INTERRUPT_NEEDS_RECOVERY).await;
+            self.mark_interrupted(JobKey::rom(rom_id), INTERRUPT_NEEDS_RECOVERY).await;
             return failure(
                 INTERRUPT_NEEDS_RECOVERY,
                 "The partial download cannot be verified; restart it to continue",
             );
         }
-        self.st().in_progress.insert(rom_id);
+        self.st().in_progress.insert(JobKey::rom(rom_id));
         if let Some(fail) = self.remove_conflicting_sibling_installs(rom_id).await {
-            self.st().in_progress.remove(&rom_id);
+            self.st().in_progress.remove(&JobKey::rom(rom_id));
             return fail;
         }
         self.begin_download(rom_id, true, unverified).await
@@ -766,9 +803,9 @@ impl DownloadService {
     /// A resume that cannot proceed keeps the partial whenever it could
     /// succeed later; only a can-never-succeed failure drops the job.
     async fn begin_download(self: &Arc<Self>, rom_id: i64, resume: bool, restart: bool) -> Value {
-        self.st().in_progress.insert(rom_id);
+        self.st().in_progress.insert(JobKey::rom(rom_id));
         let release = |me: &Self| {
-            me.st().in_progress.remove(&rom_id);
+            me.st().in_progress.remove(&JobKey::rom(rom_id));
         };
         let rom = match self.romm.get_rom(rom_id).await {
             Ok(rom) => rom,
@@ -779,12 +816,12 @@ impl DownloadService {
                 if resume {
                     match classify_download_failure(&anyhow::Error::new(e)) {
                         Outcome::Interrupted(why) => {
-                            self.mark_interrupted(rom_id, why).await;
+                            self.mark_interrupted(JobKey::rom(rom_id), why).await;
                             response["reason"] = json!(why);
                         }
                         Outcome::Failed => {
                             let message = response["message"].as_str().map(str::to_string);
-                            self.discard_resumable(rom_id, "failed", message).await;
+                            self.discard_resumable(JobKey::rom(rom_id), "failed", message).await;
                         }
                     }
                 }
@@ -804,7 +841,7 @@ impl DownloadService {
                 tracing::error!("Rejected download for ROM {rom_id}: unsafe platform slug {system:?}: {e}");
                 let message = "Server sent an unsafe platform path \u{2014} download aborted";
                 if resume {
-                    self.discard_resumable(rom_id, "failed", Some(message.into())).await;
+                    self.discard_resumable(JobKey::rom(rom_id), "failed", Some(message.into())).await;
                 }
                 self.emit(
                     "download_failed",
@@ -861,7 +898,7 @@ impl DownloadService {
                 release(self);
                 if resume {
                     // The partial is kept: free some space and resume.
-                    self.mark_interrupted(rom_id, INTERRUPT_DISK_FULL).await;
+                    self.mark_interrupted(JobKey::rom(rom_id), INTERRUPT_DISK_FULL).await;
                 }
                 return no_space;
             }
@@ -876,7 +913,8 @@ impl DownloadService {
         let platform_name = str_of("platform_name").unwrap_or_else(|| platform_slug.clone());
         let job = self
             .enqueue_job(NewJob {
-                rom_id,
+                kind: JobKind::Rom,
+                item_id: rom_id,
                 rom_name: rom_name.clone(),
                 platform_name: platform_name.clone(),
                 file_name: file_name.clone(),
@@ -903,7 +941,7 @@ impl DownloadService {
         };
         let control = {
             let mut st = self.st();
-            st.persisted_totals.remove(&rom_id);
+            st.persisted_totals.remove(&JobKey::rom(rom_id));
             st.next_control += 1;
             let control = Arc::new(Control {
                 id: st.next_control,
@@ -912,12 +950,13 @@ impl DownloadService {
                 paused: AtomicBool::new(false),
                 shutdown: AtomicBool::new(false),
             });
-            let resumable = st.queue.get(&rom_id).is_some_and(|e| e.resumable);
+            let resumable = st.queue.get(&JobKey::rom(rom_id)).is_some_and(|e| e.resumable);
             // Status stays "queued" until the scheduler hands over the slot.
             st.queue.insert(
-                rom_id,
+                JobKey::rom(rom_id),
                 QueueEntry {
-                    rom_id,
+                    kind: JobKind::Rom,
+                    item_id: rom_id,
                     rom_name,
                     platform_name,
                     file_name,
@@ -931,9 +970,9 @@ impl DownloadService {
                     ..QueueEntry::default()
                 },
             );
-            st.reserved.insert(rom_id, required);
+            st.reserved.insert(JobKey::rom(rom_id), required);
             st.attempts.insert(
-                rom_id,
+                JobKey::rom(rom_id),
                 Attempt {
                     control: control.clone(),
                     handle: None,
@@ -944,7 +983,7 @@ impl DownloadService {
         let me = self.clone();
         let task_control = control.clone();
         let handle = tokio::spawn(async move { me.do_download(plan, task_control, resume).await });
-        if let Some(attempt) = self.st().attempts.get_mut(&rom_id)
+        if let Some(attempt) = self.st().attempts.get_mut(&JobKey::rom(rom_id))
             && Arc::ptr_eq(&attempt.control, &control)
         {
             attempt.handle = Some(handle);
@@ -955,26 +994,26 @@ impl DownloadService {
     // ── Terminal state helpers ──────────────────────────────────────────
 
     /// Flip a job to `interrupted` (row + entry) and emit the frame; partial kept.
-    async fn mark_interrupted(&self, rom_id: i64, why: &str) {
+    async fn mark_interrupted(&self, key: JobKey, why: &str) {
         let now = self.clock.now_iso();
-        self.mutate_job(rom_id, |job| job.interrupt(why, &now)).await;
-        if self.update_entry(rom_id, |e| {
+        self.mutate_job(key, |job| job.interrupt(why, &now)).await;
+        if self.update_entry(key, |e| {
             e.status = "interrupted".into();
             e.reason = Some(why.into());
         }) {
-            self.emit_entry(rom_id);
+            self.emit_entry(key);
         }
     }
 
     /// Drop a paused/interrupted job for good: delete its row and partial.
-    async fn discard_resumable(&self, rom_id: i64, status: &str, error: Option<String>) {
-        if let Some(job) = self.load_job(rom_id).await {
+    async fn discard_resumable(&self, key: JobKey, status: &str, error: Option<String>) {
+        if let Some(job) = self.load_job(key).await {
             self.remove_tmp_files(&[job.tmp_path]).await;
         }
-        self.drop_job(rom_id).await;
+        self.drop_job(key).await;
         let names = {
             let mut st = self.st();
-            let Some(entry) = st.queue.get_mut(&rom_id) else {
+            let Some(entry) = st.queue.get_mut(&key) else {
                 return;
             };
             entry.status = status.into();
@@ -989,15 +1028,18 @@ impl DownloadService {
         if status == "failed" {
             self.emit(
                 "download_failed",
-                json!({
-                    "rom_id": rom_id,
-                    "rom_name": names.0,
-                    "platform_name": names.1,
-                    "error_message": error.unwrap_or_else(|| "Download failed".into()),
-                }),
+                {
+                    let mut payload = json!({
+                        "rom_name": names.0,
+                        "platform_name": names.1,
+                        "error_message": error.unwrap_or_else(|| "Download failed".into()),
+                    });
+                    set_identity(&mut payload, key);
+                    payload
+                },
             );
         } else {
-            self.emit_entry(rom_id);
+            self.emit_entry(key);
         }
     }
 
@@ -1025,7 +1067,7 @@ impl DownloadService {
             last_emit = now;
             let frame = {
                 let mut st = me.st();
-                let Some(entry) = st.queue.get_mut(&rom_id) else {
+                let Some(entry) = st.queue.get_mut(&JobKey::rom(rom_id)) else {
                     return; // evicted mid-download: never resurrect
                 };
                 entry.progress = ratio(downloaded, total);
@@ -1037,7 +1079,7 @@ impl DownloadService {
                 frame
             };
             let observer = me.clone();
-            tokio::spawn(async move { observer.persist_transfer_observation(rom_id, total).await });
+            tokio::spawn(async move { observer.persist_transfer_observation(JobKey::rom(rom_id), total).await });
             me.emit("download_progress", frame);
         })
     }
@@ -1047,7 +1089,7 @@ impl DownloadService {
         Box::new(move |range_supported| {
             let frame = {
                 let mut st = me.st();
-                let Some(entry) = st.queue.get_mut(&rom_id) else {
+                let Some(entry) = st.queue.get_mut(&JobKey::rom(rom_id)) else {
                     return;
                 };
                 entry.resumable = range_supported;
@@ -1081,7 +1123,7 @@ impl DownloadService {
             last_emit = now;
             let frame = {
                 let mut st = me.st();
-                let Some(entry) = st.queue.get_mut(&rom_id) else {
+                let Some(entry) = st.queue.get_mut(&JobKey::rom(rom_id)) else {
                     return;
                 };
                 entry.status = "extracting".into();
@@ -1100,7 +1142,7 @@ impl DownloadService {
     /// The full size of the transfer file: the persisted server total, else
     /// RomM's `fs_size_bytes` for a single file (unknown for a ZIP).
     async fn expected_transfer_total(&self, plan: &Plan) -> u64 {
-        if let Some(total) = self.load_job(plan.rom_id).await.and_then(|j| j.total_bytes) {
+        if let Some(total) = self.load_job(JobKey::rom(plan.rom_id)).await.and_then(|j| j.total_bytes) {
             return total;
         }
         if plan.has_multiple {
@@ -1117,7 +1159,7 @@ impl DownloadService {
             let now = me.clock.epoch_seconds();
             let frame = {
                 let mut st = me.st();
-                let Some(entry) = st.queue.get_mut(&rom_id) else {
+                let Some(entry) = st.queue.get_mut(&JobKey::rom(rom_id)) else {
                     return;
                 };
                 match phase {
@@ -1156,7 +1198,7 @@ impl DownloadService {
             Box::pin(async move {
                 let now = me.clock.now_iso();
                 let _guard = me.job_lock.lock().await;
-                let Some(mut job) = me.jobs.get(rom_id).await? else {
+                let Some(mut job) = me.jobs.get(JobKey::rom(rom_id)).await? else {
                     return Ok(());
                 };
                 job.record_archive_identity(identity.as_ref(), &now);
@@ -1194,7 +1236,7 @@ impl DownloadService {
                     "Partial for ROM {} is already complete ({on_disk} bytes); skipping transfer",
                     plan.rom_id
                 );
-                self.update_entry(plan.rom_id, |e| {
+                self.update_entry(JobKey::rom(plan.rom_id), |e| {
                     e.progress = ratio(on_disk, expected);
                     e.bytes_downloaded = on_disk;
                     e.total_bytes = expected;
@@ -1234,7 +1276,7 @@ impl DownloadService {
     async fn transfer_archive(self: &Arc<Self>, plan: &Plan, tmp_path: &str, control: &Control) -> anyhow::Result<bool> {
         let mut restart = plan.restart;
         for pass in 0..2 {
-            let job = self.load_job(plan.rom_id).await;
+            let job = self.load_job(JobKey::rom(plan.rom_id)).await;
             let partial = self.files.file_size(tmp_path).await;
             let identity = job.as_ref().and_then(DownloadJob::archive_identity);
             let needs_recovery = job.as_ref().is_some_and(|j| j.needs_recovery);
@@ -1262,7 +1304,7 @@ impl DownloadService {
             match self.files.verify_zip(tmp_path).await {
                 Ok(()) => {
                     let on_disk = self.files.file_size(tmp_path).await;
-                    self.update_entry(plan.rom_id, |e| {
+                    self.update_entry(JobKey::rom(plan.rom_id), |e| {
                         e.progress = 1.0;
                         e.bytes_downloaded = on_disk;
                         e.total_bytes = on_disk;
@@ -1276,7 +1318,7 @@ impl DownloadService {
                     );
                     self.remove_tmp_files(&[tmp_path.to_string()]).await;
                     let now = self.clock.now_iso();
-                    self.mutate_job(plan.rom_id, |job| {
+                    self.mutate_job(JobKey::rom(plan.rom_id), |job| {
                         job.record_archive_identity(None, &now);
                         Ok(())
                     })
@@ -1359,19 +1401,19 @@ impl DownloadService {
             plan.target_path
         );
         let slot_taken = self.st().active.is_some_and(|id| id != control.id);
-        if slot_taken && self.update_entry(plan.rom_id, |e| e.status = "queued".into()) {
-            self.emit_entry(plan.rom_id);
+        if slot_taken && self.update_entry(JobKey::rom(plan.rom_id), |e| e.status = "queued".into()) {
+            self.emit_entry(JobKey::rom(plan.rom_id));
         }
-        if !self.acquire_slot(plan.rom_id, control).await {
+        if !self.acquire_slot(JobKey::rom(plan.rom_id), control).await {
             return Ended::Stopped;
         }
-        self.update_entry(plan.rom_id, |e| {
+        self.update_entry(JobKey::rom(plan.rom_id), |e| {
             e.status = "downloading".into();
             e.reason = None;
             e.clear_phase();
         });
         let now = self.clock.now_iso();
-        self.mutate_job(plan.rom_id, |job| job.start(&now)).await;
+        self.mutate_job(JobKey::rom(plan.rom_id), |job| job.start(&now)).await;
 
         let suffix = if plan.has_multiple { ZIP_TMP_EXT } else { TMP_EXT };
         let tmp = format!("{}{suffix}", plan.target_path);
@@ -1384,7 +1426,7 @@ impl DownloadService {
         // stop that raced a committed install is honoured as completed.
         let committed = if plan.has_multiple {
             let now = self.clock.now_iso();
-            self.mutate_job(plan.rom_id, |job| job.begin_extract(&now)).await;
+            self.mutate_job(JobKey::rom(plan.rom_id), |job| job.begin_extract(&now)).await;
             self.post_download_multi(plan, skipped).await
         } else {
             self.post_download_single(plan).await
@@ -1416,22 +1458,22 @@ impl DownloadService {
             }
             Ended::Stopped if control.paused.load(Ordering::SeqCst) => {
                 let now = self.clock.now_iso();
-                self.mutate_job(rom_id, |job| job.pause(&now)).await;
-                self.update_entry(rom_id, |e| {
+                self.mutate_job(JobKey::rom(rom_id), |job| job.pause(&now)).await;
+                self.update_entry(JobKey::rom(rom_id), |e| {
                     e.status = "paused".into();
                     e.reason = None;
                 });
-                self.emit_entry(rom_id);
+                self.emit_entry(JobKey::rom(rom_id));
                 tracing::info!("Download paused: {}", plan.rom_name);
             }
             Ended::Stopped => {
-                self.update_entry(rom_id, |e| {
+                self.update_entry(JobKey::rom(rom_id), |e| {
                     e.status = "cancelled".into();
                     e.reason = None;
                 });
-                self.drop_job(rom_id).await;
+                self.drop_job(JobKey::rom(rom_id)).await;
                 self.cleanup_partial_download(&plan).await;
-                self.emit_entry(rom_id);
+                self.emit_entry(JobKey::rom(rom_id));
                 tracing::info!("Download cancelled: {}", plan.rom_name);
             }
             Ended::Error(e) => match classify_download_failure(&e) {
@@ -1440,22 +1482,22 @@ impl DownloadService {
                     if why == INTERRUPT_NEEDS_RECOVERY {
                         // The partial stays untouched; it is no longer auto-resumed.
                         let now = self.clock.now_iso();
-                        self.mutate_job(rom_id, |job| {
+                        self.mutate_job(JobKey::rom(rom_id), |job| {
                             job.flag_needs_recovery(&now);
                             Ok(())
                         })
                         .await;
                     }
-                    self.mark_interrupted(rom_id, why).await;
+                    self.mark_interrupted(JobKey::rom(rom_id), why).await;
                 }
                 Outcome::Failed => {
                     let message = format!("{e:#}");
-                    self.update_entry(rom_id, |entry| {
+                    self.update_entry(JobKey::rom(rom_id), |entry| {
                         entry.status = "failed".into();
                         entry.error = Some(message.clone());
                         entry.reason = None;
                     });
-                    self.drop_job(rom_id).await;
+                    self.drop_job(JobKey::rom(rom_id)).await;
                     self.cleanup_partial_download(&plan).await;
                     tracing::error!("Download failed for {}: {e:#}", plan.rom_name);
                     self.emit(
@@ -1473,10 +1515,10 @@ impl DownloadService {
         self.release_slot(control.id);
         let mut st = self.st();
         // A newer attempt may already own these registrations.
-        if st.attempts.get(&rom_id).is_some_and(|a| Arc::ptr_eq(&a.control, &control)) {
-            st.attempts.remove(&rom_id);
-            st.in_progress.remove(&rom_id);
-            st.reserved.remove(&rom_id);
+        if st.attempts.get(&JobKey::rom(rom_id)).is_some_and(|a| Arc::ptr_eq(&a.control, &control)) {
+            st.attempts.remove(&JobKey::rom(rom_id));
+            st.in_progress.remove(&JobKey::rom(rom_id));
+            st.reserved.remove(&JobKey::rom(rom_id));
         }
         st.prune();
     }
@@ -1503,9 +1545,9 @@ impl DownloadService {
     /// shortcut's app id and the re-baked launch command.
     async fn finalize_download_complete(&self, plan: &Plan, final_path: &str) {
         let rom_id = plan.rom_id;
-        self.drop_job(rom_id).await;
+        self.drop_job(JobKey::rom(rom_id)).await;
         let mut resumable = false;
-        self.update_entry(rom_id, |e| {
+        self.update_entry(JobKey::rom(rom_id), |e| {
             e.status = "completed".into();
             e.progress = 1.0;
             e.reason = None;
@@ -1548,18 +1590,18 @@ impl DownloadService {
     /// Cancel a download: abort a live one, or discard a paused/interrupted one.
     pub fn cancel_download(self: &Arc<Self>, rom_id: i64) -> Value {
         let st = self.st();
-        if let Some(attempt) = st.attempts.get(&rom_id) {
+        if let Some(attempt) = st.attempts.get(&JobKey::rom(rom_id)) {
             attempt.control.stop(&attempt.control.cancelled);
             return json!({"success": true, "message": "Download cancelled"});
         }
         let stopped = st
             .queue
-            .get(&rom_id)
+            .get(&JobKey::rom(rom_id))
             .is_some_and(|e| e.status == "paused" || e.status == "interrupted");
         drop(st);
         if stopped {
             let me = self.clone();
-            tokio::spawn(async move { me.discard_resumable(rom_id, "cancelled", None).await });
+            tokio::spawn(async move { me.discard_resumable(JobKey::rom(rom_id), "cancelled", None).await });
             return json!({"success": true, "message": "Download cancelled"});
         }
         failure("no_active_download", "No active download for this ROM")
@@ -1567,7 +1609,7 @@ impl DownloadService {
 
     /// Pause a live download, keeping the partial for resume.
     pub fn pause_download(&self, rom_id: i64) -> Value {
-        match self.st().attempts.get(&rom_id) {
+        match self.st().attempts.get(&JobKey::rom(rom_id)) {
             Some(attempt) => {
                 attempt.control.stop(&attempt.control.paused);
                 json!({"success": true, "message": "Download paused"})
@@ -1583,7 +1625,8 @@ impl DownloadService {
                 entry.clear_phase(); // a stopped download is not waiting for anything
             }
         }
-        json!({"downloads": entries})
+        let rows: Vec<Value> = entries.iter().map(QueueEntry::row).collect();
+        json!({"downloads": rows})
     }
 
     /// The install record of `rom_id` in the frontend `InstalledRom` shape, or `null`.
@@ -1603,23 +1646,32 @@ impl DownloadService {
 
     /// ROM ids with a live or queued download (paused/interrupted excluded).
     pub fn active_download_rom_ids(&self) -> HashSet<i64> {
-        self.st().in_progress.clone()
+        self.st()
+            .in_progress
+            .iter()
+            .filter(|k| k.kind == JobKind::Rom)
+            .map(|k| k.id)
+            .collect()
     }
 
     /// Remove the queue entry and job row of `rom_id`. A paused or
     /// interrupted download's partial goes with it; a live transfer's partial
     /// is left to that transfer.
     pub async fn evict(&self, rom_id: i64) {
+        self.evict_job(JobKey::rom(rom_id)).await;
+    }
+
+    pub async fn evict_job(&self, key: JobKey) {
         let stopped_partial = {
             let mut st = self.st();
-            let entry = st.queue.shift_remove(&rom_id);
+            let entry = st.queue.shift_remove(&key);
             entry.is_some_and(|e| e.status == "paused" || e.status == "interrupted")
-                && !st.attempts.contains_key(&rom_id)
+                && !st.attempts.contains_key(&key)
         };
-        if stopped_partial && let Some(job) = self.load_job(rom_id).await {
+        if stopped_partial && let Some(job) = self.load_job(key).await {
             self.remove_tmp_files(&[job.tmp_path]).await;
         }
-        self.drop_job(rom_id).await;
+        self.drop_job(key).await;
     }
 
     /// Plugin unload: stop every transfer keeping its partial and its row.
