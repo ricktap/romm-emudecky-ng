@@ -5,11 +5,13 @@ import {
   ButtonItem,
   Field,
   ProgressBar,
-  ToggleField,
   Spinner,
 } from "@decky/ui";
-import { openLibraryRoute } from "./LibraryRoute";
+import { openLibraryRoute } from "../utils/libraryRoute";
 import { FaCheckCircle, FaTimesCircle, FaExclamationTriangle } from "react-icons/fa";
+import { getSkipPreview, onSyncPreferencesChange } from "../utils/syncPreferences";
+import { missingRequiredKeys } from "../utils/missingKeys";
+import { serverHost } from "../utils/serverUrl";
 import {
   testConnection,
   cancelSync,
@@ -19,16 +21,14 @@ import {
   syncPreview,
   syncApplyDelta,
   syncCancelPreview,
-  clearSyncCache,
   getSyncStatus,
+  getFirmwareStatus,
   logError,
 } from "../api/backend";
-import { formatBytes } from "../utils/formatters";
 import { getSyncProgress, setSyncProgress as setStoredSyncProgress, onSyncProgressChange } from "../utils/syncProgress";
 import { scrollToTop } from "../utils/scrollHelpers";
 import { getDownloadState } from "../utils/downloadStore";
-import { downloadKey } from "../utils/downloadKey";
-import { isUnfinishedStatus, interruptedLabel } from "../utils/downloadStatus";
+import { isUnfinishedStatus } from "../utils/downloadStatus";
 import { getSettingsResetState, onSettingsResetChange } from "../utils/settingsResetStore";
 import { getPlaytimeScopeState, onPlaytimeScopeChange, fetchPlaytimeScopeState } from "../utils/playtimeScopeStore";
 import { reconcileStaleShortcuts, requestSyncCancel, isCancelRequested, resetSyncCancel } from "../utils/syncManager";
@@ -49,7 +49,7 @@ import type {
 import { detach } from "../utils/detach";
 import { withTimeout } from "../utils/withTimeout";
 
-type Page = "settings" | "library" | "data" | "downloads" | "system";
+type Page = "settings" | "platforms" | "downloads";
 
 interface MainPageProps {
   onNavigate: (page: Page) => void;
@@ -184,26 +184,6 @@ function formatPreviewDescription(s: SyncPreviewSummary): string {
   return sections.length > 0 ? sections.join("; ") : "Everything is up to date.";
 }
 
-/** Right-hand caption for a QAM download row: transfer size, or the status when not transferring. */
-function downloadDetail(item: DownloadItem): string {
-  const size =
-    item.total_bytes > 0
-      ? `${formatBytes(item.bytes_downloaded)} / ${formatBytes(item.total_bytes)}`
-      : formatBytes(item.bytes_downloaded);
-  switch (item.status) {
-    case "queued":
-      return "Queued";
-    case "extracting":
-      return "Extracting";
-    case "paused":
-      return `Paused · ${size}`;
-    case "interrupted":
-      return interruptedLabel(item.reason);
-    default:
-      return size;
-  }
-}
-
 export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
   const [stats, setStats] = useState<SyncStats | null>(null);
   const [connected, setConnected] = useState<boolean | null | BackendFailed>(null);
@@ -217,7 +197,9 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [status, setStatus] = useState("");
   const [preview, setPreview] = useState<SyncPreview | null>(null);
-  const [skipPreview, setSkipPreview] = useState(false);
+  const [skipPreview, setSkipPreviewState] = useState(getSkipPreview());
+  const [missingKeys, setMissingKeys] = useState<string[]>([]);
+  const [hostName, setHostName] = useState("");
   const [loading, setLoading] = useState(false);
   const [settingsReset, setSettingsReset] = useState(getSettingsResetState());
   const [playtimeScope, setPlaytimeScope] = useState(getPlaytimeScopeState());
@@ -299,6 +281,14 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
     // into the store (never reject).
     refreshUpdateState(false).catch(() => undefined);
 
+    // Host for the status line, and the required keys no emulator has yet (the Needs attention list).
+    getSettings()
+      .then((s) => !cancelled && setHostName(serverHost(s.romm_url)))
+      .catch(() => undefined);
+    getFirmwareStatus()
+      .then((f) => !cancelled && setMissingKeys(missingRequiredKeys(f)))
+      .catch(() => undefined);
+
     // Backend is authoritative for in-flight sync state. Seed the module
     // store from get_sync_status() so a QAM close/reopen recovers the live
     // run rather than guessing from the event-fed store alone.
@@ -341,7 +331,9 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
     const unsubSettingsReset = onSettingsResetChange(() => setSettingsReset(getSettingsResetState()));
     const unsubPlaytimeScope = onPlaytimeScopeChange(() => setPlaytimeScope(getPlaytimeScopeState()));
     const unsubUpdate = onUpdateStateChange(() => setUpdateState(getUpdateState()));
+    const unsubPrefs = onSyncPreferencesChange(() => setSkipPreviewState(getSkipPreview()));
     return () => {
+      unsubPrefs();
       cancelled = true;
       if (connectionRetryTimer) clearTimeout(connectionRetryTimer);
       unsubProgress();
@@ -500,11 +492,6 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
   const hasFineDetail = !!(syncProgress?.total && syncProgress.message);
 
   const activeDownloads = downloads.filter((d) => isUnfinishedStatus(d.status));
-  const completedDownloads = downloads.filter(
-    (d) => d.status === "completed" || d.status === "failed" || d.status === "cancelled",
-  );
-  const hasDownloads = activeDownloads.length > 0 || completedDownloads.length > 0;
-
   // Sync is unavailable when the server test failed OR the plugin backend never
   // started — both gate the Sync buttons off.
   const connectionUnavailable = connected === false || connected === "backend_failed";
@@ -621,6 +608,7 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
       </>
     );
   } else {
+    const syncedBefore = Boolean(status) && !syncing;
     syncBody = (
       <>
         <PanelSectionRow>
@@ -633,90 +621,55 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
             // @ts-expect-error onFocus works at runtime; not in Decky's ButtonItem types
             onFocus={scrollToTop}
           >
-            Sync Library
+            {syncedBefore ? "Sync Again" : "Sync Library"}
           </ButtonItem>
         </PanelSectionRow>
-        <PanelSectionRow>
-          <ToggleField
-            label="Skip Preview"
-            description="Apply changes immediately without preview"
-            checked={skipPreview}
-            onChange={setSkipPreview}
-          />
-        </PanelSectionRow>
-        {stats?.last_sync && (
+        {connectionUnavailable && (
           <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              description="Clear cached sync data to re-fetch all platforms"
-              onClick={() => {
-                detach(
-                  (async () => {
-                    try {
-                      const result = await clearSyncCache();
-                      setStatus(result.message);
-                    } catch {
-                      setStatus("Failed to clear sync cache");
-                    }
-                    if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);
-                    statusTimeoutRef.current = setTimeout(() => setStatus(""), 8000);
-                    getSyncStats()
-                      .then(setStats)
-                      .catch((e) => logError(`Failed to refresh sync stats: ${e}`));
-                  })(),
-                );
-              }}
-              disabled={loading || connectionUnavailable}
-            >
-              Force Full Sync
-            </ButtonItem>
+            <Field label="Sync needs a connection to the RomM server" />
           </PanelSectionRow>
         )}
       </>
     );
   }
 
+  const attentionCount =
+    (settingsReset.pending ? 1 : 0) +
+    (playtimeScope.pending ? 1 : 0) +
+    (updateState.info?.update_available ? 1 : 0) +
+    (missingKeys.length > 0 ? 1 : 0);
+
   return (
     <>
-      {settingsReset.pending && <SettingsResetBanner backedUpTo={settingsReset.backedUpTo} />}
-      {playtimeScope.pending && <PlaytimeScopeBanner />}
-      {updateState.info?.update_available && <UpdateBanner info={updateState.info} />}
-      <PanelSection title="Status">
+      <PanelSection>
         <PanelSectionRow>
-          <Field
-            label="Connection"
-            description={
-              connected === "backend_failed" ? "Plugin backend failed to start — check Decky logs." : undefined
-            }
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <ConnectionIndicator connected={connected} />
-            </div>
-          </Field>
-        </PanelSectionRow>
-        {stats && (
-          <>
-            <PanelSectionRow>
-              <Field label="Last sync">
-                <span style={{ fontSize: "12px" }}>{formatLastSync(stats.last_sync)}</span>
-              </Field>
-            </PanelSectionRow>
-            {stats.roms > 0 && (
-              <PanelSectionRow>
-                <Field label="Library">
-                  <span style={{ fontSize: "12px" }}>
-                    {stats.roms} games
-                    {stats.platforms > 0 ? ` · ${stats.platforms} platforms` : ""}
-                    {(stats.collections ?? 0) > 0 ? ` · ${stats.collections} collections` : ""}
-                  </span>
-                </Field>
-              </PanelSectionRow>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }} data-testid="status-line">
+            <ConnectionIndicator connected={connected} />
+            {connected === true && hostName && (
+              <span style={{ fontSize: "12px", opacity: 0.7 }} data-testid="status-host">
+                · {hostName}
+              </span>
             )}
-          </>
-        )}
+          </div>
+          {connected === "backend_failed" && (
+            <div style={{ fontSize: "12px", opacity: 0.7 }}>Plugin backend failed to start — check Decky logs.</div>
+          )}
+        </PanelSectionRow>
       </PanelSection>
 
-      <PanelSection title="Sync">
+      <PanelSection title="Library">
+        {stats && (
+          <PanelSectionRow>
+            <Field
+              label={
+                stats.roms > 0
+                  ? `${stats.roms} games${stats.platforms > 0 ? ` · ${stats.platforms} platforms` : ""}`
+                  : "No games synced yet"
+              }
+              description={`Last sync: ${formatLastSync(stats.last_sync)}`}
+            />
+          </PanelSectionRow>
+        )}
         {syncBody}
         {status && !syncing && !preview && (
           <PanelSectionRow>
@@ -725,75 +678,33 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
         )}
       </PanelSection>
 
-      {hasDownloads && (
-        <PanelSection title="Downloads">
-          {activeDownloads.slice(0, 2).map((item) => (
-            <PanelSectionRow key={downloadKey(item)}>
-              {/* Own the caption row and use the bare ProgressBar — ProgressBarWithInfo
-                  is a Steam Field (label column | bar column) that shoves the bar and
-                  text into the right half and clips them (same fix as #751). */}
-              <div style={{ width: "100%" }} data-testid="download-row">
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: "8px",
-                    fontSize: "12px",
-                    marginBottom: "4px",
-                  }}
-                >
-                  <span
-                    data-testid="download-name"
-                    style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                  >
-                    {item.rom_name}
-                  </span>
-                  <span data-testid="download-detail" style={{ flexShrink: 0 }}>
-                    {downloadDetail(item)}
-                  </span>
-                </div>
-                <ProgressBar
-                  indeterminate={item.total_bytes === 0 || item.status === "extracting"}
-                  {...(item.total_bytes > 0 ? { nProgress: (item.bytes_downloaded / item.total_bytes) * 100 } : {})}
-                />
-              </div>
-            </PanelSectionRow>
-          ))}
-          {activeDownloads.length > 2 && (
+      {attentionCount > 0 && (
+        <PanelSection title="Needs attention">
+          {settingsReset.pending && <SettingsResetBanner backedUpTo={settingsReset.backedUpTo} />}
+          {playtimeScope.pending && <PlaytimeScopeBanner />}
+          {updateState.info?.update_available && <UpdateBanner info={updateState.info} />}
+          {missingKeys.length > 0 && (
             <PanelSectionRow>
-              <Field label={`+${activeDownloads.length - 2} more in queue`} />
+              <ButtonItem
+                layout="below"
+                onClick={() => openLibraryRoute("systems")}
+              >
+                Switch keys missing: {missingKeys.join(", ")}
+              </ButtonItem>
             </PanelSectionRow>
           )}
-          {completedDownloads.length > 0 && (
-            <PanelSectionRow>
-              <Field label={`${completedDownloads.length} completed`} />
-            </PanelSectionRow>
-          )}
-          <PanelSectionRow>
-            <ButtonItem layout="below" onClick={() => onNavigate("downloads")}>
-              View All
-            </ButtonItem>
-          </PanelSectionRow>
         </PanelSection>
       )}
 
-      <PanelSection title="RomM Library">
+      <PanelSection title="Manage">
         <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => openLibraryRoute()}>
-            Open RomM Library
-          </ButtonItem>
-        </PanelSectionRow>
-      </PanelSection>
-
-      <PanelSection title="Settings">
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => onNavigate("library")}>
-            Library
+          <ButtonItem layout="below" onClick={() => onNavigate("downloads")}>
+            Downloads{activeDownloads.length > 0 ? ` (${activeDownloads.length})` : ""}
           </ButtonItem>
         </PanelSectionRow>
         <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => onNavigate("system")}>
-            System
+          <ButtonItem layout="below" onClick={() => onNavigate("platforms")}>
+            Platforms &amp; collections
           </ButtonItem>
         </PanelSectionRow>
         <PanelSectionRow>
@@ -802,8 +713,8 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
           </ButtonItem>
         </PanelSectionRow>
         <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => onNavigate("data")}>
-            Data Management
+          <ButtonItem layout="below" onClick={() => openLibraryRoute()}>
+            Open RomM Library
           </ButtonItem>
         </PanelSectionRow>
       </PanelSection>

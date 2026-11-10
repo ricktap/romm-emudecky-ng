@@ -1,25 +1,13 @@
 import { FC, useEffect, useState } from "react";
 import { Navigation, Tabs } from "@decky/ui";
+import { getLibraryTab, setLibraryTab, type LibraryTab } from "../utils/libraryRoute";
 import { getLibraryOverview } from "../api/backend";
 import type { LibraryOverview } from "../types";
 import { SettingsPage } from "./SettingsPage";
 import { SystemPage } from "./SystemPage";
 import { DangerZone } from "./DangerZone";
 import { DownloadQueue } from "./DownloadQueue";
-
-export const LIBRARY_ROUTE = "/romm-library";
-
-export type LibraryTab = "library" | "downloads" | "systems" | "settings";
-
-// Module-level, like QAMPanel's page: the last tab survives leaving and re-entering the route.
-let currentTab: LibraryTab = "library";
-
-/** Open the full-screen library: close the Quick Access Menu first, then navigate. */
-export function openLibraryRoute(tab?: LibraryTab): void {
-  if (tab) currentTab = tab;
-  Navigation.CloseSideMenus();
-  Navigation.Navigate(LIBRARY_ROUTE);
-}
+import { LibrarySyncSection } from "./settings/LibrarySyncSection";
 
 // The moved pages keep their "Back" button; inside the route it leaves the route (history back).
 const leave = () => Navigation.NavigateBack();
@@ -59,10 +47,10 @@ const LibraryTabContent: FC = () => {
 };
 
 export const LibraryRoute: FC = () => {
-  const [tab, setTabState] = useState<LibraryTab>(currentTab);
+  const [tab, setTabState] = useState<LibraryTab>(getLibraryTab());
   const setTab = (t: string) => {
-    currentTab = t as LibraryTab;
-    setTabState(currentTab);
+    setLibraryTab(t as LibraryTab);
+    setTabState(getLibraryTab());
   };
 
   return (
@@ -80,6 +68,7 @@ export const LibraryRoute: FC = () => {
             content: (
               <>
                 <SettingsPage onBack={leave} />
+                <LibrarySyncSection />
                 <DangerZone onBack={leave} />
               </>
             ),

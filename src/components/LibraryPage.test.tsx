@@ -1029,4 +1029,12 @@ describe("LibraryPage", () => {
       expect(onBack).toHaveBeenCalledTimes(1);
     });
   });
+
+describe("LibraryPage platforms note", () => {
+  it("says that platform changes apply on the next sync", async () => {
+    vi.mocked(backend.getPlatforms).mockResolvedValue({ success: true, platforms: [] });
+    const { findByText } = render(<LibraryPage onBack={() => {}} />);
+    expect(await findByText("Changes apply on the next sync")).toBeTruthy();
+  });
+});
 });

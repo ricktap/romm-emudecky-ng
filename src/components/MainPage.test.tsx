@@ -36,6 +36,7 @@ import * as backend from "../api/backend";
 import { useVersionError } from "./VersionErrorCard";
 import { setSyncProgress } from "../utils/syncProgress";
 import { setDownloads } from "../utils/downloadStore";
+import { setSkipPreview } from "../utils/syncPreferences";
 import * as syncManager from "../utils/syncManager";
 import * as connectionState from "../utils/connectionState";
 import { resetUpdateState } from "../utils/updateStore";
@@ -43,7 +44,6 @@ import type {
   SyncStats,
   SyncPreview,
   SyncPreviewSummary,
-  DownloadItem,
   PluginSettings,
   UpdateCheckSuccess,
 } from "../types";
@@ -224,6 +224,8 @@ describe("MainPage", () => {
       message: "",
     });
     vi.mocked(backend.getSettings).mockResolvedValue(defaultSettings());
+    vi.mocked(backend.getFirmwareStatus).mockResolvedValue({ success: false });
+    setSkipPreview(false);
     vi.mocked(backend.startSync).mockResolvedValue({
       success: true,
       message: "",
@@ -280,11 +282,113 @@ describe("MainPage", () => {
       expect(queryByTestId("panel-section")).toBeNull();
     });
 
-    it("renders the full panel with Status / Sync / Settings sections by default", async () => {
+    it("renders the full panel with Library / Manage sections by default", async () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       const titles = Array.from(container.querySelectorAll('[data-testid="panel-title"]')).map((n) => n.textContent);
-      expect(titles).toEqual(expect.arrayContaining(["Status", "Sync", "Settings"]));
+      expect(titles).toEqual(expect.arrayContaining(["Library", "Manage"]));
+    });
+  });
+
+  describe("status line", () => {
+    it("shows Connected with the host when the server answers", async () => {
+      vi.mocked(backend.testConnection).mockResolvedValue({ success: true, message: "" });
+      vi.mocked(backend.getSettings).mockResolvedValue({ ...defaultSettings(), romm_url: "https://romm.example.com:8443/app" });
+      const { getByTestId } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      expect(getByTestId("status-line").textContent).toContain("Connected");
+      expect(getByTestId("status-host").textContent).toContain("romm.example.com:8443");
+    });
+
+    it("shows no host while not connected", async () => {
+      vi.mocked(backend.testConnection).mockResolvedValue({ success: false, message: "down" });
+      const { getByTestId, queryByTestId } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      expect(getByTestId("status-line").textContent).toContain("Not connected");
+      expect(queryByTestId("status-host")).toBeNull();
+    });
+  });
+
+  describe("Needs attention", () => {
+    it("is not rendered when nothing needs attention", async () => {
+      const { container } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      const titles = Array.from(container.querySelectorAll('[data-testid="panel-title"]')).map((n) => n.textContent);
+      expect(titles).not.toContain("Needs attention");
+    });
+
+    it("lists a missing required Switch key and opens the Systems tab on click", async () => {
+      vi.mocked(backend.getFirmwareStatus).mockResolvedValue({
+        success: true,
+        keys: [
+          { file_name: "prod.keys", description: "", required: true, on_romm: true, firmware_id: 1, size: 1, emulators: [{ id: "eden", label: "Eden", state: "missing" }] },
+          { file_name: "title.keys", description: "", required: true, on_romm: true, firmware_id: 2, size: 1, emulators: [{ id: "eden", label: "Eden", state: "matches" }] },
+        ],
+      });
+      const { container, getByText } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      const titles = Array.from(container.querySelectorAll('[data-testid="panel-title"]')).map((n) => n.textContent);
+      expect(titles).toContain("Needs attention");
+      expect(container.textContent).toContain("Switch keys missing: prod.keys");
+      expect(container.textContent).not.toContain("title.keys");
+      fireEvent.click(getByText("Switch keys missing: prod.keys"));
+      expect(Navigation.Navigate).toHaveBeenCalledWith("/romm-library");
+    });
+
+    it("raises no alarm when the firmware status cannot be read", async () => {
+      vi.mocked(backend.getFirmwareStatus).mockRejectedValue(new Error("offline"));
+      const { container } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      expect(container.textContent).not.toContain("Switch keys missing");
+    });
+  });
+
+  describe("Manage rows", () => {
+    it.each([
+      ["Downloads", "downloads"],
+      ["Platforms & collections", "platforms"],
+      ["Settings", "settings"],
+    ])("%s navigates to the %s page", async (label, page) => {
+      const onNavigate = vi.fn();
+      const { container } = render(<MainPage onNavigate={onNavigate} />);
+      await flushAsync();
+      fireEvent.click(buttonByExactText(container, label)!);
+      expect(onNavigate).toHaveBeenCalledWith(page);
+    });
+
+    it("shows the number of unfinished downloads on the Downloads row", async () => {
+      setDownloads([
+        { rom_id: 1, rom_name: "A", platform_name: "S", file_name: "a", status: "downloading", progress: 0, bytes_downloaded: 0, total_bytes: 10, resumable: false },
+        { rom_id: 2, rom_name: "B", platform_name: "S", file_name: "b", status: "queued", progress: 0, bytes_downloaded: 0, total_bytes: 10, resumable: false },
+      ]);
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
+      try {
+        const { container } = render(<MainPage onNavigate={vi.fn()} />);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1100);
+        });
+        expect(buttonByExactText(container, "Downloads (2)")).not.toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("no longer offers the pages that moved to the RomM Library (System, Data Management)", async () => {
+      const { container } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      expect(buttonByExactText(container, "System")).toBeNull();
+      expect(buttonByExactText(container, "Data Management")).toBeNull();
+      expect(buttonByExactText(container, "Force Full Sync")).toBeNull();
+    });
+  });
+
+  describe("offline", () => {
+    it("disables the sync button and says why when not connected", async () => {
+      vi.mocked(backend.testConnection).mockResolvedValue({ success: false, message: "down" });
+      const { container } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      expect(buttonByExactText(container, "Sync Library")?.disabled).toBe(true);
+      expect(fieldLabels(container)).toContain("Sync needs a connection to the RomM server");
     });
   });
 
@@ -316,7 +420,6 @@ describe("MainPage", () => {
       // (sibling groups), so the label says games, not ROMs (#1298 audit).
       expect(container.textContent).toContain("42 games");
       expect(container.textContent).toContain("3 platforms");
-      expect(container.textContent).toContain("2 collections");
     });
 
     it("testConnection success sets connected=true and clears versionError", async () => {
@@ -578,82 +681,10 @@ describe("MainPage", () => {
     });
   });
 
-  // ===========================================================================
-  // E. Module helpers — exercised via rendered output
-  // ===========================================================================
-  describe("formatBytes (via active download progress remaining text)", () => {
-    async function renderWithActiveDownload(bytes: number, total: number): Promise<HTMLElement> {
-      const item: DownloadItem = {
-        rom_id: 1,
-        rom_name: "Test ROM",
-        platform_name: "Test Platform",
-        file_name: "test.bin",
-        status: "downloading",
-        progress: bytes,
-        bytes_downloaded: bytes,
-        total_bytes: total,
-        resumable: false,
-      };
-      setDownloads([item]);
-      const { container } = render(<MainPage onNavigate={vi.fn()} />);
-      // mount useEffect resolves, then advance the 1000ms downloadPollRef so
-      // local `downloads` state populates from the store.
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(1100);
-      });
-      return container;
-    }
-
-    beforeEach(() => {
-      vi.useFakeTimers({
-        toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"],
-      });
-    });
-
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
-    it("renders bytes < 1024 as '<n> B'", async () => {
-      const c = await renderWithActiveDownload(512, 1024);
-      const remaining = c.querySelector('[data-testid="download-detail"]');
-      expect(remaining?.textContent).toContain("512 B");
-      expect(remaining?.textContent).toContain("1.0 KB");
-    });
-
-    it("renders bytes in MB range with 1 decimal", async () => {
-      const c = await renderWithActiveDownload(2 * 1024 * 1024, 4 * 1024 * 1024);
-      const remaining = c.querySelector('[data-testid="download-detail"]');
-      expect(remaining?.textContent).toContain("2.0 MB");
-      expect(remaining?.textContent).toContain("4.0 MB");
-    });
-
-    it("renders bytes in GB range with 2 decimals", async () => {
-      const c = await renderWithActiveDownload(Math.round(1.5 * 1024 * 1024 * 1024), 2 * 1024 * 1024 * 1024);
-      const remaining = c.querySelector('[data-testid="download-detail"]');
-      expect(remaining?.textContent).toContain("1.50 GB");
-      expect(remaining?.textContent).toContain("2.00 GB");
-    });
-
-    it("renders only the bytes_downloaded value when total_bytes is 0", async () => {
-      const c = await renderWithActiveDownload(700, 0);
-      const remaining = c.querySelector('[data-testid="download-detail"]');
-      expect(remaining?.textContent).toBe("700 B");
-    });
-  });
-
   describe("formatLastSync (via Last sync field)", () => {
     function lastSyncText(container: HTMLElement): string | null {
-      const labels = Array.from(container.querySelectorAll('[data-testid="field-label"]'));
-      const idx = labels.findIndex((n) => n.textContent === "Last sync");
-      if (idx < 0) return null;
-      // Field's children contains the <span> for the value text.
-      const field = labels[idx]?.parentElement;
-      return field?.textContent ?? null;
+      // The Library card carries it as the description of its count line.
+      return /Last sync: .*/.exec(container.textContent ?? "")?.[0] ?? null;
     }
 
     it("renders 'Never' when stats.last_sync is null", async () => {
@@ -1030,7 +1061,7 @@ describe("MainPage", () => {
       });
       // No phantom preview — Apply Sync absent, back to idle (Sync Library back).
       expect(buttonByExactText(container, "Apply Sync")).toBeNull();
-      expect(buttonByExactText(container, "Sync Library")).not.toBeNull();
+      expect(buttonByExactText(container, "Sync Again")).not.toBeNull();
       // Non-vacuous: the abort surfaced the "Sync cancelled" status — only the
       // RC-CANCEL-PREVIEW branch produces idle + that status after a SUCCESS
       // preview, and the stale cancel flag was cleared for the next run.
@@ -1044,9 +1075,9 @@ describe("MainPage", () => {
       await flushAsync();
 
       // Toggle Skip Preview ON.
-      const toggle = container.querySelector('[data-testid="toggle-input"]') as HTMLInputElement | null;
-      expect(toggle).not.toBeNull();
-      fireEvent.click(toggle!);
+      act(() => {
+        setSkipPreview(true);
+      });
       await flushAsync();
 
       await act(async () => {
@@ -1071,8 +1102,9 @@ describe("MainPage", () => {
       });
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
-      const toggle = container.querySelector('[data-testid="toggle-input"]') as HTMLInputElement | null;
-      fireEvent.click(toggle!);
+      act(() => {
+        setSkipPreview(true);
+      });
       await flushAsync();
       await act(async () => {
         fireEvent.click(buttonByExactText(container, "Sync Library")!);
@@ -1097,8 +1129,9 @@ describe("MainPage", () => {
       });
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
-      const toggle = container.querySelector('[data-testid="toggle-input"]') as HTMLInputElement | null;
-      fireEvent.click(toggle!);
+      act(() => {
+        setSkipPreview(true);
+      });
       await flushAsync();
       await act(async () => {
         fireEvent.click(buttonByExactText(container, "Sync Library")!);
@@ -1148,8 +1181,9 @@ describe("MainPage", () => {
       });
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
-      const toggle = container.querySelector('[data-testid="toggle-input"]') as HTMLInputElement | null;
-      fireEvent.click(toggle!);
+      act(() => {
+        setSkipPreview(true);
+      });
       await flushAsync();
       await act(async () => {
         fireEvent.click(buttonByExactText(container, "Sync Library")!);
@@ -1363,7 +1397,7 @@ describe("MainPage", () => {
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(buttonByExactText(container, "Sync Library")).not.toBeNull();
+      expect(buttonByExactText(container, "Sync Again")).not.toBeNull();
       expect(buttonByExactText(container, "Cancelling…")).toBeNull();
       // The terminal stage's message is surfaced (not the cancelSync result's).
       expect(fieldLabels(container)).toContain("Sync cancelled");
@@ -1467,333 +1501,6 @@ describe("MainPage", () => {
   });
 
   // ===========================================================================
-  // J. handleClearCache — Force Full Sync flow
-  // ===========================================================================
-  describe("handleClearCache (Force Full Sync)", () => {
-    it("renders the Force Full Sync button when stats.last_sync is set", async () => {
-      vi.mocked(backend.getSyncStats).mockResolvedValue({
-        ...defaultStats(),
-        last_sync: new Date(Date.now() - 30_000).toISOString(),
-      });
-      const { container } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      expect(buttonByExactText(container, "Force Full Sync")).not.toBeNull();
-    });
-
-    it("hides the Force Full Sync button when stats.last_sync is null", async () => {
-      const { container } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      expect(buttonByExactText(container, "Force Full Sync")).toBeNull();
-    });
-
-    it("clicking Force Full Sync calls clearSyncCache and surfaces result.message", async () => {
-      vi.mocked(backend.getSyncStats).mockResolvedValue({
-        ...defaultStats(),
-        last_sync: new Date(Date.now() - 30_000).toISOString(),
-      });
-      vi.mocked(backend.clearSyncCache).mockResolvedValue({
-        success: true,
-        message: "Cache cleared",
-      });
-      const { container } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Force Full Sync")!);
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(vi.mocked(backend.clearSyncCache)).toHaveBeenCalled();
-      expect(fieldLabels(container)).toContain("Cache cleared");
-    });
-  });
-
-  // ===========================================================================
-  // L. Navigation buttons
-  // ===========================================================================
-  describe("navigation", () => {
-    it("clicking Library invokes onNavigate('library')", async () => {
-      const onNavigate = vi.fn();
-      const { container } = render(<MainPage onNavigate={onNavigate} />);
-      await flushAsync();
-      fireEvent.click(buttonByExactText(container, "Library")!);
-      expect(onNavigate).toHaveBeenCalledWith("library");
-    });
-
-    it("clicking System invokes onNavigate('system')", async () => {
-      const onNavigate = vi.fn();
-      const { container } = render(<MainPage onNavigate={onNavigate} />);
-      await flushAsync();
-      fireEvent.click(buttonByExactText(container, "System")!);
-      expect(onNavigate).toHaveBeenCalledWith("system");
-    });
-
-    it("clicking Settings invokes onNavigate('settings')", async () => {
-      const onNavigate = vi.fn();
-      const { container } = render(<MainPage onNavigate={onNavigate} />);
-      await flushAsync();
-      fireEvent.click(buttonByExactText(container, "Settings")!);
-      expect(onNavigate).toHaveBeenCalledWith("settings");
-    });
-
-    it("clicking Data Management invokes onNavigate('data')", async () => {
-      const onNavigate = vi.fn();
-      const { container } = render(<MainPage onNavigate={onNavigate} />);
-      await flushAsync();
-      fireEvent.click(buttonByExactText(container, "Data Management")!);
-      expect(onNavigate).toHaveBeenCalledWith("data");
-    });
-
-    it("clicking 'View All' (Downloads section) invokes onNavigate('downloads')", async () => {
-      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
-      try {
-        setDownloads([
-          {
-            rom_id: 1,
-            rom_name: "X",
-            platform_name: "Y",
-            file_name: "x.bin",
-            status: "downloading",
-            progress: 0,
-            bytes_downloaded: 0,
-            total_bytes: 1024,
-            resumable: false,
-          },
-        ]);
-        const onNavigate = vi.fn();
-        const { container } = render(<MainPage onNavigate={onNavigate} />);
-        await act(async () => {
-          await Promise.resolve();
-          await Promise.resolve();
-        });
-        // downloadPollRef ticks at 1000ms — advance one tick to populate state.
-        await act(async () => {
-          await vi.advanceTimersByTimeAsync(1100);
-        });
-        fireEvent.click(buttonByExactText(container, "View All")!);
-        expect(onNavigate).toHaveBeenCalledWith("downloads");
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-  });
-
-  // ===========================================================================
-  // M. Downloads section render
-  // ===========================================================================
-  describe("downloads section", () => {
-    // The downloads section local state is populated by downloadPollRef
-    // (1000ms setInterval reading getDownloadState()). Use fake timers +
-    // advance one tick so the store contents propagate into render.
-    beforeEach(() => {
-      vi.useFakeTimers({
-        toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"],
-      });
-    });
-
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
-    async function renderAndTick(): Promise<HTMLElement> {
-      const { container } = render(<MainPage onNavigate={vi.fn()} />);
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(1100);
-      });
-      return container;
-    }
-
-    it("hidden when no downloads in the store", async () => {
-      const container = await renderAndTick();
-      const titles = Array.from(container.querySelectorAll('[data-testid="panel-title"]')).map((n) => n.textContent);
-      expect(titles).not.toContain("Downloads");
-    });
-
-    it("rendered when at least one active download", async () => {
-      setDownloads([
-        {
-          rom_id: 1,
-          rom_name: "Active",
-          platform_name: "Genesis",
-          file_name: "a.bin",
-          status: "downloading",
-          progress: 50,
-          bytes_downloaded: 512,
-          total_bytes: 1024,
-          resumable: false,
-        },
-      ]);
-      const container = await renderAndTick();
-      const titles = Array.from(container.querySelectorAll('[data-testid="panel-title"]')).map((n) => n.textContent);
-      expect(titles).toContain("Downloads");
-    });
-
-    it("shows '+N more in queue' when more than 2 unfinished downloads", async () => {
-      setDownloads([
-        {
-          rom_id: 1,
-          rom_name: "A",
-          platform_name: "X",
-          file_name: "a",
-          status: "downloading",
-          progress: 0,
-          bytes_downloaded: 0,
-          total_bytes: 1024,
-          resumable: false,
-        },
-        {
-          rom_id: 2,
-          rom_name: "B",
-          platform_name: "X",
-          file_name: "b",
-          status: "downloading",
-          progress: 0,
-          bytes_downloaded: 0,
-          total_bytes: 1024,
-          resumable: false,
-        },
-        {
-          rom_id: 3,
-          rom_name: "C",
-          platform_name: "X",
-          file_name: "c",
-          status: "downloading",
-          progress: 0,
-          bytes_downloaded: 0,
-          total_bytes: 1024,
-          resumable: false,
-        },
-      ]);
-      const container = await renderAndTick();
-      expect(container.textContent).toContain("+1 more in queue");
-    });
-
-    it("shows 'N completed' count for finished items", async () => {
-      setDownloads([
-        {
-          rom_id: 1,
-          rom_name: "A",
-          platform_name: "X",
-          file_name: "a",
-          status: "completed",
-          progress: 100,
-          bytes_downloaded: 100,
-          total_bytes: 100,
-          resumable: false,
-        },
-        {
-          rom_id: 2,
-          rom_name: "B",
-          platform_name: "X",
-          file_name: "b",
-          status: "failed",
-          progress: 0,
-          bytes_downloaded: 0,
-          total_bytes: 100,
-          resumable: false,
-        },
-      ]);
-      const container = await renderAndTick();
-      expect(container.textContent).toContain("2 completed");
-    });
-
-    it("active item with total_bytes > 0 renders nProgress = (bytes/total)*100, indeterminate=false", async () => {
-      setDownloads([
-        {
-          rom_id: 1,
-          rom_name: "P",
-          platform_name: "G",
-          file_name: "p",
-          status: "downloading",
-          progress: 25,
-          bytes_downloaded: 256,
-          total_bytes: 1024,
-          resumable: false,
-        },
-      ]);
-      const container = await renderAndTick();
-      const progress = container.querySelector('[data-testid="progress-progress"]');
-      expect(progress?.textContent).toBe("25");
-      const indet = container.querySelector('[data-testid="progress-indeterminate"]');
-      expect(indet?.textContent).toBe("false");
-    });
-
-    it("renders the name and the detail in separate full-width caption slots", async () => {
-      setDownloads([
-        {
-          rom_id: 1,
-          rom_name: "Catherine: Full Body",
-          platform_name: "Nintendo Switch",
-          file_name: "c.xci",
-          status: "downloading",
-          progress: 0,
-          bytes_downloaded: 0,
-          total_bytes: 1024,
-          resumable: true,
-        },
-      ]);
-      const container = await renderAndTick();
-      expect(container.querySelector('[data-testid="download-name"]')?.textContent).toBe("Catherine: Full Body");
-      expect(container.querySelector('[data-testid="download-detail"]')?.textContent).toBe("0 B / 1.0 KB");
-    });
-
-    it("lists paused and interrupted downloads with their status", async () => {
-      setDownloads([
-        {
-          rom_id: 1,
-          rom_name: "Paused Game",
-          platform_name: "X",
-          file_name: "p",
-          status: "paused",
-          progress: 0,
-          bytes_downloaded: 512,
-          total_bytes: 1024,
-          resumable: true,
-        },
-        {
-          rom_id: 2,
-          rom_name: "Dropped Game",
-          platform_name: "X",
-          file_name: "d",
-          status: "interrupted",
-          reason: "server_unreachable",
-          progress: 0,
-          bytes_downloaded: 256,
-          total_bytes: 1024,
-          resumable: true,
-        },
-      ]);
-      const container = await renderAndTick();
-      const details = Array.from(container.querySelectorAll('[data-testid="download-detail"]')).map(
-        (n) => n.textContent,
-      );
-      expect(details).toEqual(["Paused · 512 B / 1.0 KB", "Interrupted — server unreachable"]);
-    });
-
-    it("active item with total_bytes === 0 renders indeterminate=true", async () => {
-      setDownloads([
-        {
-          rom_id: 1,
-          rom_name: "P",
-          platform_name: "G",
-          file_name: "p",
-          status: "downloading",
-          progress: 0,
-          bytes_downloaded: 0,
-          total_bytes: 0,
-          resumable: false,
-        },
-      ]);
-      const container = await renderAndTick();
-      const indet = container.querySelector('[data-testid="progress-indeterminate"]');
-      expect(indet?.textContent).toBe("true");
-    });
-  });
-
-  // ===========================================================================
   // N. Polling cleanup — setInterval / clearInterval spy pattern
   // ===========================================================================
   describe("polling cleanup", () => {
@@ -1871,7 +1578,7 @@ describe("MainPage", () => {
       });
 
       // Torn down: Sync Library button back, final message surfaced, stats refreshed.
-      expect(buttonByExactText(container, "Sync Library")).not.toBeNull();
+      expect(buttonByExactText(container, "Sync Again")).not.toBeNull();
       expect(buttonByExactText(container, "Cancel Sync")).toBeNull();
       expect(fieldLabels(container)).toContain("Sync complete: 7 games");
       expect(vi.mocked(backend.getSyncStats)).toHaveBeenCalledTimes(2);
@@ -1912,8 +1619,9 @@ describe("MainPage", () => {
       );
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
-      const toggle = container.querySelector('[data-testid="toggle-input"]') as HTMLInputElement | null;
-      fireEvent.click(toggle!);
+      act(() => {
+        setSkipPreview(true);
+      });
       await flushAsync();
 
       await act(async () => {
@@ -1933,21 +1641,4 @@ describe("MainPage", () => {
     });
   });
 
-  // ===========================================================================
-  // O. Skip Preview toggle
-  // ===========================================================================
-  describe("Skip Preview toggle", () => {
-    it("flipping the toggle ON updates the checkbox state", async () => {
-      const { container } = render(<MainPage onNavigate={vi.fn()} />);
-      await flushAsync();
-      const toggle = container.querySelector('[data-testid="toggle-input"]') as HTMLInputElement | null;
-      expect(toggle).not.toBeNull();
-      expect(toggle!.checked).toBe(false);
-      fireEvent.click(toggle!);
-      await flushAsync();
-      // Re-query — the toggle is re-rendered.
-      const updated = container.querySelector('[data-testid="toggle-input"]') as HTMLInputElement | null;
-      expect(updated!.checked).toBe(true);
-    });
-  });
 });
