@@ -32,7 +32,7 @@ export const QAMPanel: FC = () => {
     // position. Force focus to the first button so navigation starts at the
     // top. Same querySelector + .focus() + gpfocus pattern as CustomPlayButton.
     const focusTimer = setTimeout(() => {
-      const btn = el.querySelector("button");
+      const btn = el.querySelector<HTMLElement>("button, .rm-btn, .rm-navrow, .rm-att");
       if (btn) {
         btn.focus();
         btn.classList.add("gpfocus");

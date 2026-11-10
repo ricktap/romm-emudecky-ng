@@ -1,6 +1,7 @@
 import { FC, useEffect, useState } from "react";
 import { addEventListener, removeEventListener, toaster } from "@decky/api";
-import { DialogButton, Focusable } from "@decky/ui";
+import { Focusable } from "@decky/ui";
+import { Icon, RmButton, RmStyles } from "./rm";
 import { downloadRequiredFirmware, getFirmwareStatus, getInstalledRom, getSaveStatus } from "../api/backend";
 import { getDownloadState } from "../utils/downloadStore";
 import { biosChip, romChip, savesChip, type ReadinessChip } from "../utils/readiness";
@@ -17,8 +18,6 @@ interface ReadinessStripProps {
   saveSyncLabel: string;
   activeCoreLabel: string | null;
 }
-
-const TONE_COLOR = { ok: "#59bf40", warn: "#d4a72c", neutral: "#8b929a" } as const;
 
 /**
  * Three chips under the play row: ROM, BIOS and Saves, each with a one-line state and, where there is something to
@@ -114,48 +113,39 @@ export const ReadinessStrip: FC<ReadinessStripProps> = ({
     savesChip({ saveSyncEnabled, status: saveSyncStatus, label: saveSyncLabel }),
   ];
 
+  const icon = (tone: ReadinessChip["tone"], id: ReadinessChip["id"], title: string) =>
+    tone === "warn" ? (
+      <Icon name="warn" size={20} className="rm-ic-warn" />
+    ) : tone === "ok" ? (
+      <Icon name="okc" size={20} className="rm-ic-ok" />
+    ) : id === "rom" && /Download|Queued|Extract/.test(title) ? (
+      <Icon name="busy" size={20} className="rm-ic-busy" />
+    ) : (
+      <Icon name="neu" size={20} className="rm-ic-neu" />
+    );
+
   return (
-    <Focusable
-      data-romm="true"
-      className="romm-readiness-strip"
-      flow-children="right"
-      style={{ display: "flex", gap: "12px", padding: "8px 2.8vw 0", boxSizing: "border-box" }}
-    >
+    <Focusable data-romm="true" className="rm-root rm-ready romm-readiness-strip" flow-children="right" style={{ background: "transparent" }}>
+      <RmStyles />
       {chips.map((chip) => (
-        <div
-          key={chip.id}
-          data-testid={`chip-${chip.id}`}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            padding: "8px 12px",
-            borderRadius: "4px",
-            background: chip.tone === "warn" ? "rgba(212, 167, 44, 0.15)" : "rgba(14, 20, 27, 0.33)",
-            border: `1px solid ${chip.tone === "warn" ? "#4a3f1d" : "transparent"}`,
-          }}
-        >
-          <span style={{ width: "8px", height: "8px", borderRadius: "4px", flex: "none", background: TONE_COLOR[chip.tone] }} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.06em", opacity: 0.7 }}>
-              {chip.title.toUpperCase()}
+        <div key={chip.id} data-testid={`chip-${chip.id}`} className={`rm-rchip${chip.tone === "warn" ? " rm-warn" : ""}`}>
+          {icon(chip.tone, chip.id, chip.title)}
+          <div className="rm-rtx">
+            <div className="rm-rt" data-testid={`chip-${chip.id}-title`}>
+              {chip.title}
             </div>
-            <div
-              data-testid={`chip-${chip.id}-detail`}
-              style={{ fontSize: "12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-            >
+            <div className="rm-rs" data-testid={`chip-${chip.id}-detail`}>
               {chip.detail}
             </div>
           </div>
           {chip.fix && (
-            <DialogButton
-              style={{ minWidth: "auto", width: "auto", padding: "4px 12px", height: "28px", fontSize: "12px" }}
-              onClick={() => detach(chip.fix === "get_bios" ? getBios() : chip.fix === "choose_save" ? chooseSave() : resolveConflict())}
+            <RmButton
+              variant="sm warn"
+              testId={`chip-${chip.id}-fix`}
+              onActivate={() => detach(chip.fix === "get_bios" ? getBios() : chip.fix === "choose_save" ? chooseSave() : resolveConflict())}
             >
               {chip.fixLabel}
-            </DialogButton>
+            </RmButton>
           )}
         </div>
       ))}

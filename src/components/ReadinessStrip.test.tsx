@@ -46,9 +46,12 @@ describe("ReadinessStrip", () => {
     vi.mocked(getInstalledRom).mockResolvedValue({ rom_id: 5, file_name: "Zelda.nsp" } as never);
     const { getByTestId } = render(<ReadinessStrip {...props} />);
     await flush();
-    expect(getByTestId("chip-rom-detail").textContent).toBe("Installed · Zelda.nsp");
-    expect(getByTestId("chip-bios-detail").textContent).toBe("Keys ready · Eden");
-    expect(getByTestId("chip-saves-detail").textContent).toBe("Synced · 2h ago");
+    expect(getByTestId("chip-rom-title").textContent).toBe("ROM installed");
+    expect(getByTestId("chip-rom-detail").textContent).toBe("Zelda.nsp");
+    expect(getByTestId("chip-bios-title").textContent).toBe("BIOS ready");
+    expect(getByTestId("chip-bios-detail").textContent).toBe("Eden");
+    expect(getByTestId("chip-saves-title").textContent).toBe("Saves synced");
+    expect(getByTestId("chip-saves-detail").textContent).toBe("2h ago");
   });
 
   it("follows the download queue for this ROM, but not another ROM or a firmware job", async () => {
@@ -60,20 +63,21 @@ describe("ReadinessStrip", () => {
       { rom_id: 5, rom_name: "Z", platform_name: "S", file_name: "z", status: "downloading", progress: 0, bytes_downloaded: 25, total_bytes: 100, resumable: true } as never,
     ]);
     await act(async () => { await vi.advanceTimersByTimeAsync(1100); });
-    expect(getByTestId("chip-rom-detail").textContent).toBe("Downloading 25%");
+    expect(getByTestId("chip-rom-title").textContent).toBe("Downloading");
+    expect(getByTestId("chip-rom-detail").textContent).toBe("25%");
   });
 
   it("re-reads the install state when this ROM's download completes", async () => {
     const { getByTestId } = render(<ReadinessStrip {...props} />);
     await flush();
-    expect(getByTestId("chip-rom-detail").textContent).toBe("Not downloaded");
+    expect(getByTestId("chip-rom-title").textContent).toBe("Not downloaded");
     vi.mocked(getInstalledRom).mockResolvedValue({ rom_id: 5, file_name: "Z.nsp" } as never);
     act(() => { emitDeckyEvent("download_complete", { rom_id: 4 }); });
     await flush();
-    expect(getByTestId("chip-rom-detail").textContent).toBe("Not downloaded");
+    expect(getByTestId("chip-rom-title").textContent).toBe("Not downloaded");
     act(() => { emitDeckyEvent("download_complete", { rom_id: 5 }); });
     await flush();
-    expect(getByTestId("chip-rom-detail").textContent).toBe("Installed · Z.nsp");
+    expect(getByTestId("chip-rom-detail").textContent).toBe("Z.nsp");
   });
 
   it("clears the installed state on an uninstall of this ROM", async () => {
@@ -81,7 +85,7 @@ describe("ReadinessStrip", () => {
     const { getByTestId } = render(<ReadinessStrip {...props} />);
     await flush();
     act(() => { globalThis.dispatchEvent(new CustomEvent("romm_rom_uninstalled", { detail: { rom_id: 5 } })); });
-    expect(getByTestId("chip-rom-detail").textContent).toBe("Not downloaded");
+    expect(getByTestId("chip-rom-title").textContent).toBe("Not downloaded");
   });
 
   it("missing keys: warns, Get queues the required firmware for the platform, and the chip updates when it lands", async () => {
@@ -89,14 +93,15 @@ describe("ReadinessStrip", () => {
     vi.mocked(downloadRequiredFirmware).mockResolvedValue({ success: true, message: "Queued 2 downloads", queued: 2 });
     const { getByTestId, getByText } = render(<ReadinessStrip {...props} />);
     await flush();
-    expect(getByTestId("chip-bios-detail").textContent).toBe("Missing prod.keys");
+    expect(getByTestId("chip-bios-title").textContent).toBe("BIOS missing");
+    expect(getByTestId("chip-bios-detail").textContent).toBe("prod.keys on RomM");
     await act(async () => { fireEvent.click(getByText("Get")); });
     expect(downloadRequiredFirmware).toHaveBeenCalledWith("switch");
     expect(toaster.toast).toHaveBeenCalledWith(expect.objectContaining({ body: "Queued 2 downloads" }));
     vi.mocked(getFirmwareStatus).mockResolvedValue(keys("matches") as never);
     act(() => { globalThis.dispatchEvent(new CustomEvent("romm_data_changed", { detail: { type: "firmware" } })); });
     await flush();
-    expect(getByTestId("chip-bios-detail").textContent).toBe("Keys ready · Eden");
+    expect(getByTestId("chip-bios-title").textContent).toBe("BIOS ready");
   });
 
   it("a failing Get says so", async () => {
@@ -111,7 +116,8 @@ describe("ReadinessStrip", () => {
   it("other platforms need no BIOS and never ask for the firmware status", async () => {
     const { getByTestId } = render(<ReadinessStrip {...props} platformSlug="snes" />);
     await flush();
-    expect(getByTestId("chip-bios-detail").textContent).toBe("No BIOS needed · Eden");
+    expect(getByTestId("chip-bios-title").textContent).toBe("No BIOS needed");
+    expect(getByTestId("chip-bios-detail").textContent).toBe("Eden");
     expect(getFirmwareStatus).not.toHaveBeenCalled();
   });
 
@@ -140,6 +146,7 @@ describe("ReadinessStrip", () => {
     await act(async () => { fireEvent.click(getByText("Resolve")); });
     expect(seen).toEqual([]);
     vi.mocked(getSaveStatus).mockRejectedValue(new Error("x"));
+    await new Promise((r) => setTimeout(r, 300)); // a second press within 250 ms counts once
     await act(async () => { fireEvent.click(getByText("Resolve")); });
     expect(toaster.toast).toHaveBeenCalledWith(expect.objectContaining({ body: "Could not load the save conflict" }));
     globalThis.removeEventListener("romm_data_changed", rec);
@@ -152,12 +159,14 @@ describe("ReadinessStrip", () => {
     globalThis.addEventListener("romm_data_changed", rec);
     const { getByText, getByTestId } = render(<ReadinessStrip {...props} saveSyncStatus="none" saveSyncLabel="Choose save folder" />);
     await flush();
+    expect(getByTestId("chip-saves-title").textContent).toBe("Save not found");
     expect(getByTestId("chip-saves-detail").textContent).toBe("Choose save folder");
     await act(async () => { fireEvent.click(getByText("Choose")); });
     expect(showSaveSetupModal).toHaveBeenCalledWith(5);
     expect(seen).toContainEqual({ type: "save_sync", rom_id: 5 });
     vi.mocked(showSaveSetupModal).mockResolvedValue(false);
     seen.length = 0;
+    await new Promise((r) => setTimeout(r, 300));
     await act(async () => { fireEvent.click(getByText("Choose")); });
     expect(seen).toEqual([]);
     globalThis.removeEventListener("romm_data_changed", rec);

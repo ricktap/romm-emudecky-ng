@@ -766,8 +766,8 @@ export const RomMGameInfoPanel: FC<RomMGameInfoPanelProps> = ({ appId }) => { //
             style: {
               background: "transparent",
               border: "none",
-              borderBottom: state.activeTab === t.id ? "2px solid #1a9fff" : "2px solid transparent",
-              padding: "10px 16px",
+              borderBottom: state.activeTab === t.id ? "3px solid #1a9fff" : "3px solid transparent",
+              padding: "12px 14px",
               minWidth: "auto",
               width: "auto",
             },

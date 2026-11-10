@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
 import { Navigation } from "@decky/ui";
-import { UpdateBanner, updateTitle } from "./UpdateBanner";
+import { UpdateBanner, UpdateNotice, updateTitle } from "./UpdateBanner";
+import { getLibraryTab } from "../utils/libraryRoute";
 import type { UpdateCheckSuccess } from "../types";
 
 function info(overrides: Partial<UpdateCheckSuccess> = {}): UpdateCheckSuccess {
@@ -27,29 +28,41 @@ const flushAsync = () =>
     await Promise.resolve();
   });
 
-function buttonByText(container: HTMLElement, text: string): HTMLButtonElement | undefined {
-  return Array.from(container.querySelectorAll("button")).find((b) => b.textContent === text);
+function buttonByText(container: HTMLElement, text: string): HTMLElement | undefined {
+  return Array.from(container.querySelectorAll<HTMLElement>("button, [data-testid='focusable']")).find((b) => b.textContent === text);
 }
 
-describe("UpdateBanner", () => {
+describe("UpdateBanner (the attention row)", () => {
+  it("names the update and opens the Settings tab, where the Plugin card has the Update button", () => {
+    const { getByTestId } = render(<UpdateBanner info={info()} />);
+    expect(getByTestId("attention-row").textContent).toContain("Update available: v0.33.0");
+    expect(getByTestId("attention-row").textContent).toContain("Installed v0.32.0");
+    fireEvent.click(getByTestId("attention-row"));
+    expect(getLibraryTab()).toBe("settings");
+    expect(Navigation.Navigate).toHaveBeenCalledWith("/romm-library");
+  });
+});
+
+describe("UpdateNotice", () => {
   beforeEach(() => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
 
   it("shows the version title, installed version and short notes", () => {
-    const { getByText, getByTestId } = render(<UpdateBanner info={info()} />);
+    const { getByText, getByTestId } = render(<UpdateNotice info={info()} />);
     expect(getByText("Update available: v0.33.0")).toBeTruthy();
     expect(getByText("Installed: v0.32.0")).toBeTruthy();
     expect(getByTestId("update-notes").textContent).toBe("Short notes");
     expect(updateTitle(info())).toBe("Update available: v0.33.0");
   });
 
-  it("collapses long notes behind a toggle", () => {
+  it("collapses long notes behind a toggle", async () => {
     const long = "x".repeat(400);
-    const { container, queryByTestId } = render(<UpdateBanner info={info({ notes: long })} />);
+    const { container, queryByTestId } = render(<UpdateNotice info={info({ notes: long })} />);
     expect(queryByTestId("update-notes")).toBeNull();
     fireEvent.click(buttonByText(container, "Show release notes")!);
     expect(queryByTestId("update-notes")!.textContent).toBe(long);
+    await new Promise((r) => setTimeout(r, 300)); // a second press of the same button within 250 ms counts once
     fireEvent.click(buttonByText(container, "Hide release notes")!);
     expect(queryByTestId("update-notes")).toBeNull();
   });
@@ -58,7 +71,7 @@ describe("UpdateBanner", () => {
     const call = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("DeckyBackend", { call });
     const i = info();
-    const { container, queryByText } = render(<UpdateBanner info={i} />);
+    const { container, queryByText } = render(<UpdateNotice info={i} />);
     fireEvent.click(buttonByText(container, "Update")!);
     await flushAsync();
     expect(call).toHaveBeenCalledWith("utilities/install_plugin", i.asset_url, "Backend Supplied Name", "0.33.0", i.sha256, 2);
@@ -67,7 +80,7 @@ describe("UpdateBanner", () => {
 
   it("falls back to a download link when DeckyBackend is missing", async () => {
     vi.stubGlobal("DeckyBackend", undefined);
-    const { container, getByText } = render(<UpdateBanner info={info()} />);
+    const { container, getByText } = render(<UpdateNotice info={info()} />);
     fireEvent.click(buttonByText(container, "Update")!);
     await flushAsync();
     expect(getByText("Couldn't start the update — download v0.33.0")).toBeTruthy();
@@ -79,7 +92,7 @@ describe("UpdateBanner", () => {
 
   it("falls back to a download link when the Decky call throws", async () => {
     vi.stubGlobal("DeckyBackend", { call: vi.fn().mockRejectedValue(new Error("nope")) });
-    const { container, getByText } = render(<UpdateBanner info={info()} />);
+    const { container, getByText } = render(<UpdateNotice info={info()} />);
     fireEvent.click(buttonByText(container, "Update")!);
     await flushAsync();
     expect(getByText("Couldn't start the update — download v0.33.0")).toBeTruthy();
@@ -89,7 +102,7 @@ describe("UpdateBanner", () => {
   it("falls back when the backend could not read the plugin name", async () => {
     const call = vi.fn();
     vi.stubGlobal("DeckyBackend", { call });
-    const { container, getByText } = render(<UpdateBanner info={info({ plugin_name: "" })} />);
+    const { container, getByText } = render(<UpdateNotice info={info({ plugin_name: "" })} />);
     fireEvent.click(buttonByText(container, "Update")!);
     await flushAsync();
     expect(call).not.toHaveBeenCalled();

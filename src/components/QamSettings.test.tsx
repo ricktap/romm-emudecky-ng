@@ -33,50 +33,49 @@ describe("QamSettings", () => {
 
   it("Back calls onBack", async () => {
     const onBack = vi.fn();
-    const { getByText, findByText } = render(<QamSettings onBack={onBack} />);
+    const { getByLabelText, findByText } = render(<QamSettings onBack={onBack} />);
     await findByText("romm.local:8080");
-    fireEvent.click(getByText("Back"));
+    fireEvent.click(getByLabelText("Back"));
     expect(onBack).toHaveBeenCalled();
   });
 
   it("says the settings are unavailable when they cannot be read", async () => {
     vi.mocked(getSaveSyncSettings).mockRejectedValue(new Error("backend down"));
-    const { findByText, queryByText } = render(<QamSettings onBack={vi.fn()} />);
+    const { findByText, queryByLabelText } = render(<QamSettings onBack={vi.fn()} />);
     expect(await findByText("Save sync settings unavailable")).toBeTruthy();
-    expect(queryByText("Enable save sync")).toBeNull();
+    expect(queryByLabelText("Save sync")).toBeNull();
   });
 
   it("changing a save-sync toggle saves the whole settings object", async () => {
-    const { findByText, getAllByTestId } = render(<QamSettings onBack={vi.fn()} />);
+    const { findByText, getByLabelText } = render(<QamSettings onBack={vi.fn()} />);
     await findByText("Sync after exit");
-    // toggles in order: enable, before launch, after exit, skip preview
     await act(async () => {
-      fireEvent.click(getAllByTestId("toggle-input")[2]!);
+      fireEvent.click(getByLabelText("Sync after exit"));
     });
     expect(updateSaveSyncSettings).toHaveBeenCalledWith({ ...saveSync, sync_after_exit: true });
   });
 
   it("hides the triggers while save sync is off", async () => {
     vi.mocked(getSaveSyncSettings).mockResolvedValue({ ...saveSync, save_sync_enabled: false });
-    const { findByText, queryByText } = render(<QamSettings onBack={vi.fn()} />);
-    await findByText("Enable save sync");
-    expect(queryByText("Sync before launch")).toBeNull();
+    const { findByLabelText, queryByLabelText } = render(<QamSettings onBack={vi.fn()} />);
+    await findByLabelText("Save sync");
+    expect(queryByLabelText("Sync before launch")).toBeNull();
   });
 
   it("puts a toggle back when saving fails", async () => {
     vi.mocked(updateSaveSyncSettings).mockRejectedValue(new Error("fail"));
-    const { findByText, getAllByTestId } = render(<QamSettings onBack={vi.fn()} />);
+    const { findByText, getByLabelText } = render(<QamSettings onBack={vi.fn()} />);
     await findByText("Sync after exit");
     await act(async () => {
-      fireEvent.click(getAllByTestId("toggle-input")[2]!);
+      fireEvent.click(getByLabelText("Sync after exit"));
     });
-    await waitFor(() => expect((getAllByTestId("toggle-input")[2] as HTMLInputElement).checked).toBe(false));
+    await waitFor(() => expect(getByLabelText("Sync after exit").className).not.toContain("rm-on"));
   });
 
   it("the skip-preview toggle writes the shared preference", async () => {
-    const { findByText, getAllByTestId } = render(<QamSettings onBack={vi.fn()} />);
+    const { findByText, getByLabelText } = render(<QamSettings onBack={vi.fn()} />);
     await findByText("Sync after exit");
-    fireEvent.click(getAllByTestId("toggle-input")[3]!);
+    fireEvent.click(getByLabelText("Skip sync preview"));
     expect(getSkipPreview()).toBe(true);
   });
 });

@@ -43,7 +43,7 @@ export const RmButton: FC<RmButtonProps> = ({ children, variant = "", onActivate
       onClick={fire}
       {...(label ? { "aria-label": label } : {})}
       {...(testId ? { "data-testid": testId } : {})}
-      {...(disabled ? { style: { opacity: 0.45 } } : {})}
+      {...(disabled ? { style: { opacity: 0.45 }, "aria-disabled": true } : {})}
     >
       {children}
     </Focusable>
@@ -57,4 +57,4 @@ export const Glyph: FC<{ children: ReactNode; side?: "left" | "right" }> = ({ ch
   </span>
 );
 
-export { RmCard, RmRow, RmValueRow, RmToggle, RmChoice } from "./Controls";
+export { RmCard, RmRow, RmValueRow, RmToggle, RmChoice, NavRow, AttRow, QamHeader, RmSegments } from "./Controls";

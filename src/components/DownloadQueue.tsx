@@ -23,7 +23,7 @@ import { phaseLines, useNowMs } from "../utils/downloadPhase";
 import { callArgs, downloadKey } from "../utils/downloadKey";
 import type { DownloadItem } from "../types";
 import { openLibraryRoute } from "../utils/libraryRoute";
-import { Icon, RmButton, RmStyles } from "./rm";
+import { Icon, QamHeader, RmButton, RmStyles } from "./rm";
 import { platformAbbrev, tintFor } from "../utils/libraryGrid";
 
 interface DownloadQueueProps {
@@ -330,12 +330,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack, compact }) => {
   return (
     <div className="rm-root" style={{ background: "transparent" }}>
       {compact && <RmStyles />}
-      {compact && (
-        <RmButton variant="block" onActivate={onBack}>
-          <Icon name="back" size={16} />
-          Back
-        </RmButton>
-      )}
+      {compact && <QamHeader title="Downloads" onBack={onBack} />}
       {!compact && (
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
           <h2 style={{ margin: 0, fontSize: 18, color: "#fff" }}>Queue</h2>

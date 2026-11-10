@@ -1,5 +1,6 @@
 import { FC, useState } from "react";
-import { PanelSection, PanelSectionRow, ButtonItem } from "@decky/ui";
+import { AttRow, RmButton } from "./rm";
+import { openLibraryRoute } from "../utils/libraryRoute";
 import type { UpdateCheckSuccess } from "../types";
 import { startSelfUpdate, openReleasePage } from "../utils/selfUpdate";
 
@@ -39,75 +40,47 @@ export const UpdateNotice: FC<UpdateNoticeProps> = ({ info }) => {
   };
 
   return (
-    <>
-      <PanelSectionRow>
-        <div
-          style={{
-            padding: "8px 12px",
-            backgroundColor: "rgba(26, 159, 255, 0.15)",
-            borderLeft: "3px solid #1a9fff",
-            borderRadius: "4px",
-          }}
-        >
-          <div style={{ fontSize: "13px", fontWeight: "bold", color: "#1a9fff", marginBottom: "4px" }}>
-            {updateTitle(info)}
-          </div>
-          <div style={{ fontSize: "12px", color: "rgba(255, 255, 255, 0.7)" }}>
-            Installed: v{info.current_version}
-          </div>
-          {notes && (!longNotes || showNotes) && (
-            <div
-              data-testid="update-notes"
-              style={{
-                marginTop: "6px",
-                fontSize: "12px",
-                color: "rgba(255, 255, 255, 0.85)",
-                lineHeight: 1.4,
-                whiteSpace: "pre-wrap",
-                maxHeight: "220px",
-                overflowY: "auto",
-              }}
-            >
-              {notes}
-            </div>
-          )}
-          {failed && (
-            <div style={{ marginTop: "6px", fontSize: "12px", color: "#d4a72c" }}>{updateFallbackMessage(info)}</div>
-          )}
+    <div className="rm-card" data-testid="update-notice-card">
+      <h3>{updateTitle(info)}</h3>
+      <div className="rm-muted">Installed: v{info.current_version}</div>
+      {notes && (!longNotes || showNotes) && (
+        <div data-testid="update-notes" className="rm-notes" style={{ marginTop: 6 }}>
+          {notes}
         </div>
-      </PanelSectionRow>
-      {longNotes && (
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => setShowNotes(!showNotes)}>
-            {showNotes ? "Hide release notes" : "Show release notes"}
-          </ButtonItem>
-        </PanelSectionRow>
       )}
-      <PanelSectionRow>
-        <ButtonItem
-          layout="below"
+      {failed && (
+        <div style={{ marginTop: 6, fontSize: 12, color: "#d4a72c" }}>{updateFallbackMessage(info)}</div>
+      )}
+      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+        {longNotes && (
+          <RmButton variant="sm ghost" onActivate={() => setShowNotes(!showNotes)}>
+            {showNotes ? "Hide release notes" : "Show release notes"}
+          </RmButton>
+        )}
+        <RmButton
+          variant="sm primary"
           disabled={starting}
-          onClick={() => {
+          onActivate={() => {
             handleUpdate().catch(() => setFailed(true));
           }}
         >
           {starting ? "Starting update…" : "Update"}
-        </ButtonItem>
-      </PanelSectionRow>
-      {failed && (
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => openReleasePage(info.html_url)}>
+        </RmButton>
+        {failed && (
+          <RmButton variant="sm ghost" onActivate={() => openReleasePage(info.html_url)}>
             Download v{info.latest_version}
-          </ButtonItem>
-        </PanelSectionRow>
-      )}
-    </>
+          </RmButton>
+        )}
+      </div>
+    </div>
   );
 };
 
-/** QAM main-page banner shown while a newer release is available. */
+/** QAM attention row shown while a newer release is available; it opens the Plugin card in Settings, which has the Update button. */
 export const UpdateBanner: FC<UpdateNoticeProps> = ({ info }) => (
-  <PanelSection title="Update">
-    <UpdateNotice info={info} />
-  </PanelSection>
+  <AttRow
+    title={updateTitle(info)}
+    sub={`Installed v${info.current_version} · open Settings to update`}
+    onActivate={() => openLibraryRoute("settings")}
+  />
 );

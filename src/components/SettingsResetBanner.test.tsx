@@ -41,12 +41,8 @@ describe("SettingsResetBanner component", () => {
     setSettingsResetState({ pending: true, backedUpTo: "settings.json.corrupt-seed" });
   });
 
-  it("renders the PanelSection title + the message naming the backup", () => {
+  it("renders the title + the message naming the backup", () => {
     const { container } = render(<SettingsResetBanner backedUpTo="settings.json.corrupt-1781697600" />);
-    // PanelSection's `title` prop is forwarded by the global stub as a DOM
-    // attribute on <section>, so assert via getAttribute, not textContent.
-    const section = container.querySelector("section");
-    expect(section?.getAttribute("title")).toBe(SETTINGS_RESET_TITLE);
     expect(container.textContent).toContain(SETTINGS_RESET_TITLE);
     expect(container.textContent).toContain("Re-enter your server URL and sign in again");
     expect(container.textContent).toContain("settings.json.corrupt-1781697600");
@@ -57,16 +53,16 @@ describe("SettingsResetBanner component", () => {
     expect(container.textContent).toContain("A backup of your old settings was saved.");
   });
 
-  it("renders a Dismiss button", () => {
-    const { getByText } = render(<SettingsResetBanner backedUpTo="settings.json.corrupt-9" />);
-    expect(getByText("Dismiss")).toBeInTheDocument();
+  it("is one attention row that says pressing it dismisses", () => {
+    const { getByTestId } = render(<SettingsResetBanner backedUpTo="settings.json.corrupt-9" />);
+    expect(getByTestId("attention-row").textContent).toContain("Press to dismiss.");
   });
 
   it("Dismiss → calls dismissSettingsResetNotice and clears the shared store on success", async () => {
     vi.mocked(backend.dismissSettingsResetNotice).mockResolvedValue({ success: true });
-    const { getByText } = render(<SettingsResetBanner backedUpTo="settings.json.corrupt-9" />);
+    const { getByTestId } = render(<SettingsResetBanner backedUpTo="settings.json.corrupt-9" />);
     await act(async () => {
-      fireEvent.click(getByText("Dismiss"));
+      fireEvent.click(getByTestId("attention-row"));
       await flushAsync();
     });
     expect(backend.dismissSettingsResetNotice).toHaveBeenCalledTimes(1);
@@ -76,9 +72,9 @@ describe("SettingsResetBanner component", () => {
 
   it("Dismiss rejection → logs the error and leaves the store pending (banner stays up)", async () => {
     vi.mocked(backend.dismissSettingsResetNotice).mockRejectedValue(new Error("disk full"));
-    const { getByText } = render(<SettingsResetBanner backedUpTo="settings.json.corrupt-9" />);
+    const { getByTestId } = render(<SettingsResetBanner backedUpTo="settings.json.corrupt-9" />);
     await act(async () => {
-      fireEvent.click(getByText("Dismiss"));
+      fireEvent.click(getByTestId("attention-row"));
       await flushAsync();
     });
     // CATCH-REJECTION rule: assert the post-catch side effect (the logError).

@@ -1,14 +1,5 @@
 import { useState, useEffect, useMemo, useRef, FC } from "react";
-import {
-  PanelSection,
-  PanelSectionRow,
-  ButtonItem,
-  ToggleField,
-  Spinner,
-  DialogButton,
-  Field,
-  Focusable,
-} from "@decky/ui";
+import { QamHeader, RmButton, RmRow, RmSegments, RmStyles, RmToggle, RmValueRow } from "./rm";
 import {
   getPlatforms,
   savePlatformSync,
@@ -20,7 +11,6 @@ import {
   getSettings,
 } from "../api/backend";
 import type { PlatformSyncSetting, CollectionSyncSetting, CollectionKind, CollectionScope } from "../types";
-import { scrollToTop } from "../utils/scrollHelpers";
 import { detach } from "../utils/detach";
 
 type CollectionSubTab = "my" | "smart" | "franchise";
@@ -189,91 +179,48 @@ export const LibraryPage: FC<LibraryPageProps> = ({ onBack }) => {
 
   // --- Platforms tab content ---
   const renderPlatformsContent = () => {
-    if (syncLoading) {
-      return (
-        <PanelSectionRow>
-          <Spinner />
-        </PanelSectionRow>
-      );
-    }
+    if (syncLoading) return <div className="rm-muted" data-testid="loading">Loading…</div>;
     if (syncError) {
       return (
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={onBack}>
-            Failed to load platforms
-          </ButtonItem>
-        </PanelSectionRow>
+        <RmButton variant="block" onActivate={onBack}>
+          Failed to load platforms
+        </RmButton>
       );
     }
     return (
       <>
-        <PanelSectionRow>
-          <Field label="Changes apply on the next sync" focusable />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            onClick={() => {
-              detach(handleSetAll(true));
-            }}
-          >
+        <div className="rm-muted rm-small" style={{ marginBottom: 8 }}>Changes apply on the next sync</div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <RmButton variant="sm ghost" className="rm-grow" onActivate={() => detach(handleSetAll(true))}>
             Enable All
-          </ButtonItem>
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            onClick={() => {
-              detach(handleSetAll(false));
-            }}
-          >
+          </RmButton>
+          <RmButton variant="sm ghost" className="rm-grow" onActivate={() => detach(handleSetAll(false))}>
             Disable All
-          </ButtonItem>
-        </PanelSectionRow>
-        {syncPlatforms.map((platform) => (
-          <PanelSectionRow key={platform.id}>
-            <ToggleField
-              label={platform.name}
-              description={`${platform.rom_count} ROMs`}
-              checked={platform.sync_enabled}
-              onChange={(value: boolean) => {
-                detach(handleToggle(platform.id, value));
-              }}
-            />
-          </PanelSectionRow>
-        ))}
+          </RmButton>
+        </div>
+        <div className="rm-scard">
+          {syncPlatforms.map((platform) => (
+            <RmRow key={platform.id} label={platform.name} sub={`${platform.rom_count} ROMs`}>
+              <RmToggle
+                label={platform.name}
+                checked={platform.sync_enabled}
+                onChange={(value) => detach(handleToggle(platform.id, value))}
+              />
+            </RmRow>
+          ))}
+        </div>
       </>
     );
   };
 
   // --- Collections tab content ---
   const renderCollectionsContent = () => {
-    if (collectionsLoading) {
-      return (
-        <PanelSection title="Collections">
-          <PanelSectionRow>
-            <Spinner />
-          </PanelSectionRow>
-        </PanelSection>
-      );
-    }
+    if (collectionsLoading) return <div className="rm-muted" data-testid="loading">Loading…</div>;
     if (collectionsError) {
-      return (
-        <PanelSection title="Collections">
-          <PanelSectionRow>
-            <Field label="Failed to load collections" description="Check your connection and try again" focusable />
-          </PanelSectionRow>
-        </PanelSection>
-      );
+      return <RmValueRow label="Failed to load collections" sub="Check your connection and try again" />;
     }
     if (collections.length === 0) {
-      return (
-        <PanelSection title="Collections">
-          <PanelSectionRow>
-            <Field label="No collections found" description="Create collections in RomM to sync them here" focusable />
-          </PanelSectionRow>
-        </PanelSection>
-      );
+      return <RmValueRow label="No collections found" sub="Create collections in RomM to sync them here" />;
     }
 
     // When the favorites toggle isn't rendered (zero or multi-favorites case),
@@ -285,13 +232,12 @@ export const LibraryPage: FC<LibraryPageProps> = ({ onBack }) => {
 
     return (
       <>
-        <PanelSection>
-          <PanelSectionRow>
-            <ToggleField
+        <div className="rm-scard">
+          <RmRow label="Show collection games in platform groups" sub="When syncing a collection, also add its games to their platform-specific Steam group.">
+            <RmToggle
               label="Show collection games in platform groups"
-              description="When syncing a collection, also add its games to their platform-specific Steam group."
               checked={platformGroups}
-              onChange={(value: boolean) => {
+              onChange={(value) => {
                 setPlatformGroups(value);
                 detach(
                   (async () => {
@@ -304,126 +250,66 @@ export const LibraryPage: FC<LibraryPageProps> = ({ onBack }) => {
                 );
               }}
             />
-          </PanelSectionRow>
+          </RmRow>
           {favoritesCollection && (
-            <PanelSectionRow>
-              <ToggleField
+            <RmRow label="Sync RomM favorites" sub={favoritesDescription(favoritesCollection.rom_count)}>
+              <RmToggle
                 label="Sync RomM favorites"
-                description={favoritesDescription(favoritesCollection.rom_count)}
                 checked={favoritesCollection.sync_enabled}
-                onChange={(value: boolean) => {
-                  detach(handleCollectionToggle(favoritesCollection.id, favoritesCollection.kind, value));
-                }}
+                onChange={(value) => detach(handleCollectionToggle(favoritesCollection.id, favoritesCollection.kind, value))}
               />
-            </PanelSectionRow>
+            </RmRow>
           )}
-        </PanelSection>
-        <Focusable flow-children="horizontal" style={{ display: "flex", gap: "4px", padding: "0 16px 12px" }}>
-          {SUB_TAB_ORDER.map((sub) => (
-            <DialogButton
-              key={sub}
-              style={{
-                flex: 1,
-                minWidth: 0,
-                padding: "10px 0",
-                opacity: activeSubTab === sub ? 1 : 0.5,
-                borderBottom: activeSubTab === sub ? "2px solid #1a9fff" : "2px solid transparent",
-              }}
-              onClick={() => setActiveSubTab(sub)}
-            >
-              {SUB_TAB_LABELS[sub]}
-            </DialogButton>
-          ))}
-        </Focusable>
-        <PanelSection title={sectionTitle}>
-          <PanelSectionRow>
-            <Focusable flow-children="horizontal" style={{ display: "flex", gap: "8px" }}>
-              <DialogButton
-                style={{ flex: 1, minWidth: 0 }}
-                onClick={() => {
-                  detach(handleSetAllCollections(true, activeSubTab));
-                }}
-              >
-                Enable All
-              </DialogButton>
-              <DialogButton
-                style={{ flex: 1, minWidth: 0 }}
-                onClick={() => {
-                  detach(handleSetAllCollections(false, activeSubTab));
-                }}
-              >
-                Disable All
-              </DialogButton>
-            </Focusable>
-          </PanelSectionRow>
-          {visible.length === 0 ? (
-            <PanelSectionRow>
-              <Field label={`No ${activeLabel.toLowerCase()} collections`} focusable />
-            </PanelSectionRow>
-          ) : (
-            visible.map((collection) => (
-              <PanelSectionRow key={`${collection.kind}:${collection.id}`}>
-                <ToggleField
+        </div>
+        <RmSegments
+          testPrefix="subtab"
+          items={SUB_TAB_ORDER.map((sub) => ({ id: sub, label: SUB_TAB_LABELS[sub] }))}
+          value={activeSubTab}
+          onChange={(sub) => setActiveSubTab(sub as CollectionSubTab)}
+        />
+        <div className="rm-qsec" style={{ marginTop: 0 }}>{sectionTitle}</div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <RmButton variant="sm ghost" className="rm-grow" onActivate={() => detach(handleSetAllCollections(true, activeSubTab))}>
+            Enable All
+          </RmButton>
+          <RmButton variant="sm ghost" className="rm-grow" onActivate={() => detach(handleSetAllCollections(false, activeSubTab))}>
+            Disable All
+          </RmButton>
+        </div>
+        {visible.length === 0 ? (
+          <RmValueRow label={`No ${activeLabel.toLowerCase()} collections`} />
+        ) : (
+          <div className="rm-scard">
+            {visible.map((collection) => (
+              <RmRow key={`${collection.kind}:${collection.id}`} label={collection.name} sub={`${collection.rom_count} ROMs`}>
+                <RmToggle
                   label={collection.name}
-                  description={`${collection.rom_count} ROMs`}
                   checked={collection.sync_enabled}
-                  onChange={(value: boolean) => {
-                    detach(handleCollectionToggle(collection.id, collection.kind, value));
-                  }}
+                  onChange={(value) => detach(handleCollectionToggle(collection.id, collection.kind, value))}
                 />
-              </PanelSectionRow>
-            ))
-          )}
-        </PanelSection>
+              </RmRow>
+            ))}
+          </div>
+        )}
       </>
     );
   };
 
   // --- Render ---
   return (
-    <>
-      <PanelSection>
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            onClick={onBack}
-            // @ts-expect-error onFocus works at runtime; not in Decky's ButtonItem types
-            onFocus={scrollToTop}
-          >
-            Back
-          </ButtonItem>
-        </PanelSectionRow>
-      </PanelSection>
-      <Focusable flow-children="horizontal" style={{ display: "flex", gap: "4px", padding: "0 16px 12px" }}>
-        <DialogButton
-          style={{
-            flex: 1,
-            minWidth: 0,
-            padding: "10px 0",
-            opacity: activeTab === "platforms" ? 1 : 0.5,
-            borderBottom: activeTab === "platforms" ? "2px solid #1a9fff" : "2px solid transparent",
-          }}
-          onClick={() => setActiveTab("platforms")}
-        >
-          Platforms
-        </DialogButton>
-        <DialogButton
-          style={{
-            flex: 1,
-            minWidth: 0,
-            padding: "10px 0",
-            opacity: activeTab === "collections" ? 1 : 0.5,
-            borderBottom: activeTab === "collections" ? "2px solid #1a9fff" : "2px solid transparent",
-          }}
-          onClick={handleCollectionsTabClick}
-        >
-          Collections
-        </DialogButton>
-      </Focusable>
-
-      {activeTab === "platforms" && <PanelSection title="Platforms">{renderPlatformsContent()}</PanelSection>}
-
-      {activeTab === "collections" && <>{renderCollectionsContent()}</>}
-    </>
+    <div className="rm-root" style={{ background: "transparent" }}>
+      <RmStyles />
+      <QamHeader title="Platforms & collections" onBack={onBack} />
+      <RmSegments
+        testPrefix="tab"
+        items={[
+          { id: "platforms", label: "Platforms" },
+          { id: "collections", label: "Collections" },
+        ]}
+        value={activeTab}
+        onChange={(id) => (id === "collections" ? handleCollectionsTabClick() : setActiveTab("platforms"))}
+      />
+      {activeTab === "platforms" ? renderPlatformsContent() : renderCollectionsContent()}
+    </div>
   );
 };

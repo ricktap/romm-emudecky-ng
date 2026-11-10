@@ -38,26 +38,22 @@ describe("PlaytimeScopeBanner component", () => {
     setPlaytimeScopeState({ pending: false });
   });
 
-  it("renders the PanelSection title + the sign-in message", () => {
+  it("renders the title + the sign-in message", () => {
     const { container } = render(<PlaytimeScopeBanner />);
-    // PanelSection's `title` prop is forwarded by the global stub as a DOM
-    // attribute on <section>, so assert via getAttribute, not textContent.
-    const section = container.querySelector("section");
-    expect(section?.getAttribute("title")).toBe(PLAYTIME_SCOPE_TITLE);
     expect(container.textContent).toContain(PLAYTIME_SCOPE_TITLE);
     expect(container.textContent).toContain(PLAYTIME_SCOPE_MESSAGE);
   });
 
-  it("renders a Dismiss button", () => {
-    const { getByText } = render(<PlaytimeScopeBanner />);
-    expect(getByText("Dismiss")).toBeInTheDocument();
+  it("is one attention row that says pressing it dismisses", () => {
+    const { getByTestId } = render(<PlaytimeScopeBanner />);
+    expect(getByTestId("attention-row").textContent).toContain("Press to dismiss.");
   });
 
   it("Dismiss → clears the shared store (local dismiss, no backend call)", async () => {
     setPlaytimeScopeState({ pending: true });
-    const { getByText } = render(<PlaytimeScopeBanner />);
+    const { getByTestId } = render(<PlaytimeScopeBanner />);
     await act(async () => {
-      fireEvent.click(getByText("Dismiss"));
+      fireEvent.click(getByTestId("attention-row"));
       await flushAsync();
     });
     // Store flips to not-pending → the MainPage conditional drops the banner.
@@ -77,25 +73,25 @@ describe("PlaytimeScopeBanner store-driven visibility", () => {
     vi.mocked(getPlaytimeScopeNotice).mockResolvedValue({ pending: true });
     const { queryByText } = render(<ScopeBannerHost />);
     await flushAsync();
-    expect(queryByText(PLAYTIME_SCOPE_MESSAGE)).toBeInTheDocument();
+    expect(queryByText(PLAYTIME_SCOPE_TITLE)).toBeInTheDocument();
   });
 
   it("keeps the banner absent when the callable reports pending:false", async () => {
     vi.mocked(getPlaytimeScopeNotice).mockResolvedValue({ pending: false });
     const { queryByText } = render(<ScopeBannerHost />);
     await flushAsync();
-    expect(queryByText(PLAYTIME_SCOPE_MESSAGE)).not.toBeInTheDocument();
+    expect(queryByText(PLAYTIME_SCOPE_TITLE)).not.toBeInTheDocument();
   });
 
   it("Dismiss hides a shown banner", async () => {
     vi.mocked(getPlaytimeScopeNotice).mockResolvedValue({ pending: true });
-    const { getByText, queryByText } = render(<ScopeBannerHost />);
+    const { getByTestId, queryByText } = render(<ScopeBannerHost />);
     await flushAsync();
-    expect(queryByText(PLAYTIME_SCOPE_MESSAGE)).toBeInTheDocument();
+    expect(queryByText(PLAYTIME_SCOPE_TITLE)).toBeInTheDocument();
     await act(async () => {
-      fireEvent.click(getByText("Dismiss"));
+      fireEvent.click(getByTestId("attention-row"));
       await flushAsync();
     });
-    expect(queryByText(PLAYTIME_SCOPE_MESSAGE)).not.toBeInTheDocument();
+    expect(queryByText(PLAYTIME_SCOPE_TITLE)).not.toBeInTheDocument();
   });
 });

@@ -33,20 +33,19 @@ export function hideNativePlaySection(playSectionClass: string) {
     focusStyle.id = ROMM_FOCUS_STYLES_ID;
     focusStyle.textContent = `
 .romm-btn-download:hover, .romm-btn-download.gpfocus {
-  background: linear-gradient(to right, #47b3ff, #1a9fff) !important;
-  filter: brightness(1.3);
+  background: #5cbaff !important;
 }
 .romm-btn-play:hover, .romm-btn-play.gpfocus {
-  background: linear-gradient(to right, #80e62a, #01b866) !important;
-  filter: brightness(1.2);
+  background: #74d65b !important;
 }
 .romm-btn-play.romm-offline:hover, .romm-btn-play.romm-offline.gpfocus {
-  background: linear-gradient(to right, #7a8b7a, #6b7b6b) !important;
-  filter: brightness(1.1);
+  background: #7a8b7a !important;
 }
 .romm-btn-conflict:hover, .romm-btn-conflict.gpfocus {
-  background: linear-gradient(to right, #c49a28, #a6851b) !important;
-  filter: brightness(1.2);
+  background: #e2b73a !important;
+}
+.romm-btn-download, .romm-btn-play, .romm-btn-conflict {
+  border-radius: 3px !important;
 }
 .romm-btn-dropdown:hover, .romm-btn-dropdown.gpfocus {
   filter: brightness(1.3);
@@ -149,17 +148,17 @@ export function hideNativePlaySection(playSectionClass: string) {
   min-width: 0;
 }
 .romm-info-header {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #8f98a0;
+  color: #8b929a;
   line-height: 1.2;
   white-space: nowrap;
 }
 .romm-info-value {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 400;
   color: #dcdedf;
   line-height: 1.4;
   white-space: nowrap;
@@ -460,12 +459,13 @@ export function hideNativePlaySection(playSectionClass: string) {
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
-  width: 36px !important;
-  min-width: 36px !important;
-  height: 36px !important;
-  border-radius: 4px !important;
-  border: 1px solid rgba(255,255,255,0.1);
-  background: rgba(255,255,255,0.06) !important;
+  width: 40px !important;
+  min-width: 40px !important;
+  height: 40px !important;
+  border-radius: 3px !important;
+  border: 1px solid #3a414c;
+  background: transparent !important;
+  color: #dcdedf;
   cursor: pointer;
   transition: background 0.15s ease, filter 0.15s ease;
   padding: 0 !important;
@@ -473,13 +473,17 @@ export function hideNativePlaySection(playSectionClass: string) {
   line-height: normal !important;
 }
 .romm-gear-btn:hover {
-  background: rgba(255,255,255,0.14);
-  filter: brightness(1.2);
+  background: #dcdedf !important;
+  color: #0e141b;
 }
 .romm-gear-btn.gpfocus {
-  background: rgba(255,255,255,0.14) !important;
-  filter: brightness(1.3);
-  border-color: rgba(255,255,255,0.5) !important;
+  background: #dcdedf !important;
+  color: #0e141b;
+  border-color: #dcdedf !important;
+}
+.romm-gear-btn:hover svg, .romm-gear-btn.gpfocus svg {
+  color: #0e141b !important;
+  fill: #0e141b !important;
 }
 .romm-gear-btn:active {
   filter: brightness(0.9);
@@ -491,24 +495,25 @@ export function hideNativePlaySection(playSectionClass: string) {
   gap: 7px !important;
   width: auto !important;
   min-width: 0 !important;
-  height: 48px !important;
+  height: 52px !important;
   padding: 0 12px !important;
-  border-radius: 2px !important;
-  border: 1px solid rgba(255,255,255,0.1);
-  background: rgba(255,255,255,0.06) !important;
+  border-radius: 3px !important;
+  border: 1px solid #333a45;
+  background: #1b2129 !important;
+  color: #dcdedf;
   cursor: pointer;
   transition: background 0.15s ease, filter 0.15s ease;
   flex-shrink: 0;
   line-height: normal !important;
 }
 .romm-disc-btn:hover {
-  background: rgba(255,255,255,0.14);
-  filter: brightness(1.2);
+  background: #dcdedf !important;
+  color: #0e141b;
 }
 .romm-disc-btn.gpfocus {
-  background: rgba(255,255,255,0.14) !important;
-  filter: brightness(1.3);
-  border-color: rgba(255,255,255,0.5) !important;
+  background: #dcdedf !important;
+  color: #0e141b;
+  border-color: #dcdedf !important;
 }
 .romm-disc-btn:active {
   filter: brightness(0.9);
@@ -523,20 +528,19 @@ export function hideNativePlaySection(playSectionClass: string) {
     tabStyle.textContent = `
 .romm-tab-bar {
   display: flex;
-  gap: 0;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
+  gap: 4px;
+  border-bottom: 1px solid #232a33;
   padding: 0 2.8vw;
   background: rgba(14, 20, 27, 0.33);
 }
 .romm-tab {
-  padding: 10px 16px;
-  font-size: 11px;
+  padding: 12px 14px;
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: 0.5px;
   text-transform: uppercase;
-  color: #8f98a0;
+  color: #8b929a;
   cursor: pointer;
-  border-bottom: 2px solid transparent;
+  border-bottom: 3px solid transparent;
   transition: color 0.15s ease, border-color 0.15s ease;
   background: transparent;
   border-top: none;
@@ -550,13 +554,13 @@ export function hideNativePlaySection(playSectionClass: string) {
 .romm-tab.gpfocus,
 .romm-tab:focus,
 .romm-tab.Focusable.gpfocus {
-  color: #dcdedf !important;
-  background: rgba(255,255,255,0.06) !important;
+  color: #fff !important;
+  background: #1c222b !important;
   outline: none;
   border-bottom-color: #1a9fff;
 }
 .romm-tab-active {
-  color: #dcdedf !important;
+  color: #fff !important;
   border-bottom-color: #1a9fff;
 }
 .romm-tab-content {
