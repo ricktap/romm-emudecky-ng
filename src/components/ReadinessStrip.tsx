@@ -7,6 +7,7 @@ import { biosChip, romChip, savesChip, type ReadinessChip } from "../utils/readi
 import { detach } from "../utils/detach";
 import type { DownloadItem, FirmwareStatus, InstalledRom } from "../types";
 import { handleConflicts } from "./SyncConflictModal";
+import { showSaveSetupModal } from "./SaveSetupModal";
 
 interface ReadinessStripProps {
   romId: number;
@@ -100,6 +101,13 @@ export const ReadinessStrip: FC<ReadinessStripProps> = ({
     }
   };
 
+  const chooseSave = async () => {
+    const changed = await showSaveSetupModal(romId);
+    if (changed) {
+      globalThis.dispatchEvent(new CustomEvent("romm_data_changed", { detail: { type: "save_sync", rom_id: romId } }));
+    }
+  };
+
   const chips: ReadinessChip[] = [
     romChip({ installed: installed != null, fileName: installed?.file_name, download }),
     biosChip({ platformSlug, firmware, activeCoreLabel }),
@@ -144,7 +152,7 @@ export const ReadinessStrip: FC<ReadinessStripProps> = ({
           {chip.fix && (
             <DialogButton
               style={{ minWidth: "auto", width: "auto", padding: "4px 12px", height: "28px", fontSize: "12px" }}
-              onClick={() => detach(chip.fix === "get_bios" ? getBios() : resolveConflict())}
+              onClick={() => detach(chip.fix === "get_bios" ? getBios() : chip.fix === "choose_save" ? chooseSave() : resolveConflict())}
             >
               {chip.fixLabel}
             </DialogButton>

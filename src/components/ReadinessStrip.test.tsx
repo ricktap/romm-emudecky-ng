@@ -9,11 +9,13 @@ vi.mock("../api/backend", () => ({
   getSaveStatus: vi.fn(),
 }));
 vi.mock("./SyncConflictModal", () => ({ handleConflicts: vi.fn() }));
+vi.mock("./SaveSetupModal", () => ({ showSaveSetupModal: vi.fn() }));
 
 import { downloadRequiredFirmware, getFirmwareStatus, getInstalledRom, getSaveStatus } from "../api/backend";
 import { setDownloads } from "../utils/downloadStore";
 import { emitDeckyEvent } from "../test-utils/decky-api-mock";
 import { handleConflicts } from "./SyncConflictModal";
+import { showSaveSetupModal } from "./SaveSetupModal";
 import { ReadinessStrip } from "./ReadinessStrip";
 
 const props = {
@@ -140,6 +142,24 @@ describe("ReadinessStrip", () => {
     vi.mocked(getSaveStatus).mockRejectedValue(new Error("x"));
     await act(async () => { fireEvent.click(getByText("Resolve")); });
     expect(toaster.toast).toHaveBeenCalledWith(expect.objectContaining({ body: "Could not load the save conflict" }));
+    globalThis.removeEventListener("romm_data_changed", rec);
+  });
+
+  it("a game whose save cannot be located offers Choose, which opens the chooser and refreshes the status when something was set", async () => {
+    vi.mocked(showSaveSetupModal).mockResolvedValue(true);
+    const seen: unknown[] = [];
+    const rec = (e: Event) => seen.push((e as CustomEvent).detail);
+    globalThis.addEventListener("romm_data_changed", rec);
+    const { getByText, getByTestId } = render(<ReadinessStrip {...props} saveSyncStatus="none" saveSyncLabel="Choose save folder" />);
+    await flush();
+    expect(getByTestId("chip-saves-detail").textContent).toBe("Choose save folder");
+    await act(async () => { fireEvent.click(getByText("Choose")); });
+    expect(showSaveSetupModal).toHaveBeenCalledWith(5);
+    expect(seen).toContainEqual({ type: "save_sync", rom_id: 5 });
+    vi.mocked(showSaveSetupModal).mockResolvedValue(false);
+    seen.length = 0;
+    await act(async () => { fireEvent.click(getByText("Choose")); });
+    expect(seen).toEqual([]);
     globalThis.removeEventListener("romm_data_changed", rec);
   });
 

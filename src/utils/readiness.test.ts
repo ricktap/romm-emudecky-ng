@@ -78,6 +78,20 @@ describe("biosChip", () => {
   });
 });
 
+describe("savesChip: choosing the save", () => {
+  it("a game whose save cannot be located yet offers one tap to choose it", () => {
+    for (const label of ["Choose save folder", "Choose profile"]) {
+      expect(savesChip({ saveSyncEnabled: true, status: "none", label })).toEqual({
+        id: "saves", title: "Saves", detail: label, tone: "warn", fix: "choose_save", fixLabel: "Choose",
+      });
+    }
+  });
+  it("other labels keep the plain state", () => {
+    expect(savesChip({ saveSyncEnabled: true, status: "none", label: "Emulator save folder not found" })).toMatchObject({ tone: "neutral", detail: "On · Emulator save folder not found" });
+    expect(savesChip({ saveSyncEnabled: false, status: "none", label: "Choose save folder" }).fix).toBeUndefined();
+  });
+});
+
 describe("savesChip", () => {
   it("off when save sync is off", () => {
     expect(savesChip({ saveSyncEnabled: false, status: "conflict", label: "x" })).toMatchObject({ detail: "Save sync off", tone: "neutral" });
