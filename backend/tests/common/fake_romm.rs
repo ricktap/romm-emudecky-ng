@@ -15,6 +15,8 @@ use tokio::sync::Notify;
 pub struct Seen {
     pub path: String,
     pub range: Option<String>,
+    pub if_range: Option<String>,
+    pub accept_encoding: Option<String>,
 }
 
 #[derive(Default)]
@@ -24,6 +26,12 @@ pub struct State {
     /// Stop writing a content body after this many bytes (of the full file).
     pub stall_at: Option<usize>,
     pub requests: Vec<Seen>,
+    /// Content served as RomM's cached ZIP: with `Range` it carries this `ETag`,
+    /// and `If-Range` with another tag gets the whole representation (`200`).
+    pub etags: HashMap<i64, String>,
+    /// Content connections open right now, and the most there ever were.
+    pub open_content: usize,
+    pub peak_content: usize,
 }
 
 pub struct FakeRomm {
@@ -56,6 +64,23 @@ impl FakeRomm {
         self.state.lock().unwrap().content.insert(id, bytes);
     }
 
+    /// Serve `id` as a cached archive with this `ETag` (see [`State::etags`]).
+    pub fn set_cached(&self, id: i64, bytes: Vec<u8>, etag: &str) {
+        let mut st = self.state.lock().unwrap();
+        st.content.insert(id, bytes);
+        st.etags.insert(id, etag.to_string());
+    }
+
+    /// Content connections open right now.
+    pub fn open_content_connections(&self) -> usize {
+        self.state.lock().unwrap().open_content
+    }
+
+    /// The most content connections that were ever open at once.
+    pub fn peak_content_connections(&self) -> usize {
+        self.state.lock().unwrap().peak_content
+    }
+
     pub fn stall_at(&self, at: Option<usize>) {
         self.state.lock().unwrap().stall_at = at;
     }
@@ -84,13 +109,17 @@ async fn serve(mut sock: TcpStream, state: Arc<Mutex<State>>, release: Arc<Notif
     let head = String::from_utf8_lossy(&buf).to_string();
     let mut lines = head.split("\r\n");
     let path = lines.next().unwrap_or("").split(' ').nth(1).unwrap_or("").to_string();
-    let range = lines
+    let headers: Vec<(String, String)> = lines
         .filter_map(|l| l.split_once(':'))
-        .find(|(k, _)| k.eq_ignore_ascii_case("range"))
-        .map(|(_, v)| v.trim().to_string());
+        .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))
+        .collect();
+    let get = |name: &str| headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
+    let (range, if_range) = (get("range"), get("if-range"));
     state.lock().unwrap().requests.push(Seen {
         path: path.clone(),
         range: range.clone(),
+        if_range: if_range.clone(),
+        accept_encoding: get("accept-encoding"),
     });
     let rest = path.strip_prefix("/api/roms/").unwrap_or("");
     let (id_part, content) = match rest.split_once("/content/") {
@@ -98,12 +127,13 @@ async fn serve(mut sock: TcpStream, state: Arc<Mutex<State>>, release: Arc<Notif
         None => (rest, false),
     };
     let id: Option<i64> = id_part.parse().ok();
-    let (rom, body, stall) = {
+    let (rom, body, stall, etag) = {
         let st = state.lock().unwrap();
         (
             id.and_then(|i| st.roms.get(&i).cloned()),
             id.and_then(|i| st.content.get(&i).cloned()),
             st.stall_at,
+            id.and_then(|i| st.etags.get(&i).cloned()),
         )
     };
     if !content {
@@ -124,26 +154,51 @@ async fn serve(mut sock: TcpStream, state: Arc<Mutex<State>>, release: Arc<Notif
         return;
     };
     let total = body.len();
+    // A conditional range whose validator no longer matches gets the whole file.
+    let stale = matches!((&if_range, &etag), (Some(given), Some(current)) if given != current);
     let start = range
         .as_deref()
+        .filter(|_| !stale)
         .and_then(|r| r.strip_prefix("bytes="))
         .and_then(|r| r.trim_end_matches('-').parse::<usize>().ok())
         .filter(|s| *s < total);
+    // Validators accompany a ranged (cached) response only; a plain GET is the streamed ZIP.
+    let validators = match (&etag, &range) {
+        (Some(tag), Some(_)) => format!("etag: {tag}\r\nlast-modified: Mon, 01 Jan 2026 00:00:00 GMT\r\n"),
+        _ => String::new(),
+    };
     let head = match start {
         Some(s) => format!(
             "HTTP/1.1 206 Partial Content\r\naccept-ranges: bytes\r\ncontent-range: bytes {s}-{}/{total}\r\n\
-             content-length: {}\r\nconnection: close\r\n\r\n",
+             {validators}content-length: {}\r\nconnection: close\r\n\r\n",
             total - 1,
             total - s
         ),
         None => format!(
-            "HTTP/1.1 200 OK\r\naccept-ranges: bytes\r\ncontent-length: {total}\r\nconnection: close\r\n\r\n"
+            "HTTP/1.1 200 OK\r\naccept-ranges: bytes\r\n{validators}content-length: {total}\r\nconnection: close\r\n\r\n"
         ),
     };
+    {
+        let mut st = state.lock().unwrap();
+        st.open_content += 1;
+        st.peak_content = st.peak_content.max(st.open_content);
+    }
+    serve_body(&mut sock, head, &body, start.unwrap_or(0), stall, &release).await;
+    state.lock().unwrap().open_content -= 1;
+}
+
+async fn serve_body(
+    sock: &mut TcpStream,
+    head: String,
+    body: &[u8],
+    from: usize,
+    stall: Option<usize>,
+    release: &Notify,
+) {
+    let total = body.len();
     if sock.write_all(head.as_bytes()).await.is_err() {
         return;
     }
-    let from = start.unwrap_or(0);
     match stall.filter(|s| *s > from && *s < total) {
         Some(stop) => {
             if sock.write_all(&body[from..stop]).await.is_err() {

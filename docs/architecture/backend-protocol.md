@@ -99,3 +99,10 @@ needs no OpenSSL or system SQLite (SteamOS and Bazzite).
 
 Locally: `cd backend && cargo test` (unit + integration tests; the integration tests spawn the real binary on a temp
 socket against a fake RomM server), `cargo llvm-cov --summary-only` for coverage.
+
+## `download_progress` live phase fields
+
+While a download waits for the server (request out, no response headers yet) the frame also carries `phase`
+(`"waiting"` or `"retrying"`), `phase_since` (epoch seconds when the phase began), `attempt`, `max_attempts` and, for
+`retrying`, `retry_delay_s`. A frame without `phase` means bytes are flowing. Interrupted downloads may carry the
+reasons `timeout` and `needs_recovery` (see `docs/architecture/multipart-downloads.md`).

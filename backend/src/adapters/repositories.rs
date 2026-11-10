@@ -95,7 +95,8 @@ impl RomRegionsReader for SqliteRomRegions {
 }
 
 const JOB_COLUMNS: &str = "rom_id, rom_name, platform_name, file_name, target_path, tmp_path, is_multi, total_bytes, \
-     status, interrupt_reason, range_supported, position, created_at, updated_at";
+     status, interrupt_reason, range_supported, position, created_at, updated_at, \
+     etag, last_modified, representation_length, cached_zip, needs_recovery";
 
 fn row_to_job(r: &Row<'_>) -> rusqlite::Result<DownloadJob> {
     let status: String = r.get(8)?;
@@ -121,6 +122,11 @@ fn row_to_job(r: &Row<'_>) -> rusqlite::Result<DownloadJob> {
         position: r.get(11)?,
         created_at: r.get(12)?,
         updated_at: r.get(13)?,
+        etag: r.get(14)?,
+        last_modified: r.get(15)?,
+        representation_length: r.get::<_, Option<i64>>(16)?.and_then(|l| u64::try_from(l).ok()),
+        cached_zip: r.get::<_, i64>(17)? != 0,
+        needs_recovery: r.get::<_, i64>(18)? != 0,
     })
 }
 
@@ -158,7 +164,7 @@ impl DownloadJobRepo for SqliteDownloadJobs {
                 c.execute(
                     &format!(
                         "INSERT OR REPLACE INTO download_jobs ({JOB_COLUMNS}) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)"
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)"
                     ),
                     params![
                         j.rom_id,
@@ -175,6 +181,11 @@ impl DownloadJobRepo for SqliteDownloadJobs {
                         j.position,
                         j.created_at,
                         j.updated_at,
+                        j.etag,
+                        j.last_modified,
+                        j.representation_length.map(|l| l as i64),
+                        i64::from(j.cached_zip),
+                        i64::from(j.needs_recovery),
                     ],
                 )
                 .map(|_| ())
@@ -534,6 +545,74 @@ mod tests {
         kv.delete("device_id").await.unwrap();
         kv.delete("device_id").await.unwrap();
         assert_eq!(kv.get("device_id").await.unwrap(), None);
+    }
+
+    fn new_job(rom_id: i64, is_multi: bool) -> DownloadJob {
+        DownloadJob::enqueue(
+            crate::domain::download_job::NewJob {
+                rom_id,
+                rom_name: "Game".into(),
+                platform_name: "Switch".into(),
+                file_name: "game.zip".into(),
+                target_path: format!("/roms/switch/{rom_id}"),
+                tmp_path: format!("/roms/switch/{rom_id}.zip.tmp"),
+                is_multi,
+                position: rom_id,
+                total_bytes: None,
+            },
+            "2026-01-01T00:00:00+00:00",
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn download_job_archive_identity_round_trips() {
+        let (_d, db) = db().await;
+        let jobs = SqliteDownloadJobs::new(db);
+        let mut job = new_job(7, true);
+        job.record_archive_identity(
+            Some(&crate::domain::archive_transfer::ArchiveIdentity {
+                etag: "\"ab\\c d\"".into(),
+                last_modified: Some("Mon, 01 Jan 2026 00:00:00 GMT".into()),
+                length: 15_232_100_000,
+            }),
+            "2026-01-01T00:01:00+00:00",
+        );
+        jobs.save(&job).await.unwrap();
+        let back = jobs.get(7).await.unwrap().unwrap();
+        assert_eq!(back, job);
+        assert_eq!(back.etag.as_deref(), Some("\"ab\\c d\""), "the exact header value is preserved");
+        assert_eq!(back.representation_length, Some(15_232_100_000));
+        assert!(back.cached_zip && !back.needs_recovery);
+    }
+
+    #[tokio::test]
+    async fn migration_flags_existing_multipart_partials_for_recovery_without_inventing_validators() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        // A database as the previous release left it: schema version 12 with two jobs.
+        let (old, version) = Db::open_with(&path, &crate::adapters::db::MIGRATIONS[..12]).await.unwrap();
+        assert_eq!(version, 12);
+        old.call(|c| {
+            c.execute_batch(
+                "INSERT INTO download_jobs (rom_id, rom_name, platform_name, file_name, target_path, tmp_path, is_multi,
+                     status, position, created_at, updated_at) VALUES
+                 (1, 'Multi', 'Switch', 'm.zip', '/r/m', '/r/m.zip.tmp', 1, 'interrupted', 1, 't', 't'),
+                 (2, 'Single', 'Switch', 's.nsp', '/r/s.nsp', '/r/s.nsp.tmp', 0, 'paused', 2, 't', 't');",
+            )
+        })
+        .await
+        .unwrap();
+        drop(old);
+        let (db, version) = Db::open(&path).await.unwrap();
+        assert_eq!(version, 13);
+        let jobs = SqliteDownloadJobs::new(db);
+        let multi = jobs.get(1).await.unwrap().unwrap();
+        assert!(multi.needs_recovery, "an old multipart partial is kept but flagged");
+        assert_eq!((multi.etag, multi.representation_length, multi.cached_zip), (None, None, false));
+        let single = jobs.get(2).await.unwrap().unwrap();
+        assert!(!single.needs_recovery, "single-file jobs are unaffected");
+        assert_eq!(jobs.get(1).await.unwrap().unwrap().status, JobStatus::Interrupted, "progress is not discarded");
     }
 
     #[tokio::test]

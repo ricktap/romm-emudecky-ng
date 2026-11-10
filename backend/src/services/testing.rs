@@ -244,7 +244,7 @@ use crate::services::downloads::{DownloadService, DownloadServiceConfig};
 use crate::services::launch::{LaunchService, LaunchServiceConfig};
 use crate::services::ports::{
     Clock, DownloadFiles, EmuDeckPaths, EmulatorLocator, EventSink, ExtractProgress, RommRomApi, SystemResolver,
-    TransferHooks,
+    TransferHooks, TransferMode, TransferOutcome, TransferPhase,
 };
 use crate::services::rom_removal::{RomRemovalService, RomRemovalServiceConfig};
 
@@ -312,6 +312,7 @@ pub struct TransferCall {
     pub dest: String,
     pub resume: bool,
     pub offset: u64,
+    pub mode: TransferMode,
 }
 
 /// Scriptable RomM: ROM payloads per id, and transfers that write
@@ -329,6 +330,14 @@ pub struct FakeRomRomm {
     pub release: Notify,
     pub calls: Mutex<Vec<TransferCall>>,
     pub get_rom_calls: Mutex<Vec<i64>>,
+    /// The identity an archive transfer reports for `content` (a cached ZIP response).
+    pub archive_identity: Mutex<Option<crate::domain::archive_transfer::ArchiveIdentity>>,
+    /// Records `(identity reported, bytes on disk at that moment)` per archive transfer.
+    pub identity_events: Mutex<Vec<(Option<crate::domain::archive_transfer::ArchiveIdentity>, u64)>>,
+    /// Phases the next transfer reports before it writes (e.g. waiting for headers).
+    pub phases: Mutex<Vec<TransferPhase>>,
+    /// Hold a transfer in its header wait until released (or cancelled).
+    pub hold_headers: Mutex<bool>,
 }
 
 impl FakeRomRomm {
@@ -367,10 +376,17 @@ impl RommRomApi for FakeRomRomm {
         rom_id: i64,
         file_name: &str,
         dest: &str,
-        resume: bool,
+        mode: TransferMode,
         mut hooks: TransferHooks,
-    ) -> anyhow::Result<()> {
-        let offset = if resume {
+    ) -> anyhow::Result<TransferOutcome> {
+        use crate::domain::archive_transfer::ResumePlan;
+        // How much of the partial this transfer continues (an archive Fresh/replace starts over).
+        let continues = match &mode {
+            TransferMode::Single { resume } => *resume,
+            TransferMode::Archive(ResumePlan::Append(_)) => true,
+            TransferMode::Archive(_) => false,
+        };
+        let offset = if continues {
             std::fs::metadata(dest).map_or(0, |m| m.len())
         } else {
             0
@@ -379,9 +395,20 @@ impl RommRomApi for FakeRomRomm {
             rom_id,
             file_name: file_name.into(),
             dest: dest.into(),
-            resume,
+            resume: continues,
             offset,
+            mode: mode.clone(),
         });
+        for phase in self.phases.lock().unwrap().clone() {
+            (hooks.on_phase)(phase);
+        }
+        if *self.hold_headers.lock().unwrap() {
+            (hooks.on_phase)(TransferPhase::Waiting { attempt: 1, max_attempts: 3 });
+            tokio::select! {
+                () = hooks.cancel.cancelled() => return Err(TransferCancelled.into()),
+                () = self.release.notified() => {}
+            }
+        }
         if let Some(f) = self.transfer_error.lock().unwrap().clone() {
             return Err(f());
         }
@@ -393,10 +420,19 @@ impl RommRomApi for FakeRomRomm {
         if let Some(parent) = std::path::Path::new(dest).parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let mut written = if offset > 0 { offset } else { 0 };
+        let mut written = offset;
         if offset == 0 {
             std::fs::write(dest, b"")?;
         }
+        if matches!(mode, TransferMode::Archive(ResumePlan::Fresh))
+            && let Some(save) = hooks.on_identity.as_mut()
+        {
+            let identity = self.archive_identity.lock().unwrap().clone();
+            let on_disk = std::fs::metadata(dest).map_or(0, |m| m.len());
+            self.identity_events.lock().unwrap().push((identity.clone(), on_disk));
+            save(identity).await?;
+        }
+        (hooks.on_phase)(TransferPhase::Transferring);
         let stall = *self.stall_at.lock().unwrap();
         if let Some(stall) = stall.filter(|s| *s > written) {
             let mut f = std::fs::OpenOptions::new().append(true).open(dest)?;
@@ -415,7 +451,7 @@ impl RommRomApi for FakeRomRomm {
         let mut f = std::fs::OpenOptions::new().append(true).open(dest)?;
         std::io::Write::write_all(&mut f, &body[written as usize..])?;
         (hooks.progress)(total, total);
-        Ok(())
+        Ok(TransferOutcome::Downloaded)
     }
 }
 
@@ -467,6 +503,9 @@ impl DownloadFiles for FakeFiles {
     }
     async fn extract_zip(&self, a: &str, d: &str, s: &str, p: ExtractProgress) -> anyhow::Result<()> {
         self.inner.extract_zip(a, d, s, p).await
+    }
+    async fn verify_zip(&self, archive: &str) -> anyhow::Result<()> {
+        self.inner.verify_zip(archive).await
     }
     async fn decode_url_encoded_names(&self, dir: &str) -> anyhow::Result<()> {
         self.inner.decode_url_encoded_names(dir).await

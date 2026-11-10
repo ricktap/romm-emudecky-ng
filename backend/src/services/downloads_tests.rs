@@ -771,6 +771,7 @@ async fn queue_prunes_oldest_terminal_entries() {
                     resumable: false,
                     reason: None,
                     error: None,
+                    ..QueueEntry::default()
                 },
             );
         }
@@ -798,6 +799,7 @@ async fn progress_is_throttled_but_the_final_tick_always_emits() {
         platform_name: "p".into(),
         has_multiple: false,
         extract_dir_name: String::new(),
+        restart: false,
     };
     let svc = DownloadService::new(DownloadServiceConfig {
         romm: env.romm.clone(),
@@ -838,6 +840,7 @@ async fn progress_is_throttled_but_the_final_tick_always_emits() {
             resumable: true,
             reason: Some("restart".into()),
             error: None,
+            ..QueueEntry::default()
         },
     );
     let mut hook = svc.progress_hook(&plan);
@@ -857,4 +860,264 @@ async fn progress_is_throttled_but_the_final_tick_always_emits() {
         tokio::task::yield_now().await;
     }
     assert!(svc.st().persisted_totals.contains(&ROM));
+}
+
+// ── Multipart archives (RomM's cached ZIP) ───────────────────────────────
+
+mod archives {
+    use super::*;
+    use crate::domain::archive_transfer::{ArchiveIdentity, ResumePlan};
+
+    const ETAG: &str = "\"cached-v1\"";
+
+    fn members() -> Vec<(&'static str, Vec<u8>)> {
+        vec![
+            ("base.nsp", (0..2000u32).map(|i| (i % 251) as u8).collect()),
+            ("update/u%20pd.nsp", vec![2u8; 10]),
+        ]
+    }
+
+    fn archive() -> Vec<u8> {
+        let m = members();
+        let refs: Vec<(&str, &[u8])> = m.iter().map(|(n, d)| (*n, d.as_slice())).collect();
+        zip_bytes(&refs)
+    }
+
+    fn identity(zip: &[u8]) -> ArchiveIdentity {
+        ArchiveIdentity {
+            etag: ETAG.into(),
+            last_modified: Some("Mon, 01 Jan 2026 00:00:00 GMT".into()),
+            length: zip.len() as u64,
+        }
+    }
+
+    /// ROM 9 (a Switch folder game) whose cached archive RomM would serve.
+    async fn env() -> (DownloadEnv, Vec<u8>, String) {
+        let env = DownloadEnv::new().await;
+        env.seed_rom(9, "switch", "Mario Kart 8 Deluxe", Some(55), None).await;
+        env.romm.set_rom(folder_rom(9));
+        let zip = archive();
+        env.romm.set_content(9, zip.clone());
+        *env.romm.range_supported.lock().unwrap() = true;
+        *env.romm.archive_identity.lock().unwrap() = Some(identity(&zip));
+        let tmp = format!("{}/switch/base.nsp.zip.tmp", env.roms_s());
+        (env, zip, tmp)
+    }
+
+    fn seed_partial(tmp: &str, bytes: &[u8]) {
+        std::fs::create_dir_all(std::path::Path::new(tmp).parent().unwrap()).unwrap();
+        std::fs::write(tmp, bytes).unwrap();
+    }
+
+    async fn seed_job(env: &DownloadEnv, tmp: &str, total: Option<u64>, f: impl FnOnce(&mut DownloadJob)) {
+        let mut j = job(9, tmp, JobStatus::Interrupted, 1, total);
+        f(&mut j);
+        env.jobs.save(&j).await.unwrap();
+    }
+
+    /// Wait until the queue entry is interrupted for `reason` (the seeded job starts out
+    /// interrupted for another reason, so the status alone is not enough).
+    async fn wait_interrupted(env: &DownloadEnv, reason: &str) -> Value {
+        for _ in 0..300 {
+            if let Some(e) = env.entry(9).filter(|e| e["status"] == "interrupted" && e["reason"] == reason) {
+                if !env.svc.active_download_rom_ids().contains(&9) {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    return e;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("never interrupted for {reason}: {:?}", env.entry(9));
+    }
+
+    fn mode(env: &DownloadEnv, i: usize) -> TransferMode {
+        env.romm.calls()[i].mode.clone()
+    }
+
+    #[tokio::test]
+    async fn a_new_multipart_download_asks_for_the_cached_zip_and_saves_its_identity_before_any_byte() {
+        let (env, zip, _) = env().await;
+        *env.romm.stall_at.lock().unwrap() = Some(100);
+        env.svc.start_download(9).await;
+        env.romm.stalled.notified().await;
+        assert_eq!(mode(&env, 0), TransferMode::Archive(ResumePlan::Fresh));
+        // The identity was handed over when the file was still empty ...
+        assert_eq!(*env.romm.identity_events.lock().unwrap(), vec![(Some(identity(&zip)), 0)]);
+        // ... and is in the row while bytes are flowing.
+        let row = job_row(&env, 9).await.unwrap();
+        assert_eq!(row.etag.as_deref(), Some(ETAG));
+        assert_eq!(row.representation_length, Some(zip.len() as u64));
+        assert_eq!(row.last_modified.as_deref(), Some("Mon, 01 Jan 2026 00:00:00 GMT"));
+        assert!(row.cached_zip && !row.needs_recovery);
+        assert_eq!(row.archive_identity(), Some(identity(&zip)));
+        env.svc.cancel_download(9);
+        env.wait_status(9, "cancelled").await;
+    }
+
+    #[tokio::test]
+    async fn a_completed_multipart_download_extracts_a_byte_identical_archive() {
+        let (env, zip, tmp) = env().await;
+        env.svc.start_download(9).await;
+        env.wait_status(9, "completed").await;
+        assert!(!std::path::Path::new(&tmp).exists());
+        let dir = format!("{}/switch/Mario Kart 8 Deluxe", env.roms_s());
+        assert_eq!(std::fs::read(format!("{dir}/base.nsp")).unwrap(), members()[0].1);
+        assert!(job_row(&env, 9).await.is_none());
+        let _ = zip;
+    }
+
+    #[tokio::test]
+    async fn a_saved_identity_resumes_with_exactly_that_identity() {
+        let (env, zip, tmp) = env().await;
+        seed_partial(&tmp, &zip[..900]);
+        seed_job(&env, &tmp, Some(zip.len() as u64), |j| j.record_archive_identity(Some(&identity(&zip)), "t0")).await;
+        env.svc.reconcile_persisted_downloads().await;
+        env.wait_status(9, "completed").await;
+        assert_eq!(mode(&env, 0), TransferMode::Archive(ResumePlan::Append(identity(&zip))));
+        assert_eq!(env.romm.calls()[0].offset, 900, "the actual file size is the offset");
+        assert!(env.romm.identity_events.lock().unwrap().is_empty(), "nothing new to save when appending");
+        let dir = format!("{}/switch/Mario Kart 8 Deluxe", env.roms_s());
+        assert_eq!(std::fs::read(format!("{dir}/base.nsp")).unwrap(), members()[0].1);
+    }
+
+    #[tokio::test]
+    async fn a_partial_without_a_validator_is_restarted_not_appended() {
+        let (env, zip, tmp) = env().await;
+        seed_partial(&tmp, &zip[..900]);
+        seed_job(&env, &tmp, None, |_| {}).await;
+        env.svc.reconcile_persisted_downloads().await;
+        env.wait_status(9, "completed").await;
+        assert_eq!(mode(&env, 0), TransferMode::Archive(ResumePlan::Fresh));
+        assert_eq!(env.romm.calls()[0].offset, 0);
+    }
+
+    #[tokio::test]
+    async fn a_legacy_partial_is_kept_and_never_auto_resumed_but_restarts_when_the_user_asks() {
+        let (env, zip, tmp) = env().await;
+        seed_partial(&tmp, &zip[..900]);
+        seed_job(&env, &tmp, None, |j| j.needs_recovery = true).await;
+        env.svc.reconcile_persisted_downloads().await;
+        wait_interrupted(&env, "needs_recovery").await;
+        assert!(env.romm.calls().is_empty(), "no request was made for an unverifiable partial");
+        assert_eq!(std::fs::read(&tmp).unwrap(), zip[..900], "user progress is preserved");
+        assert!(job_row(&env, 9).await.unwrap().needs_recovery);
+
+        // The user's Resume is the explicit restart.
+        assert_eq!(env.svc.resume_download(9).await["success"], true);
+        env.wait_status(9, "completed").await;
+        assert_eq!(mode(&env, 0), TransferMode::Archive(ResumePlan::Fresh));
+        assert_eq!(env.romm.calls()[0].offset, 0);
+        assert_eq!(env.romm.identity_events.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_legacy_partial_that_is_already_a_complete_valid_archive_finishes_without_a_transfer() {
+        let (env, zip, tmp) = env().await;
+        seed_partial(&tmp, &zip);
+        seed_job(&env, &tmp, Some(zip.len() as u64), |j| j.needs_recovery = true).await;
+        env.svc.reconcile_persisted_downloads().await;
+        env.wait_status(9, "completed").await;
+        assert!(env.romm.calls().is_empty());
+        let dir = format!("{}/switch/Mario Kart 8 Deluxe", env.roms_s());
+        assert_eq!(std::fs::read(format!("{dir}/base.nsp")).unwrap(), members()[0].1);
+    }
+
+    #[tokio::test]
+    async fn a_complete_but_corrupt_archive_is_discarded_and_fetched_again() {
+        let (env, zip, tmp) = env().await;
+        let mut bad = zip.clone();
+        bad[100] ^= 0xff; // inside the first member's stored data
+        seed_partial(&tmp, &bad);
+        seed_job(&env, &tmp, Some(zip.len() as u64), |j| j.record_archive_identity(Some(&identity(&zip)), "t0")).await;
+        env.svc.reconcile_persisted_downloads().await;
+        env.wait_status(9, "completed").await;
+        assert_eq!(env.romm.calls().len(), 1, "one fresh transfer, no append onto the corrupt bytes");
+        assert_eq!(mode(&env, 0), TransferMode::Archive(ResumePlan::Fresh));
+        let dir = format!("{}/switch/Mario Kart 8 Deluxe", env.roms_s());
+        assert_eq!(std::fs::read(format!("{dir}/base.nsp")).unwrap(), members()[0].1);
+    }
+
+    #[tokio::test]
+    async fn an_untrustworthy_resume_response_flags_the_job_and_keeps_the_partial() {
+        let (env, zip, tmp) = env().await;
+        seed_partial(&tmp, &zip[..900]);
+        seed_job(&env, &tmp, Some(zip.len() as u64), |j| j.record_archive_identity(Some(&identity(&zip)), "t0")).await;
+        env.romm.fail_transfers(|| anyhow::Error::new(ArchiveRecoveryNeeded("length changed".into())));
+        env.svc.reconcile_persisted_downloads().await;
+        wait_interrupted(&env, "needs_recovery").await;
+        assert_eq!(std::fs::read(&tmp).unwrap(), zip[..900]);
+        assert!(job_row(&env, 9).await.unwrap().needs_recovery);
+        // After a plugin restart it is not tried again by itself.
+        env.romm.transfer_error.lock().unwrap().take();
+        let calls_before = env.romm.calls().len();
+        env.svc.reconcile_persisted_downloads().await;
+        wait_interrupted(&env, "needs_recovery").await;
+        assert_eq!(env.romm.calls().len(), calls_before);
+    }
+
+    #[tokio::test]
+    async fn a_response_timeout_is_a_timeout_not_an_unreachable_server() {
+        let (env, _, _) = env().await;
+        env.romm.fail_transfers(|| anyhow::Error::new(RommError::Timeout("no headers".into())));
+        env.svc.start_download(9).await;
+        let entry = env.wait_status(9, "interrupted").await;
+        assert_eq!(entry["reason"], "timeout");
+    }
+
+    #[tokio::test]
+    async fn the_waiting_phase_is_published_and_clears_when_bytes_flow() {
+        let (env, _, _) = env().await;
+        *env.romm.hold_headers.lock().unwrap() = true;
+        env.svc.start_download(9).await;
+        let mut waiting = None;
+        for _ in 0..200 {
+            if let Some(e) = env.entry(9).filter(|e| e["phase"] == "waiting") {
+                waiting = Some(e);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let waiting = waiting.expect("a waiting phase");
+        assert_eq!(waiting["status"], "downloading");
+        assert_eq!((waiting["attempt"].clone(), waiting["max_attempts"].clone()), (json!(1), json!(3)));
+        assert!(waiting["phase_since"].as_f64().is_some());
+        assert_eq!(waiting["bytes_downloaded"], 0);
+        let frame = env.events.named("download_progress").into_iter().rev().find(|f| f["phase"] == "waiting").unwrap();
+        assert_eq!(frame["status"], "downloading");
+
+        env.romm.release.notify_one();
+        env.wait_status(9, "completed").await;
+        let last = env.events.named("download_progress").into_iter().rev().find(|f| f["status"] == "downloading").unwrap();
+        assert!(last.get("phase").is_none(), "{last}");
+    }
+
+    #[tokio::test]
+    async fn cancel_and_pause_work_while_waiting_for_headers() {
+        let (env, _, tmp) = env().await;
+        *env.romm.hold_headers.lock().unwrap() = true;
+        env.svc.start_download(9).await;
+        for _ in 0..200 {
+            if env.entry(9).is_some_and(|e| e["phase"] == "waiting") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        env.svc.pause_download(9);
+        let paused = env.wait_status(9, "paused").await;
+        assert!(paused.get("phase").is_none(), "a paused download is not waiting: {paused}");
+        assert!(job_row(&env, 9).await.is_some());
+
+        assert_eq!(env.svc.resume_download(9).await["success"], true);
+        for _ in 0..200 {
+            if env.entry(9).is_some_and(|e| e["phase"] == "waiting") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        env.svc.cancel_download(9);
+        env.wait_status(9, "cancelled").await;
+        assert!(job_row(&env, 9).await.is_none());
+        assert!(!std::path::Path::new(&tmp).exists());
+        assert!(env.svc.active_download_rom_ids().is_empty(), "no worker keeps the destination");
+    }
 }

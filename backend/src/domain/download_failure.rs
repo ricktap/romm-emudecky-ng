@@ -1,7 +1,10 @@
 //! Deciding whether a failed download is resumable (`interrupted`) or final
 //! (`failed`), and the timestamps the queue stamps on its rows.
 
-use crate::domain::download_job::{INTERRUPT_AUTH_FAILED, INTERRUPT_DISK_FULL, INTERRUPT_SERVER_UNREACHABLE};
+use crate::domain::download_job::{
+    INTERRUPT_AUTH_FAILED, INTERRUPT_DISK_FULL, INTERRUPT_NEEDS_RECOVERY, INTERRUPT_SERVER_UNREACHABLE,
+    INTERRUPT_TIMEOUT,
+};
 use crate::domain::errors::RommError;
 
 /// The terminal verdict of a failed transfer.
@@ -18,6 +21,14 @@ pub enum Outcome {
 #[error("transfer cancelled")]
 pub struct TransferCancelled;
 
+/// Marker error: the partial on disk cannot be trusted to continue (the server
+/// answered a resume with an inconsistent representation, or a `416` that does
+/// not match the saved length). The partial is kept untouched and the user is
+/// offered a restart.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[error("the partial download cannot be resumed safely: {0}")]
+pub struct ArchiveRecoveryNeeded(pub String);
+
 /// Classify a download failure.
 ///
 /// `interrupted` keeps the partial: a full disk (`ENOSPC` / `EDQUOT` anywhere
@@ -27,6 +38,9 @@ pub struct TransferCancelled;
 /// a 404 or other 4xx, a transfer that overshot its declared size or produced
 /// nothing, or any local invariant / path / archive error.
 pub fn classify_download_failure(err: &anyhow::Error) -> Outcome {
+    if err.chain().any(|c| c.downcast_ref::<ArchiveRecoveryNeeded>().is_some()) {
+        return Outcome::Interrupted(INTERRUPT_NEEDS_RECOVERY);
+    }
     for cause in err.chain() {
         if let Some(io) = cause.downcast_ref::<std::io::Error>()
             && matches!(io.raw_os_error(), Some(code) if code == libc::ENOSPC || code == libc::EDQUOT)
@@ -43,6 +57,8 @@ pub fn classify_download_failure(err: &anyhow::Error) -> Outcome {
         }
         RommError::NotFound { .. } => Outcome::Failed,
         RommError::Server { .. } => Outcome::Interrupted(INTERRUPT_SERVER_UNREACHABLE),
+        // Connected, but the server did not answer (or went quiet) in time.
+        RommError::Timeout(_) => Outcome::Interrupted(INTERRUPT_TIMEOUT),
         other => {
             if let Some(status) = leading_http_status(&other.to_string())
                 && (400..500).contains(&status)
@@ -132,7 +148,7 @@ mod tests {
         );
         assert_eq!(
             classify_download_failure(&anyhow!(RommError::Timeout("slow".into()))),
-            Outcome::Interrupted("server_unreachable")
+            Outcome::Interrupted("timeout")
         );
         for status in [503, 429] {
             let e = anyhow!(RommError::Server {
@@ -143,6 +159,14 @@ mod tests {
         }
         let e = anyhow!(RommError::Api("HTTP 408: Request Timeout (GET /x)".into()));
         assert_eq!(classify_download_failure(&e), Outcome::Interrupted("server_unreachable"));
+    }
+
+    #[test]
+    fn an_untrusted_partial_needs_recovery_not_failure() {
+        let e = anyhow::Error::new(ArchiveRecoveryNeeded("length changed".into()));
+        assert_eq!(classify_download_failure(&e), Outcome::Interrupted("needs_recovery"));
+        let wrapped = e.context("resuming");
+        assert_eq!(classify_download_failure(&wrapped), Outcome::Interrupted("needs_recovery"));
     }
 
     #[test]

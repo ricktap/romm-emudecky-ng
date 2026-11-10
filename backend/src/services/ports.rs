@@ -138,6 +138,48 @@ pub trait Clock: Send + Sync {
     fn monotonic(&self) -> f64;
 }
 
+/// Where a transfer is, for the live "waiting for RomM" display.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TransferPhase {
+    /// The request is out and no response headers have arrived yet. For a
+    /// multipart ROM this may be RomM preparing the archive; silence alone does
+    /// not prove that.
+    Waiting { attempt: u32, max_attempts: u32 },
+    /// The attempt failed; the next one starts after `delay_secs`.
+    Retrying { attempt: u32, max_attempts: u32, delay_secs: f64 },
+    /// Valid headers arrived; the body is streaming.
+    Transferring,
+}
+
+/// What the transfer needs to know about the partial on disk.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TransferMode {
+    /// A single file: a plain `GET`, continued with `Range` when `resume`.
+    Single { resume: bool },
+    /// A multipart ROM as RomM's cached ZIP: always `Range: bytes=0-` first, and
+    /// resumed with `Range` + `If-Range` only against a saved strong validator.
+    Archive(crate::domain::archive_transfer::ResumePlan),
+}
+
+/// How a transfer ended without an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferOutcome {
+    /// The whole body was written.
+    Downloaded,
+    /// The server answered `416` and the partial has the saved complete length:
+    /// the caller must validate the archive before treating it as finished.
+    AlreadyComplete,
+}
+
+/// Persists a new archive identity (or clears it with `None`) before the first
+/// body byte of a representation is written.
+pub type IdentitySink = Box<
+    dyn FnMut(
+            Option<crate::domain::archive_transfer::ArchiveIdentity>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>>
+        + Send,
+>;
+
 /// Callbacks and the stop signal of one ROM transfer.
 pub struct TransferHooks {
     /// `(bytes on disk, full size)` as the body streams (only when the size is known).
@@ -145,9 +187,27 @@ pub struct TransferHooks {
     /// Called once, when the response headers arrive, with whether the
     /// transfer can be resumed later.
     pub on_meta: Option<Box<dyn FnOnce(bool) + Send>>,
+    /// Phase changes (waiting for headers, retry back-off, transferring).
+    pub on_phase: Box<dyn FnMut(TransferPhase) + Send>,
+    /// Archive transfers: awaited once per accepted representation, before its
+    /// first body byte is written.
+    pub on_identity: Option<IdentitySink>,
     /// Cancelled by a user cancel / pause or plugin shutdown; the transfer
     /// then fails with `TransferCancelled` and keeps whatever it wrote.
     pub cancel: tokio_util::sync::CancellationToken,
+}
+
+impl TransferHooks {
+    /// Progress and cancel only (cover art, tests).
+    pub fn basic(progress: Box<dyn FnMut(u64, u64) + Send>, cancel: tokio_util::sync::CancellationToken) -> Self {
+        Self {
+            progress,
+            on_meta: None,
+            on_phase: Box::new(|_| {}),
+            on_identity: None,
+            cancel,
+        }
+    }
 }
 
 /// The RomM ROM endpoints the download and adoption flows use.
@@ -155,16 +215,15 @@ pub struct TransferHooks {
 pub trait RommRomApi: Send + Sync {
     /// `GET /api/roms/{id}` — the ROM detail (names, sizes, files).
     async fn get_rom(&self, rom_id: i64) -> Result<Value, RommError>;
-    /// Stream the ROM content into `dest`. With `resume`, an existing partial
-    /// is continued through an HTTP Range request when the server honours it.
+    /// Stream the ROM content into `dest` as `mode` says (see [`TransferMode`]).
     async fn download_rom_content(
         &self,
         rom_id: i64,
         file_name: &str,
         dest: &str,
-        resume: bool,
+        mode: TransferMode,
         hooks: TransferHooks,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<TransferOutcome>;
 }
 
 /// `(extracted bytes, total bytes)` while a ZIP extracts.
@@ -202,6 +261,9 @@ pub trait DownloadFiles: Send + Sync {
         safe_root: &str,
         progress: ExtractProgress,
     ) -> anyhow::Result<()>;
+    /// Check that `archive` is a structurally valid ZIP whose every member
+    /// passes its CRC, without extracting anything.
+    async fn verify_zip(&self, archive: &str) -> anyhow::Result<()>;
     /// Rename URL-encoded names under `dir` to their decoded form, refusing
     /// any decoded name that is not a single safe component.
     async fn decode_url_encoded_names(&self, dir: &str) -> anyhow::Result<()>;

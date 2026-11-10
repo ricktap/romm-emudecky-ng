@@ -462,6 +462,16 @@ export default definePlugin(() => {
         total_bytes: data.total_bytes,
         resumable: data.resumable ?? prev?.resumable ?? false,
         ...(data.reason ? { reason: data.reason } : {}),
+        // Live phase fields describe only the current frame: a frame without them means bytes are flowing.
+        ...(data.phase
+          ? {
+              phase: data.phase,
+              ...(data.phase_since !== undefined ? { phase_since: data.phase_since } : {}),
+              ...(data.attempt !== undefined ? { attempt: data.attempt } : {}),
+              ...(data.max_attempts !== undefined ? { max_attempts: data.max_attempts } : {}),
+              ...(data.retry_delay_s !== undefined ? { retry_delay_s: data.retry_delay_s } : {}),
+            }
+          : {}),
       });
     },
   );
