@@ -57,7 +57,7 @@ export function buildEmulatorMenu(config: EmulatorMenuConfig): ReactNode {
       createElement(
         MenuItem,
         { key: "unavailable", disabled: true },
-        "Emulator list unavailable — RetroDECK installation not found",
+        "Emulator list unavailable — EmuDeck installation not found",
       ),
     );
   }

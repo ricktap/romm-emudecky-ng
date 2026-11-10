@@ -62,7 +62,7 @@ describe("batchConfirmLaunchOptions", () => {
 });
 
 describe("reconfirmLaunchOptions", () => {
-  const RELAUNCH_COMMAND = 'flatpak run net.retrodeck.retrodeck "/roms/gba/pokemon.gba"';
+  const RELAUNCH_COMMAND = '/opt/emu/eden "/roms/gba/pokemon.gba"';
 
   beforeEach(() => {
     vi.resetAllMocks();

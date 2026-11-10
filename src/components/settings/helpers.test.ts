@@ -48,7 +48,7 @@ describe("sortLabel", () => {
     expect(sortLabel({ sort_by_content: false, sort_by_core: false })).toBe("Sort by content: OFF, Sort by core: OFF");
   });
 
-  it("formats content ON, core OFF (RetroDECK default)", () => {
+  it("formats content ON, core OFF", () => {
     expect(sortLabel({ sort_by_content: true, sort_by_core: false })).toBe("Sort by content: ON, Sort by core: OFF");
   });
 

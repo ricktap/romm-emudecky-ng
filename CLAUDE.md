@@ -14,7 +14,7 @@ a thin Decky shim (`main.py`), React/TypeScript frontend (`src/`). The backend i
 - **Roadmap and decisions:** [`EMUDECK_PORT_PLAN.md`](EMUDECK_PORT_PLAN.md) — read it before starting work.
 - `REMOVED_TILL_0_90_0.md` lists features deliberately dropped during the rewrite (Switch-only until v0.80).
 - **Fork of** `danielcopper/decky-romm-sync` (RetroDECK). `#NNN` refs in code/docs/ADRs are **upstream** issues.
-  RetroDECK support is dropped; leftover RetroDECK names (e.g. `RetroDeckPaths`) are naming debt, not targets.
+  RetroDECK support is dropped and no RetroDECK names remain in code (only in upstream ADRs/docs, which are not edited).
 - `docs/` is upstream reference material — useful, but not authoritative over the plan or the code.
 
 ## Commands

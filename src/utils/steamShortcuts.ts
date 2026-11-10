@@ -5,7 +5,7 @@ import { getAppIdRomIdMap, syncHeartbeat, logError } from "../api/backend";
  * Ownership marker: RomM-managed shortcuts launch through the plugin's
  * `bin/rom-launcher-ng` exec wrapper. A shortcut whose `strShortcutExe` ends with
  * this suffix is ours regardless of its launch options (which now carry the
- * full RetroDECK command, not a `romm:<id>` marker).
+ * full emulator command, not a `romm:<id>` marker).
  */
 const ROM_LAUNCHER_SUFFIX = "/bin/rom-launcher-ng";
 

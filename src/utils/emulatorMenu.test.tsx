@@ -64,7 +64,7 @@ describe("buildEmulatorMenu", () => {
     const its = items(menu);
     expect(its).toHaveLength(1);
     expect(its[0]!.disabled).toBe(true);
-    expect(its[0]!.text).toBe("Emulator list unavailable — RetroDECK installation not found");
+    expect(its[0]!.text).toBe("Emulator list unavailable — EmuDeck installation not found");
   });
 
   it("marks the default emulator and dispatches its label on pick", () => {

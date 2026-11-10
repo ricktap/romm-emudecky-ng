@@ -71,7 +71,7 @@ describe("syncManager — existing-shortcut update uses confirm-poll", () => {
   it("calls setLaunchOptionsConfirmed (not bare SetAppLaunchOptions) for an existing shortcut", async () => {
     // rom 42 already maps to appId 5000 → update path, never addShortcut.
     getExistingRomMShortcuts.mockResolvedValue(new Map<number, number>([[42, 5000]]));
-    const cmd = 'flatpak run net.retrodeck.retrodeck "/games/test.bin"';
+    const cmd = '/opt/emu/eden "/games/test.bin"';
 
     initUnitSyncManager();
     await act(async () => {
@@ -137,7 +137,7 @@ describe("syncManager — group-aware emit: one Steam shortcut per game (ADR-002
     getExistingRomMShortcuts.mockResolvedValue(new Map<number, number>([[1, 5000]]));
     vi.mocked(backend.getArtworkBase64).mockClear();
     vi.mocked(backend.getArtworkBase64).mockResolvedValue({ base64: "ZGF0YQ==" });
-    const jpCmd = 'flatpak run net.retrodeck.retrodeck "/games/zelda_jp.z64"';
+    const jpCmd = '/opt/emu/eden "/games/zelda_jp.z64"';
     const data: SyncApplyUnitData = {
       run_id: "run-rebind",
       unit_type: "platform",
@@ -323,7 +323,7 @@ describe("syncManager — does not ack a cancelled unit (#1041)", () => {
       requestSyncCancel();
       return new Map<number, number>([[42, 5000]]);
     });
-    const cmd = 'flatpak run net.retrodeck.retrodeck "/games/test.bin"';
+    const cmd = '/opt/emu/eden "/games/test.bin"';
 
     initUnitSyncManager();
     await act(async () => {
@@ -347,7 +347,7 @@ describe("syncManager — once-per-run existing-shortcut scan cache", () => {
   });
 
   it("scans once for two units sharing the same run_id", async () => {
-    const cmd = 'flatpak run net.retrodeck.retrodeck "/games/test.bin"';
+    const cmd = '/opt/emu/eden "/games/test.bin"';
     initUnitSyncManager();
 
     await act(async () => {
@@ -364,7 +364,7 @@ describe("syncManager — once-per-run existing-shortcut scan cache", () => {
   });
 
   it("re-scans when a second unit carries a different run_id", async () => {
-    const cmd = 'flatpak run net.retrodeck.retrodeck "/games/test.bin"';
+    const cmd = '/opt/emu/eden "/games/test.bin"';
     initUnitSyncManager();
 
     await act(async () => {
@@ -422,7 +422,7 @@ describe("syncManager — records created shortcuts into the per-run delta store
     // rom 42 has no existing appId → create path → addShortcut returns 6000.
     getExistingRomMShortcuts.mockResolvedValue(new Map<number, number>());
     addShortcut.mockResolvedValue(6000);
-    const cmd = 'flatpak run net.retrodeck.retrodeck "/games/test.bin"';
+    const cmd = '/opt/emu/eden "/games/test.bin"';
 
     initUnitSyncManager();
     await act(async () => {
@@ -437,7 +437,7 @@ describe("syncManager — records created shortcuts into the per-run delta store
   it("does NOT record the update path (existing shortcut) as a delta", async () => {
     // rom 42 already maps to appId 5000 → update path, never addShortcut.
     getExistingRomMShortcuts.mockResolvedValue(new Map<number, number>([[42, 5000]]));
-    const cmd = 'flatpak run net.retrodeck.retrodeck "/games/test.bin"';
+    const cmd = '/opt/emu/eden "/games/test.bin"';
 
     initUnitSyncManager();
     await act(async () => {
@@ -452,7 +452,7 @@ describe("syncManager — records created shortcuts into the per-run delta store
   it("does NOT record when addShortcut fails to resolve an appId (null)", async () => {
     getExistingRomMShortcuts.mockResolvedValue(new Map<number, number>());
     addShortcut.mockResolvedValue(null);
-    const cmd = 'flatpak run net.retrodeck.retrodeck "/games/test.bin"';
+    const cmd = '/opt/emu/eden "/games/test.bin"';
 
     initUnitSyncManager();
     await act(async () => {

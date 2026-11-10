@@ -105,7 +105,7 @@ describe("DangerZone", () => {
     stubAppStore({});
     // test-setup's vi.stubGlobal calls run once at module-load; afterEach's
     // vi.unstubAllGlobals() strips them. Re-stub SteamClient.Apps.RemoveShortcut
-    // here so RetroDeckSection.handleRemoveAll can fire without ReferenceError.
+    // here so NonSteamRemovalSection.handleRemoveAll can fire without ReferenceError.
     vi.stubGlobal("SteamClient", {
       Apps: { RemoveShortcut: vi.fn() },
     });
@@ -404,7 +404,7 @@ describe("DangerZone", () => {
       // must surface the message and not attempt any removal.
       vi.mocked(backend.removePlatformShortcuts).mockResolvedValue({
         success: false,
-        message: "Blocked: RetroDECK migration pending",
+        message: "Blocked: storage migration pending",
         blocked_by_migration: true,
       });
       const { getByText, container } = render(<DangerZone onBack={vi.fn()} />);
@@ -416,7 +416,7 @@ describe("DangerZone", () => {
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(container.textContent).toContain("Blocked: RetroDECK migration pending");
+      expect(container.textContent).toContain("Blocked: storage migration pending");
       expect(vi.mocked(removeShortcut)).not.toHaveBeenCalled();
       expect(vi.mocked(backend.reportRemovalResults)).not.toHaveBeenCalled();
       expect(vi.mocked(clearPlatformCollection)).not.toHaveBeenCalled();
@@ -769,7 +769,7 @@ describe("DangerZone", () => {
     });
   });
 
-  describe("RetroDeckSection — empty / populated", () => {
+  describe("NonSteamRemovalSection — empty / populated", () => {
     it("renders 'No non-steam games found' when there are no apps", async () => {
       const { container } = render(<DangerZone onBack={vi.fn()} />);
       await flushAsync();
@@ -798,7 +798,7 @@ describe("DangerZone", () => {
     });
   });
 
-  describe("RetroDeckSection — handleRemoveAll (no retrodeck risk)", () => {
+  describe("NonSteamRemovalSection — handleRemoveAll (no EmuDeck risk)", () => {
     it("first click arms confirm; second click removes via SteamClient.Apps.RemoveShortcut", async () => {
       stubCollectionStore([1, 2]);
       stubAppStore({
@@ -808,7 +808,7 @@ describe("DangerZone", () => {
       const { getByText, container } = render(<DangerZone onBack={vi.fn()} />);
       await flushAsync();
       fireEvent.click(getByText("Remove 2 Non-Steam Games"));
-      // After first click — confirm copy without retrodeck warning.
+      // After first click — confirm copy without the EmuDeck warning.
       expect(container.textContent).toContain("Are you sure? Remove 2 games (0 whitelisted)?");
       expect(vi.mocked(SteamClient.Apps.RemoveShortcut)).not.toHaveBeenCalled();
 
@@ -837,35 +837,35 @@ describe("DangerZone", () => {
     });
   });
 
-  describe("RetroDeckSection — handleRemoveAll (retrodeck at risk)", () => {
-    it("first click → warn; second click → confirmRetrodeck; third click → execute", async () => {
+  describe("NonSteamRemovalSection — handleRemoveAll (EmuDeck at risk)", () => {
+    it("first click → warn; second click → confirmEmudeck; third click → execute", async () => {
       stubCollectionStore([1, 2]);
       stubAppStore({
-        1: { strDisplayName: "RetroDECK" },
+        1: { strDisplayName: "EmuDeck" },
         2: { strDisplayName: "GameTwo" },
       });
-      // Disable the retrodeck default pattern so it's NOT auto-protected.
+      // Disable the emudeck default pattern so it's NOT auto-protected.
       vi.mocked(backend.getWhitelistSettings).mockResolvedValue({
-        disabled_defaults: ["retrodeck"],
+        disabled_defaults: ["emudeck"],
         custom_names: [],
       });
       const { getByText, container } = render(<DangerZone onBack={vi.fn()} />);
       await flushAsync();
 
-      // First click — generic confirm with retrodeck warning copy.
+      // First click — generic confirm with the EmuDeck warning copy.
       fireEvent.click(getByText("Remove 2 Non-Steam Games"));
-      expect(container.textContent).toContain("WARNING: RetroDECK not protected! Remove 2 games?");
+      expect(container.textContent).toContain("WARNING: EmuDeck not protected! Remove 2 games?");
       expect(vi.mocked(SteamClient.Apps.RemoveShortcut)).not.toHaveBeenCalled();
 
-      // Second click — RETRODECK warning escalation.
-      fireEvent.click(getByText("WARNING: RetroDECK not protected! Remove 2 games?"));
-      expect(container.textContent).toContain("!! RETRODECK WILL BE REMOVED !!");
-      expect(container.textContent).toContain("RetroDECK is NOT in the whitelist and will be permanently removed!");
+      // Second click — EMUDECK warning escalation.
+      fireEvent.click(getByText("WARNING: EmuDeck not protected! Remove 2 games?"));
+      expect(container.textContent).toContain("!! EMUDECK WILL BE REMOVED !!");
+      expect(container.textContent).toContain("EmuDeck is NOT in the whitelist and will be permanently removed!");
       expect(vi.mocked(SteamClient.Apps.RemoveShortcut)).not.toHaveBeenCalled();
 
       // Third click — actually remove.
       await act(async () => {
-        fireEvent.click(getByText(/!! RETRODECK WILL BE REMOVED !!/));
+        fireEvent.click(getByText(/!! EMUDECK WILL BE REMOVED !!/));
         await Promise.resolve();
       });
       expect(vi.mocked(SteamClient.Apps.RemoveShortcut)).toHaveBeenCalledWith(1);
@@ -1018,7 +1018,7 @@ describe("DangerZone", () => {
       expect(vi.mocked(backend.updateWhitelistSettings)).toHaveBeenLastCalledWith([], []);
     });
 
-    it("resets RetroDeckSection's confirm state when a toggle changes mid-flow", async () => {
+    it("resets NonSteamRemovalSection's confirm state when a toggle changes mid-flow", async () => {
       stubCollectionStore([1, 2]);
       stubAppStore({
         1: { strDisplayName: "Alpha" },
@@ -1039,7 +1039,7 @@ describe("DangerZone", () => {
       expect(container.textContent).not.toContain("Are you sure?");
     });
 
-    it("clicking 'Hide Whitelist' resets RetroDeck confirm state", async () => {
+    it("clicking 'Hide Whitelist' resets the EmuDeck confirm state", async () => {
       stubCollectionStore([1]);
       stubAppStore({ 1: { strDisplayName: "Alpha" } });
       const { getByText, container } = render(<DangerZone onBack={vi.fn()} />);

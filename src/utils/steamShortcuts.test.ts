@@ -25,7 +25,7 @@ describe("setLaunchOptionsConfirmed", () => {
   });
 
   it("fires SetAppLaunchOptions and resolves true when the read-back matches", async () => {
-    const value = 'flatpak run net.retrodeck.retrodeck "/games/x.bin"';
+    const value = '/opt/emu/eden "/games/x.bin"';
     const setLaunchOptions = vi.fn();
     const { fn } = makeRegisterForAppDetails(() => ({ strLaunchOptions: value }));
     vi.stubGlobal("SteamClient", {

@@ -473,7 +473,7 @@ describe("VersionPicker — switching", () => {
 
   it("switch to a downloaded target confirms its launch command onto the shortcut", async () => {
     vi.mocked(backend.getVersionList).mockResolvedValue(multiVersionList());
-    const command = 'flatpak run net.retrodeck.retrodeck "/roms/game.iso"';
+    const command = '/opt/emu/eden "/roms/game.iso"';
     vi.mocked(backend.switchVersion).mockResolvedValue({
       success: true,
       rom_id: 2,
