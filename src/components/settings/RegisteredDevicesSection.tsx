@@ -24,17 +24,17 @@ export const RegisteredDevicesSection: FC<RegisteredDevicesSectionProps> = ({
     <PanelSection title="Registered Devices">
       {devicesLoading && (
         <PanelSectionRow>
-          <Field label="Loading..." />
+          <Field label="Loading..." focusable />
         </PanelSectionRow>
       )}
       {!devicesLoading && devicesError && (
         <PanelSectionRow>
-          <Field label="Could not load devices" description={devicesError} />
+          <Field label="Could not load devices" description={devicesError} focusable />
         </PanelSectionRow>
       )}
       {!devicesLoading && !devicesError && registeredDevices !== null && registeredDevices.length === 0 && (
         <PanelSectionRow>
-          <Field label="No devices registered" />
+          <Field label="No devices registered" focusable />
         </PanelSectionRow>
       )}
       {!devicesLoading &&
@@ -58,8 +58,7 @@ export const RegisteredDevicesSection: FC<RegisteredDevicesSectionProps> = ({
                     )}
                   </span>
                 }
-                description={parts.join(" · ")}
-              />
+                description={parts.join(" · ")} focusable />
             </PanelSectionRow>
           );
         })}

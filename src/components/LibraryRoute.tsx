@@ -1,68 +1,15 @@
-import { FC, useEffect, useState } from "react";
-import { DialogButton, Navigation, Tabs } from "@decky/ui";
-import { getLibraryPlatformFilter, setLibraryPlatformFilter, getLibraryTab, setLibraryTab, type LibraryTab } from "../utils/libraryRoute";
-import { getLibraryOverview } from "../api/backend";
-import type { LibraryOverview } from "../types";
+import { FC, useState } from "react";
+import { Navigation, Tabs } from "@decky/ui";
+import { getLibraryTab, setLibraryTab, type LibraryTab } from "../utils/libraryRoute";
 import { SettingsPage } from "./SettingsPage";
 import { SystemPage } from "./SystemPage";
 import { DangerZone } from "./DangerZone";
 import { DownloadQueue } from "./DownloadQueue";
+import { LibraryGrid } from "./LibraryGrid";
 import { LibrarySyncSection } from "./settings/LibrarySyncSection";
 
 // The moved pages keep their "Back" button; inside the route it leaves the route (history back).
 const leave = () => Navigation.NavigateBack();
-
-/** Placeholder until the cover grid (0.49.0): proves the overview callable and shows the per-platform counts. */
-const LibraryTabContent: FC = () => {
-  const [overview, setOverview] = useState<LibraryOverview | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    getLibraryOverview()
-      .then((o) => alive && setOverview(o))
-      .catch(() => alive && setOverview({ success: false, message: "Could not load the library" }));
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const [filter, setFilter] = useState<string | null>(getLibraryPlatformFilter());
-
-  if (!overview) return <div style={{ padding: "16px" }}>Loading library...</div>;
-  if (!overview.success) {
-    return <div style={{ padding: "16px" }}>{overview.message ?? "Could not load the library"}</div>;
-  }
-  const roms = filter ? overview.roms.filter((r) => r.platform_slug === filter) : overview.roms;
-  const platforms = filter ? overview.platforms.filter((p) => p.platform_slug === filter) : overview.platforms;
-  const installed = roms.filter((r) => r.installed).length;
-  return (
-    <div style={{ padding: "16px" }}>
-      {filter && (
-        <div style={{ marginBottom: "8px" }}>
-          <span data-testid="library-filter">Showing {filter} only</span>{" "}
-          <DialogButton
-            style={{ display: "inline-flex", minWidth: "auto", width: "auto", padding: "2px 10px" }}
-            onClick={() => {
-              setLibraryPlatformFilter(null);
-              setFilter(null);
-            }}
-          >
-            Show all
-          </DialogButton>
-        </div>
-      )}
-      <div>
-        {roms.length} games, {installed} installed
-      </div>
-      {platforms.map((p) => (
-        <div key={p.platform_slug} style={{ opacity: 0.7 }}>
-          {p.platform_slug}: {p.count} games, {p.installed} installed
-        </div>
-      ))}
-      <div style={{ marginTop: "12px", opacity: 0.6 }}>The cover grid arrives in a later release.</div>
-    </div>
-  );
-};
 
 export const LibraryRoute: FC = () => {
   const [tab, setTabState] = useState<LibraryTab>(getLibraryTab());
@@ -77,7 +24,7 @@ export const LibraryRoute: FC = () => {
         activeTab={tab}
         onShowTab={setTab}
         tabs={[
-          { id: "library", title: "Library", content: <LibraryTabContent /> },
+          { id: "library", title: "Library", content: <LibraryGrid /> },
           { id: "downloads", title: "Downloads", content: <DownloadQueue onBack={leave} /> },
           { id: "systems", title: "Systems & BIOS", content: <SystemPage onBack={leave} /> },
           {

@@ -84,12 +84,12 @@ export const BiosCoreTab: FC<BiosCoreTabProps> = ({ appId, romId, platformSlug }
       <PanelSection title="BIOS">
         {!isSwitch && (
           <PanelSectionRow>
-            <Field label="No BIOS needed for this platform" />
+            <Field label="No BIOS needed for this platform" focusable />
           </PanelSectionRow>
         )}
         {isSwitch && !firmware?.success && (
           <PanelSectionRow>
-            <Field label="Key status unavailable" description={firmware?.message} />
+            <Field label="Key status unavailable" description={firmware?.message} focusable />
           </PanelSectionRow>
         )}
         {isSwitch &&
@@ -102,8 +102,7 @@ export const BiosCoreTab: FC<BiosCoreTabProps> = ({ appId, romId, platformSlug }
                   key.emulators.length > 0
                     ? key.emulators.map((e) => `${e.label}: ${STATE_TEXT[e.state]}`).join(" · ")
                     : "No emulator reads this file"
-                }
-              />
+                } focusable />
             </PanelSectionRow>
           ))}
         {isSwitch && missing.length > 0 && (
@@ -118,12 +117,12 @@ export const BiosCoreTab: FC<BiosCoreTabProps> = ({ appId, romId, platformSlug }
       <PanelSection title="Emulator">
         {!core && (
           <PanelSectionRow>
-            <Field label="Emulator info unavailable" />
+            <Field label="Emulator info unavailable" focusable />
           </PanelSectionRow>
         )}
         {core && !core.emulator_data_available && (
           <PanelSectionRow>
-            <Field label="Emulator list unavailable" description="EmuDeck's emulator data could not be read." />
+            <Field label="Emulator list unavailable" description="EmuDeck's emulator data could not be read." focusable />
           </PanelSectionRow>
         )}
         {core && core.emulator_data_available && (
@@ -131,8 +130,7 @@ export const BiosCoreTab: FC<BiosCoreTabProps> = ({ appId, romId, platformSlug }
             <PanelSectionRow>
               <Field
                 label={core.active_core_label ?? "Default"}
-                description={core.has_game_override ? "Set for this game" : "Following the system emulator"}
-              />
+                description={core.has_game_override ? "Set for this game" : "Following the system emulator"} focusable />
             </PanelSectionRow>
             {core.emulators.map((e) => {
               const active = e.label === core.active_core_label;

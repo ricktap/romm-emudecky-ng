@@ -208,7 +208,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({ onBack }) => {
     return (
       <>
         <PanelSectionRow>
-          <Field label="Changes apply on the next sync" />
+          <Field label="Changes apply on the next sync" focusable />
         </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem
@@ -261,7 +261,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({ onBack }) => {
       return (
         <PanelSection title="Collections">
           <PanelSectionRow>
-            <Field label="Failed to load collections" description="Check your connection and try again" />
+            <Field label="Failed to load collections" description="Check your connection and try again" focusable />
           </PanelSectionRow>
         </PanelSection>
       );
@@ -270,7 +270,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({ onBack }) => {
       return (
         <PanelSection title="Collections">
           <PanelSectionRow>
-            <Field label="No collections found" description="Create collections in RomM to sync them here" />
+            <Field label="No collections found" description="Create collections in RomM to sync them here" focusable />
           </PanelSectionRow>
         </PanelSection>
       );
@@ -358,7 +358,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({ onBack }) => {
           </PanelSectionRow>
           {visible.length === 0 ? (
             <PanelSectionRow>
-              <Field label={`No ${activeLabel.toLowerCase()} collections`} />
+              <Field label={`No ${activeLabel.toLowerCase()} collections`} focusable />
             </PanelSectionRow>
           ) : (
             visible.map((collection) => (

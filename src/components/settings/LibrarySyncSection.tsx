@@ -41,7 +41,7 @@ export const LibrarySyncSection: FC = () => {
       </PanelSectionRow>
       {note && (
         <PanelSectionRow>
-          <Field label={note} />
+          <Field label={note} focusable />
         </PanelSectionRow>
       )}
     </PanelSection>

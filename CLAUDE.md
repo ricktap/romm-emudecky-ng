@@ -56,6 +56,7 @@ no linting/formatting in CI — don't add any.
   `launcher_missing`, which the UI must surface). One shared resolver builds every `launch_options`:
   `resolve_emulator_invocation` → `domain/emudeck_launch.resolve_emudeck_invocation`. Ownership = exe ends with
   `/bin/rom-launcher-ng`; rom_id↔appId lives in `roms.shortcut_app_id`.
+- **No scrolling in the Steam UI:** on the Deck the cursor only jumps between focusable elements (button, input, toggle, select). Plain text between two of them is unreachable once it is below the screen edge, so keep text short and make information rows `focusable` (a self-closing `<Field … focusable />`); never put long text, logs or result lists in non-focusable rows.
 - **Frontend API:** `@decky/ui` + `@decky/api`, `callable()` (not `decky-frontend-lib` / `callPluginMethod`). Every
   callable on `Backend` (`py_modules/backend.py`) must be `async def`. Don't push bulk data through `decky.emit()` — use per-item callables.
 - **Callable failures** return `{success: False, reason, message}` (`reason` from `lib.list_result.ErrorCode` or a

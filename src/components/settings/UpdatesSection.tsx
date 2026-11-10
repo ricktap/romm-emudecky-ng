@@ -44,13 +44,12 @@ export const UpdatesSection: FC = () => {
   return (
     <PanelSection title="Updates">
       <PanelSectionRow>
-        <Field label="Installed version" description={state.currentVersion ? `v${state.currentVersion}` : "—"} />
+        <Field label="Installed version" description={state.currentVersion ? `v${state.currentVersion}` : "—"} focusable />
       </PanelSectionRow>
       <PanelSectionRow>
         <Field
           label="Last check"
-          description={checkedAt ? `${updateStatusText(state)} · ${checkedAt}` : updateStatusText(state)}
-        />
+          description={checkedAt ? `${updateStatusText(state)} · ${checkedAt}` : updateStatusText(state)} focusable />
       </PanelSectionRow>
       <PanelSectionRow>
         <ButtonItem

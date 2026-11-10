@@ -240,7 +240,7 @@ const ShortcutRemovalSection: FC<ShortcutRemovalSectionProps> = ({
   } else if (platforms.length === 0) {
     platformsBody = (
       <PanelSectionRow>
-        <Field label="No synced platforms" />
+        <Field label="No synced platforms" focusable />
       </PanelSectionRow>
     );
   } else {
@@ -285,7 +285,7 @@ const ShortcutRemovalSection: FC<ShortcutRemovalSectionProps> = ({
         </PanelSectionRow>
         {status && (
           <PanelSectionRow>
-            <Field label={status} />
+            <Field label={status} focusable />
           </PanelSectionRow>
         )}
       </PanelSection>
@@ -294,7 +294,7 @@ const ShortcutRemovalSection: FC<ShortcutRemovalSectionProps> = ({
         {platformsBody}
         {actionStatus && (
           <PanelSectionRow>
-            <Field label={actionStatus} />
+            <Field label={actionStatus} focusable />
           </PanelSectionRow>
         )}
       </PanelSection>
@@ -321,13 +321,12 @@ const ShortcutRemovalSection: FC<ShortcutRemovalSectionProps> = ({
                 <span style={{ color: "#ff8800" }}>
                   This will delete all downloaded ROM files. Shortcuts remain so you can re-download later.
                 </span>
-              }
-            />
+              } focusable />
           </PanelSectionRow>
         )}
         {uninstallStatus && (
           <PanelSectionRow>
-            <Field label={uninstallStatus} />
+            <Field label={uninstallStatus} focusable />
           </PanelSectionRow>
         )}
       </PanelSection>
@@ -417,7 +416,7 @@ const WhitelistSection: FC<WhitelistSectionProps> = ({
             />
           </PanelSectionRow>
           <PanelSectionRow>
-            <Field label={`Toggle ON to protect (${filteredApps.length}/${nonSteamApps.length}):`} />
+            <Field label={`Toggle ON to protect (${filteredApps.length}/${nonSteamApps.length}):`} focusable />
           </PanelSectionRow>
           {filteredApps.map((app) => (
             <PanelSectionRow key={app.appId}>
@@ -519,7 +518,7 @@ const RetroDeckSection: FC<RetroDeckSectionProps> = ({
     <PanelSection title="Remove Non-Steam Games">
       {nonSteamApps.length === 0 ? (
         <PanelSectionRow>
-          <Field label="No non-steam games found" />
+          <Field label="No non-steam games found" focusable />
         </PanelSectionRow>
       ) : (
         <>
@@ -540,8 +539,7 @@ const RetroDeckSection: FC<RetroDeckSectionProps> = ({
                   <span style={{ color: "#ff4444" }}>
                     RetroDECK is NOT in the whitelist and will be permanently removed!
                   </span>
-                }
-              />
+                } focusable />
             </PanelSectionRow>
           )}
           <WhitelistSection

@@ -509,7 +509,7 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
     syncBody = (
       <>
         <PanelSectionRow>
-          <Field label="Preview" description={formatPreviewDescription(preview.summary)} />
+          <Field label="Preview" description={formatPreviewDescription(preview.summary)} focusable />
         </PanelSectionRow>
         {hasChanges ? (
           <>
@@ -588,8 +588,7 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
                   <Spinner width={14} height={14} />
                   <span style={{ fontSize: "12px" }}>{formatProgressText(syncProgress)}</span>
                 </div>
-              }
-            />
+              } focusable />
           </PanelSectionRow>
         )}
         <PanelSectionRow>
@@ -626,7 +625,7 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
         </PanelSectionRow>
         {connectionUnavailable && (
           <PanelSectionRow>
-            <Field label="Sync needs a connection to the RomM server" />
+            <Field label="Sync needs a connection to the RomM server" focusable />
           </PanelSectionRow>
         )}
       </>
@@ -666,14 +665,13 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
                   ? `${stats.roms} games${stats.platforms > 0 ? ` · ${stats.platforms} platforms` : ""}`
                   : "No games synced yet"
               }
-              description={`Last sync: ${formatLastSync(stats.last_sync)}`}
-            />
+              description={`Last sync: ${formatLastSync(stats.last_sync)}`} focusable />
           </PanelSectionRow>
         )}
         {syncBody}
         {status && !syncing && !preview && (
           <PanelSectionRow>
-            <Field label={status} />
+            <Field label={status} focusable />
           </PanelSectionRow>
         )}
       </PanelSection>
