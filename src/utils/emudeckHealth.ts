@@ -21,6 +21,16 @@ export function emudeckTitle(health: EmuDeckHealth): string {
   return health === "ok" ? "EmuDeck is set up" : TITLES[health];
 }
 
+/** The banner line of a moved storage location, or `null` when it did not move. */
+export function movedSummary(info: EmuDeckHealthInfo | null): string | null {
+  if (!info?.moved) return null;
+  const missing = info.missing ?? 0;
+  const installed = info.installed ?? 0;
+  if (installed === 0) return "The storage location changed. Nothing was installed yet.";
+  if (missing === 0) return `The storage location changed. All ${installed} installed games were found.`;
+  return `The storage location changed. ${missing} of ${installed} installed games were not found.`;
+}
+
 export function useEmudeckHealth(): EmuDeckHealthInfo | null {
   const [info, setInfo] = useState<EmuDeckHealthInfo | null>(null);
   useEffect(() => {

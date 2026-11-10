@@ -30,6 +30,16 @@ impl Dirs {
             std::fs::create_dir_all(root.path().join(d)).unwrap();
         }
         std::fs::write(root.path().join("plugin/package.json"), r#"{"version": "0.40.0-test"}"#).unwrap();
+        // A set-up EmuDeck: its settings name the home folder as the storage parent, and Emulation/ exists. Tests of
+        // the unhealthy states change this.
+        let home = root.path().join("home");
+        std::fs::create_dir_all(home.join(".config/EmuDeck")).unwrap();
+        std::fs::create_dir_all(home.join("Emulation")).unwrap();
+        std::fs::write(
+            home.join(".config/EmuDeck/settings.json"),
+            format!(r#"{{"storagePath": "{}"}}"#, home.display()),
+        )
+        .unwrap();
         Self { root }
     }
     pub fn settings(&self) -> PathBuf {

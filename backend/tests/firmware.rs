@@ -34,6 +34,7 @@ async fn firmware_status_compares_romms_switch_files_with_the_emulators_keys_and
     let romm = FakeRomm::start().await;
     let dirs = Dirs::new();
     let storage = dirs.root.path().join("sd");
+    std::fs::create_dir_all(storage.join("Emulation")).unwrap();
     let config = home(&dirs).join(".config/EmuDeck");
     std::fs::create_dir_all(&config).unwrap();
     std::fs::write(config.join("settings.json"), json!({"storagePath": storage}).to_string()).unwrap();
@@ -118,6 +119,7 @@ fn setup() -> impl std::future::Future<Output = Setup> {
         let romm = FakeRomm::start().await;
         let dirs = Dirs::new();
         let storage = dirs.root.path().join("sd");
+        std::fs::create_dir_all(storage.join("Emulation")).unwrap();
         let config = home(&dirs).join(".config/EmuDeck");
         std::fs::create_dir_all(&config).unwrap();
         std::fs::write(config.join("settings.json"), json!({"storagePath": storage}).to_string()).unwrap();

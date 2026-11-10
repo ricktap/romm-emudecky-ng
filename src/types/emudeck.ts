@@ -8,4 +8,11 @@ export interface EmuDeckHealthInfo {
   message: string;
   /** EmuDeck's `storagePath` (the parent of `Emulation/`) when it could be read. */
   storage_path: string | null;
+  /** `true` when the storage location differs from the one the user last accepted (EmuDeck moved to another drive). */
+  moved?: boolean;
+  /** The location that was accepted before; present with `moved`. */
+  accepted_path?: string;
+  /** Recorded installs, and how many of their files are no longer on disk; present with `moved`. */
+  installed?: number;
+  missing?: number;
 }

@@ -349,6 +349,16 @@ describe("MainPage", () => {
       expect(Navigation.Navigate).toHaveBeenCalledWith("/romm-library");
     });
 
+    it("a moved storage location is its own row with the number of games not found", async () => {
+      vi.mocked(backend.getEmudeckHealth).mockResolvedValue({
+        health: "ok", ok: true, message: "", storage_path: "/new", moved: true, accepted_path: "/old", installed: 4, missing: 3,
+      });
+      const { getByTestId } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      expect(getByTestId("attention-row").textContent).toContain("EmuDeck storage moved");
+      expect(getByTestId("attention-row").textContent).toContain("3 of 4 installed games were not found");
+    });
+
     it("shows no EmuDeck row while EmuDeck is healthy", async () => {
       vi.mocked(backend.getEmudeckHealth).mockResolvedValue({ health: "ok", ok: true, message: "", storage_path: "/sd" });
       const { queryByTestId } = render(<MainPage onNavigate={vi.fn()} />);

@@ -59,6 +59,7 @@ pub const PORTED_CALLABLES: &[&str] = &[
     "dismiss_settings_reset_notice",
     "frontend_log",
     "get_download_queue",
+    "accept_emudeck_storage_path",
     "get_emudeck_health",
     "get_app_id_rom_id_map",
     "get_library_overview",
@@ -170,6 +171,8 @@ pub struct Backend {
     pub playtime: Arc<crate::services::playtime::PlaytimeService>,
     pub update: Arc<crate::services::update::UpdateService>,
     pub downloads: Arc<DownloadService>,
+    /// Where EmuDeck keeps its files, and whether that moved.
+    pub emudeck_location: Arc<crate::services::emudeck_location::EmuDeckLocationService>,
     pub library: Arc<LibraryService>,
     pub sync: Arc<crate::services::sync_orchestrator::SyncOrchestrator>,
     pub shortcuts: Arc<crate::services::shortcut_removal::ShortcutRemovalService>,
@@ -285,6 +288,14 @@ impl Backend {
             firmware_jobs: firmware.clone(),
         });
         let active = downloads.clone();
+        let emudeck_location = crate::services::emudeck_location::EmuDeckLocationService::new(
+            crate::services::emudeck_location::EmuDeckLocationConfig {
+                paths: paths.clone(),
+                kv: kv_config.clone(),
+                library: library.clone(),
+                files: files.clone(),
+            },
+        );
         let adoption = InstallAdoptionService::new(InstallAdoptionServiceConfig {
             romm: romm_api.clone(),
             files,
@@ -388,6 +399,7 @@ impl Backend {
             game_covers,
             steamgrid,
             downloads,
+            emudeck_location,
             library: library_service,
             sync,
             shortcuts,
@@ -412,6 +424,7 @@ impl Backend {
         let s = self.settings_service.clone();
         let c = self.connection_service.clone();
         let d = self.downloads.clone();
+        let loc = self.emudeck_location.clone();
         let l = self.library.clone();
         let sync = self.sync.clone();
         let shortcuts = self.shortcuts.clone();
@@ -553,7 +566,8 @@ impl Backend {
                 let (id, kind) = job_args(&a)?;
                 Ok(d.move_to_front(JobKey { kind, id }).await)
             }),
-            "get_emudeck_health" => bind(name, 0, 0, d, |d, _| async move { Ok(d.emudeck_health()) }),
+            "get_emudeck_health" => bind(name, 0, 0, loc, |l, _| async move { Ok(l.status().await) }),
+            "accept_emudeck_storage_path" => bind(name, 0, 0, loc, |l, _| async move { Ok(l.accept().await) }),
             "get_download_queue" => bind(name, 0, 0, d, |d, _| async move { Ok(d.get_download_queue()) }),
             "get_installed_rom" => bind(name, 1, 1, d, |d, a| async move {
                 let id = rom_id_arg(&a[0])?;
@@ -827,7 +841,7 @@ mod tests {
     #[test]
     fn surface_matches_python_backend_size_and_includes_ported() {
         let names = callable_names();
-        assert_eq!(names.len(), 115);
+        assert_eq!(names.len(), 116);
         let mut dedup = names.clone();
         dedup.dedup();
         assert_eq!(dedup.len(), names.len());

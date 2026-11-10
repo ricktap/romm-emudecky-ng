@@ -3,7 +3,7 @@ import { act, render } from "@testing-library/react";
 
 vi.mock("../api/backend", () => ({ getEmudeckHealth: vi.fn() }));
 import { getEmudeckHealth } from "../api/backend";
-import { EMUDECK_HEALTH_POLL_MS, emudeckTitle, useEmudeckHealth } from "./emudeckHealth";
+import { EMUDECK_HEALTH_POLL_MS, emudeckTitle, movedSummary, useEmudeckHealth } from "./emudeckHealth";
 
 const Probe = () => {
   const info = useEmudeckHealth();
@@ -16,6 +16,19 @@ describe("emudeckTitle", () => {
     const titles = (["absent", "unreadable", "invalid", "root_missing"] as const).map(emudeckTitle);
     expect(new Set(titles).size).toBe(4);
     expect(emudeckTitle("root_missing")).toBe("EmuDeck storage not available");
+  });
+});
+
+describe("movedSummary", () => {
+  const moved = (installed: number, missing: number) => ({ health: "ok", ok: true, message: "", storage_path: "/new", moved: true, installed, missing }) as never;
+  it("is null when the location did not move", () => {
+    expect(movedSummary(null)).toBeNull();
+    expect(movedSummary({ health: "ok", ok: true, message: "", storage_path: "/sd" })).toBeNull();
+  });
+  it("says how many installed games were not found", () => {
+    expect(movedSummary(moved(5, 2))).toBe("The storage location changed. 2 of 5 installed games were not found.");
+    expect(movedSummary(moved(5, 0))).toBe("The storage location changed. All 5 installed games were found.");
+    expect(movedSummary(moved(0, 0))).toBe("The storage location changed. Nothing was installed yet.");
   });
 });
 

@@ -598,6 +598,8 @@ impl EmuDeckPaths for FixedPaths {
 pub struct GatedPaths {
     pub inner: FixedPaths,
     pub health: Arc<std::sync::Mutex<crate::domain::emudeck_health::EmuDeckHealth>>,
+    /// The `storagePath` EmuDeck names; change it to simulate moving to another drive.
+    pub storage: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl EmuDeckPaths for GatedPaths {
@@ -611,7 +613,7 @@ impl EmuDeckPaths for GatedPaths {
         *self.health.lock().unwrap()
     }
     fn storage_path(&self) -> Option<String> {
-        Some("/sd".into())
+        self.storage.lock().unwrap().clone()
     }
 }
 
@@ -668,6 +670,8 @@ pub struct DownloadEnv {
     pub clock: Arc<FakeClock>,
     /// What EmuDeck's health reads as; flip it to simulate an ejected SD card.
     pub health: Arc<std::sync::Mutex<crate::domain::emudeck_health::EmuDeckHealth>>,
+    /// The storage path EmuDeck's settings name.
+    pub storage: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl DownloadEnv {
@@ -683,12 +687,14 @@ impl DownloadEnv {
         std::fs::create_dir_all(&roms).unwrap();
         std::fs::create_dir_all(&bios).unwrap();
         let health = Arc::new(std::sync::Mutex::new(crate::domain::emudeck_health::EmuDeckHealth::Ok));
+        let storage = Arc::new(std::sync::Mutex::new(Some("/sd".to_string())));
         let paths = Arc::new(GatedPaths {
             inner: FixedPaths {
                 roms: roms.to_string_lossy().into_owned(),
                 bios: bios.to_string_lossy().into_owned(),
             },
             health: health.clone(),
+            storage: storage.clone(),
         });
         let jobs = Arc::new(SqliteDownloadJobs::new(db.clone()));
         let library = Arc::new(SqliteLibrary::new(db.clone()));
@@ -756,6 +762,7 @@ impl DownloadEnv {
             adoption,
             clock,
             health,
+            storage,
         }
     }
 

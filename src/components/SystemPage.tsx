@@ -2,6 +2,8 @@ import { useState, useEffect, FC, createElement } from "react";
 import { ConfirmModal, showModal } from "@decky/ui";
 import {
   getFirmwareStatus,
+  getEmudeckHealth,
+  acceptEmudeckStoragePath,
   getPlatforms,
   savePlatformSync,
   downloadAllFirmware,
@@ -9,7 +11,8 @@ import {
   saveFirmwareVersion,
   replaceFirmwareKey,
 } from "../api/backend";
-import type { FirmwareStatus, KeyEmulatorState, KeyState, PlatformSyncSetting, SwitchKeyFile } from "../types";
+import { movedSummary } from "../utils/emudeckHealth";
+import type { EmuDeckHealthInfo, FirmwareStatus, KeyEmulatorState, KeyState, PlatformSyncSetting, SwitchKeyFile } from "../types";
 import { RmButton, RmCard, RmChoice, RmRow, RmStyles, RmToggle, RmValueRow } from "./rm";
 import { formatBytes } from "../utils/formatters";
 import { detach } from "../utils/detach";
@@ -47,8 +50,12 @@ export const SystemPage: FC<SystemPageProps> = () => {
   const [error, setError] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [note, setNote] = useState("");
+  const [location, setLocation] = useState<EmuDeckHealthInfo | null>(null);
 
   async function refresh() {
+    getEmudeckHealth()
+      .then((r) => r?.health && setLocation(r))
+      .catch(() => undefined);
     setLoading(true);
     setError("");
     try {
@@ -87,6 +94,18 @@ export const SystemPage: FC<SystemPageProps> = () => {
     } catch {
       setPlatforms((all) => all.map((p) => (p.id === platform.id ? { ...p, sync_enabled: !enabled } : p)));
       setNote("Could not save the platform setting");
+    }
+  };
+
+  const acceptLocation = async () => {
+    setNote("");
+    try {
+      const result = await acceptEmudeckStoragePath();
+      setNote(result?.message || (result?.success ? "Using the new EmuDeck location" : "Could not save the location"));
+      const fresh = await getEmudeckHealth();
+      if (fresh?.health) setLocation(fresh);
+    } catch {
+      setNote("Could not save the location");
     }
   };
 
@@ -180,6 +199,25 @@ export const SystemPage: FC<SystemPageProps> = () => {
       {offline && <RmValueRow label="Server offline" sub="RomM is unreachable. Showing what is on this machine; downloads are unavailable." />}
       {status && !loading && onRomm === 0 && !offline && (
         <RmValueRow label="No Switch firmware on RomM" sub="Upload firmware and keys to RomM's bios/Switch folder." />
+      )}
+
+      {location?.moved && (
+        <div style={{ marginBottom: 18, maxWidth: 640 }} data-testid="storage-moved">
+          <RmCard title="EmuDeck storage moved">
+            <RmValueRow label="Was" value={location.accepted_path ?? ""} />
+            <RmValueRow label="Now" value={location.storage_path ?? ""} />
+            <RmValueRow label="Games not found here" value={movedSummary(location)?.replace("The storage location changed. ", "") ?? ""} />
+            <RmValueRow
+              label="Nothing was moved or deleted"
+              sub="Copy your ROMs to the new location, or download them again. Games on the old location show as not installed."
+            />
+            <RmRow label="Use the new location">
+              <RmButton variant="sm primary" testId="accept-storage" onActivate={() => detach(acceptLocation())}>
+                Use this location
+              </RmButton>
+            </RmRow>
+          </RmCard>
+        </div>
       )}
 
       <table className="rm-tbl" data-testid="systems-table">

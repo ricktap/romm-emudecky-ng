@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, FC, ReactNode } from "react";
 import { Focusable } from "@decky/ui";
 import { AttRow, Icon, NavRow, RmButton, RmStyles } from "./rm";
-import { emudeckTitle, useEmudeckHealth } from "../utils/emudeckHealth";
+import { emudeckTitle, movedSummary, useEmudeckHealth } from "../utils/emudeckHealth";
 import { openLibraryRoute } from "../utils/libraryRoute";
 import { getSkipPreview, onSyncPreferencesChange } from "../utils/syncPreferences";
 import { missingRequiredKeys } from "../utils/missingKeys";
@@ -591,6 +591,15 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
         key="emudeck"
         title={emudeckTitle(emudeck.health)}
         sub={emudeck.message}
+        onActivate={() => openLibraryRoute("systems")}
+      />,
+    );
+  } else if (movedSummary(emudeck)) {
+    attention.push(
+      <AttRow
+        key="emudeck-moved"
+        title="EmuDeck storage moved"
+        sub={movedSummary(emudeck) ?? ""}
         onActivate={() => openLibraryRoute("systems")}
       />,
     );

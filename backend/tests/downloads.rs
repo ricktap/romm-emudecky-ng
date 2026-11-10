@@ -47,6 +47,7 @@ fn prepare(dirs: &Dirs, romm: &FakeRomm) {
     let config = home(dirs).join(".config/EmuDeck");
     std::fs::create_dir_all(&config).unwrap();
     let storage = dirs.root.path().join("sd");
+    std::fs::create_dir_all(storage.join("Emulation")).unwrap();
     std::fs::write(
         config.join("settings.json"),
         json!({"storagePath": storage}).to_string(),
@@ -158,6 +159,71 @@ async fn start_progress_complete_with_eden_launch_options() {
     assert!(r["error"]["message"].as_str().unwrap().contains("rom_id"));
     assert_eq!(b.call("cancel_download", json!([7])).await["reason"], "no_active_download");
     assert_eq!(b.call("resume_download", json!([7])).await["reason"], "not_paused");
+    b.shutdown().await;
+}
+
+/// Test matrix "SD ejected, no writes": with EmuDeck's storage gone every start is refused with a reason, RomM is not
+/// even asked, and nothing appears on internal storage; once the card is back the same call works.
+#[tokio::test]
+async fn an_ejected_sd_card_never_turns_into_files_on_internal_storage() {
+    let romm = FakeRomm::start().await;
+    let dirs = Dirs::new();
+    prepare(&dirs, &romm);
+    romm.set_rom(switch_rom(7, "metroid.nsp", LEN));
+    romm.set_content(7, payload(LEN));
+    let mut b = Backend::spawn(&dirs).await;
+    seed_rom(&dirs, 7, "metroid.nsp", Some(APP_ID));
+    let healthy = b.call("get_emudeck_health", json!([])).await;
+    assert_eq!((healthy["health"].clone(), healthy["ok"].clone()), (json!("ok"), json!(true)));
+
+    // The card comes out.
+    let card = dirs.root.path().join("sd");
+    let parked = dirs.root.path().join("sd-parked");
+    std::fs::rename(&card, &parked).unwrap();
+    let gone = b.call("get_emudeck_health", json!([])).await;
+    assert_eq!(gone["health"], "root_missing");
+    assert!(gone["message"].as_str().unwrap().contains("SD card"));
+    let refused = b.call("start_download", json!([7])).await;
+    assert_eq!(refused["success"], false);
+    assert_eq!(refused["reason"], "emudeck_unavailable");
+    assert_eq!(b.call("start_download", json!([7, "firmware"])).await["reason"], "emudeck_unavailable");
+    assert!(romm.content_requests().is_empty(), "no transfer was attempted");
+    assert!(!card.exists(), "the card's folders were not recreated");
+    assert!(!home(&dirs).join("Emulation/roms").exists(), "nothing was written to internal storage");
+
+    // The card goes back in: the same call now works.
+    std::fs::rename(&parked, &card).unwrap();
+    assert_eq!(b.call("get_emudeck_health", json!([])).await["ok"], true);
+    assert_eq!(b.call("start_download", json!([7])).await["success"], true);
+    wait_for_size(&roms(&dirs).join("switch/metroid.nsp"), LEN as u64).await;
+    b.shutdown().await;
+}
+
+/// EmuDeck's settings missing, unreadable or without a storage path are visible states, not a silent `~/Emulation`.
+#[tokio::test]
+async fn missing_or_broken_emudeck_settings_are_named_and_never_fall_back_to_the_home_folder() {
+    let romm = FakeRomm::start().await;
+    let dirs = Dirs::new();
+    prepare(&dirs, &romm);
+    let settings = home(&dirs).join(".config/EmuDeck/settings.json");
+    let good = std::fs::read(&settings).unwrap();
+    let mut b = Backend::spawn(&dirs).await;
+    seed_rom(&dirs, 7, "metroid.nsp", Some(APP_ID));
+    romm.set_rom(switch_rom(7, "metroid.nsp", LEN));
+    romm.set_content(7, payload(LEN));
+    // The status is read fresh when the config cache is empty, so each state gets its own backend.
+    for (contents, state) in [(None, "absent"), (Some(b"{broken".to_vec()), "unreadable"), (Some(br#"{"x": 1}"#.to_vec()), "invalid")] {
+        b.shutdown().await;
+        match &contents {
+            None => std::fs::remove_file(&settings).unwrap(),
+            Some(bytes) => std::fs::write(&settings, bytes).unwrap(),
+        }
+        b = Backend::spawn(&dirs).await;
+        assert_eq!(b.call("get_emudeck_health", json!([])).await["health"], state);
+        assert_eq!(b.call("start_download", json!([7])).await["reason"], "emudeck_unavailable", "{state}");
+        assert!(!home(&dirs).join("Emulation/roms").exists(), "{state}: no fallback to the home folder");
+    }
+    std::fs::write(&settings, good).unwrap();
     b.shutdown().await;
 }
 

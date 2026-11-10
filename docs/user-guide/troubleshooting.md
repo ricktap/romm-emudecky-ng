@@ -2,6 +2,21 @@
 
 Common issues and how to fix them.
 
+## EmuDeck storage: "not available", "not set up", "moved"
+
+The plugin only downloads and installs while it can trust EmuDeck's storage. It never falls back to a folder in your
+home directory. The banner (QAM *Needs attention*, and above the RomM Library) names the state:
+
+| Banner | Meaning | What to do |
+| --- | --- | --- |
+| EmuDeck not set up | `~/.config/EmuDeck/settings.json` does not exist | Install EmuDeck and run its setup |
+| EmuDeck settings unreadable | the file exists but cannot be read | Check the file, or run EmuDeck's setup again |
+| EmuDeck has no storage location | the file has no `storagePath` | Run EmuDeck's setup again |
+| EmuDeck storage not available | the drive or SD card holding `Emulation/` is not there | Insert the card or mount the drive; the banner goes away within 15 seconds |
+| EmuDeck storage moved | EmuDeck now stores on another drive than last time | Open *Systems & BIOS* and read the card: nothing was moved or deleted; copy your ROMs over or download them again, then press **Use this location** |
+
+While a banner is showing, starting a download answers with the same sentence instead of writing anything.
+
 ## Plugin Backend Won't Start
 
 ### Connection shows "Backend error"

@@ -1,4 +1,5 @@
 [
+  "accept_emudeck_storage_path",
   "apply_sgdb_game_id",
   "apply_steam_input_setting",
   "cancel_download",
