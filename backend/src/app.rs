@@ -299,7 +299,7 @@ impl Backend {
             clock:clock.clone(),saves:save_safety,
         });
         let update=crate::services::update::UpdateService::new(crate::services::update::UpdateConfig {
-            feed:Arc::new(crate::adapters::releases::GitHubReleases::new(&user_agent,crate::domain::self_update::LATEST)?),
+            feed:Arc::new(crate::adapters::releases::GitHubReleases::new(&user_agent,crate::domain::self_update::LATEST)?.with_web_latest(crate::domain::self_update::LATEST_PAGE)),
             metadata:Arc::new(crate::adapters::releases::FilePluginMetadata::new(env.plugin_dir.clone())),clock:clock.clone(),
         });
         let sync = crate::services::sync_orchestrator::SyncOrchestrator::new(crate::services::sync_orchestrator::SyncOrchestratorConfig {
