@@ -581,13 +581,19 @@ pub trait SaveSafety: Send + Sync {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReleaseError {
-    #[error("GitHub rate limit reached")] RateLimited,
+    /// Seconds until GitHub allows requests again, when it said so (`Retry-After` / `X-RateLimit-Reset`).
+    #[error("GitHub rate limit reached")] RateLimited(Option<u64>),
     #[error("GitHub returned an unreadable response")] BadResponse,
     #[error("Could not reach GitHub")] Unreachable,
 }
 #[async_trait]
 pub trait ReleaseFeed: Send + Sync {
     async fn latest(&self) -> Result<Value, ReleaseError>;
+    /// The newest stable release tag from the web `releases/latest` redirect, which is not counted against the
+    /// API rate limit. An error tells the caller to fall back to [`latest`](Self::latest).
+    async fn latest_tag(&self) -> Result<String, ReleaseError> {
+        Err(ReleaseError::Unreachable)
+    }
 }
 #[async_trait]
 pub trait PluginMetadata: Send + Sync {

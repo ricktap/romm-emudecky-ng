@@ -142,9 +142,58 @@ struct Metadata;
     let f=Arc::new(Feed::default());let t=Arc::new(Time::default());let s=UpdateService::new(UpdateConfig{feed:f.clone(),metadata:Arc::new(Metadata),clock:t.clone()});
     let release=json!({"tag_name":"v0.40.0","assets":[{"name":"romm-emudecky-ng.zip","browser_download_url":"https://github.com/ricktap/romm-emudecky-ng/releases/download/v0.40.0/romm-emudecky-ng.zip","digest":format!("sha256:{}","a".repeat(64))}]});f.responses.lock().unwrap().push_back(Ok(release));
     let (a,b)=tokio::join!(s.check(false),s.check(false));assert_eq!(a,b);assert_eq!(a["update_available"],true);assert_eq!(a["plugin_name"],"EmuDecky RomM NG");assert_eq!(f.calls.load(std::sync::atomic::Ordering::SeqCst),1);
-    t.at(21599.0,0.0);assert_eq!(s.check(false).await,a);t.at(21600.0,0.0);f.responses.lock().unwrap().push_back(Err(ReleaseError::RateLimited));assert_eq!(s.check(false).await["reason"],"rate_limited");
+    t.at(21599.0,0.0);assert_eq!(s.check(false).await,a);t.at(21600.0,0.0);f.responses.lock().unwrap().push_back(Err(ReleaseError::RateLimited(None)));assert_eq!(s.check(false).await["reason"],"rate_limited");
     t.at(22499.0,0.0);assert_eq!(s.check(false).await["reason"],"rate_limited");t.at(22500.0,0.0);f.responses.lock().unwrap().push_back(Err(ReleaseError::BadResponse));assert_eq!(s.check(false).await["reason"],"unknown");
     f.responses.lock().unwrap().push_back(Err(ReleaseError::Unreachable));assert_eq!(s.check(true).await["reason"],"server_unreachable");assert_eq!(s.check(true).await["update_available"],false);s.schedule().await;s.shutdown().await;
+}
+
+/// A feed with the web redirect: `tag` is what `releases/latest` redirects to, `api` what the API answers.
+struct TagFeed{tag:Mutex<Result<String,ReleaseError>>,api:Mutex<VecDeque<Result<Value,ReleaseError>>>,api_calls:std::sync::atomic::AtomicUsize}
+impl TagFeed{fn new(tag:Result<&str,ReleaseError>)->Arc<Self>{Arc::new(Self{tag:Mutex::new(tag.map(str::to_string)),api:Mutex::default(),api_calls:Default::default()})}fn api_calls(&self)->usize{self.api_calls.load(std::sync::atomic::Ordering::SeqCst)}}
+#[async_trait]impl ReleaseFeed for TagFeed{
+    async fn latest(&self)->Result<Value,ReleaseError>{self.api_calls.fetch_add(1,std::sync::atomic::Ordering::SeqCst);self.api.lock().unwrap().pop_front().unwrap_or(Ok(json!({})))}
+    async fn latest_tag(&self)->Result<String,ReleaseError>{match &*self.tag.lock().unwrap(){Ok(t)=>Ok(t.clone()),Err(ReleaseError::BadResponse)=>Err(ReleaseError::BadResponse),Err(_)=>Err(ReleaseError::Unreachable)}}
+}
+fn release_json(v:&str)->Value{json!({"tag_name":format!("v{v}"),"assets":[{"name":"romm-emudecky-ng.zip","browser_download_url":format!("https://github.com/ricktap/romm-emudecky-ng/releases/download/v{v}/romm-emudecky-ng.zip"),"digest":format!("sha256:{}","a".repeat(64))}]})}
+fn update_service(f:Arc<TagFeed>,t:Arc<Time>)->Arc<UpdateService>{UpdateService::new(UpdateConfig{feed:f,metadata:Arc::new(Metadata),clock:t})}
+#[tokio::test]async fn an_up_to_date_install_never_touches_the_api(){
+    let f=TagFeed::new(Ok("v0.33.2"));let s=update_service(f.clone(),Arc::new(Time::default()));
+    let r=s.check(false).await;
+    assert_eq!((r["success"].clone(),r["update_available"].clone(),r["latest_version"].clone()),(json!(true),json!(false),json!("0.33.2")));
+    assert_eq!(f.api_calls(),0);
+    assert_eq!(s.check(true).await["update_available"],false);assert_eq!(f.api_calls(),0,"a forced check is still answered by the redirect");
+}
+#[tokio::test]async fn a_newer_tag_asks_the_api_once_for_the_asset_and_digest(){
+    let f=TagFeed::new(Ok("v0.46.0"));f.api.lock().unwrap().push_back(Ok(release_json("0.46.0")));
+    let s=update_service(f.clone(),Arc::new(Time::default()));
+    let r=s.check(false).await;
+    assert_eq!((r["update_available"].clone(),r["latest_version"].clone()),(json!(true),json!("0.46.0")));
+    assert!(r["asset_url"].as_str().unwrap().ends_with("v0.46.0/romm-emudecky-ng.zip"));assert_eq!(f.api_calls(),1);
+}
+#[tokio::test]async fn a_redirect_that_fails_or_looks_wrong_falls_back_to_the_api(){
+    for tag in [Err(ReleaseError::Unreachable),Err(ReleaseError::BadResponse),Ok("not-a-version")]{
+        let f=TagFeed::new(tag);f.api.lock().unwrap().push_back(Ok(release_json("0.46.0")));
+        let s=update_service(f.clone(),Arc::new(Time::default()));
+        assert_eq!(s.check(false).await["update_available"],true);assert_eq!(f.api_calls(),1);
+    }
+}
+#[tokio::test]async fn a_rate_limit_is_remembered_until_github_lifts_it_even_for_a_forced_check(){
+    let f=TagFeed::new(Ok("v0.46.0"));let t=Arc::new(Time::default());let s=update_service(f.clone(),t.clone());
+    f.api.lock().unwrap().push_back(Err(ReleaseError::RateLimited(Some(1800))));
+    let r=s.check(false).await;
+    assert_eq!((r["reason"].clone(),r["retry_after_seconds"].clone()),(json!("rate_limited"),json!(1800)));
+    assert!(r["message"].as_str().unwrap().contains("30 min"),"{r}");assert_eq!(f.api_calls(),1);
+    t.at(1799.0,0.0);assert_eq!(s.check(true).await["reason"],"rate_limited");assert_eq!(f.api_calls(),1,"a forced check inside the window makes no request");
+    t.at(1800.0,0.0);f.api.lock().unwrap().push_back(Ok(release_json("0.46.0")));
+    assert_eq!(s.check(true).await["update_available"],true);assert_eq!(f.api_calls(),2);
+}
+#[tokio::test]async fn a_rate_limit_wait_is_clamped_and_defaults_to_fifteen_minutes(){
+    for (retry,window) in [(Some(5u64),60.0),(Some(99999),3600.0),(None,900.0)]{
+        let f=TagFeed::new(Ok("v0.46.0"));let t=Arc::new(Time::default());let s=update_service(f.clone(),t.clone());
+        f.api.lock().unwrap().push_back(Err(ReleaseError::RateLimited(retry)));f.api.lock().unwrap().push_back(Ok(release_json("0.46.0")));
+        s.check(false).await;t.at(window-1.0,0.0);assert_eq!(s.check(false).await["reason"],"rate_limited","{retry:?} still limited");assert_eq!(f.api_calls(),1);
+        t.at(window,0.0);assert_eq!(s.check(false).await["update_available"],true,"{retry:?} asks again");assert_eq!(f.api_calls(),2);
+    }
 }
 
 fn actions(e:&DownloadEnv)->super::game_actions::GameActions{
