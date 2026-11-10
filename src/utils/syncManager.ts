@@ -88,7 +88,7 @@ async function resolveShortcutAppId(item: SyncAddItem, existing: Map<number, num
     SteamClient.Apps.SetShortcutName(existingAppId, item.name);
     SteamClient.Apps.SetShortcutExe(existingAppId, item.exe);
     SteamClient.Apps.SetShortcutStartDir(existingAppId, item.start_dir);
-    // Launch options carry the full RetroDECK command (or "" for uninstalled).
+    // Launch options carry the full emulator command (or "" for uninstalled).
     // Confirm the write landed rather than fire-and-forget — Set* returns void.
     await setLaunchOptionsConfirmed(existingAppId, item.launch_options);
     return existingAppId;

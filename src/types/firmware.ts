@@ -26,7 +26,7 @@ export interface EmulatorOption {
  * instead reads it off the `get_firmware_status` payload (`FirmwarePlatformExt`),
  * which enumerates every platform in one call — see that interface below.
  * `emulator_data_available` is false when `es_systems.xml` cannot be read
- * (RetroDECK not detected), so the picker can say so instead of an empty list.
+ * (no EmuDeck emulator detected), so the picker can say so instead of an empty list.
  */
 export interface CoreInfo {
   emulators: EmulatorOption[];

@@ -23,8 +23,8 @@ library into Steam as Non-Steam shortcuts. Games launch through EmuDeck.
 5. **[Managing Games](user-guide/managing-games.md)** — Game detail panel, downloading ROMs, uninstalling, refreshing
    metadata
 6. **[Switch firmware and keys](user-guide/bios-management.md)** — Checking keys per emulator, choosing a firmware version, downloading, replacing a key
-7. **[EmuDeck Path Migration](user-guide/retrodeck-path-migration.md)** — Moving your EmuDeck installation between
-   storage locations
+7. **[When EmuDeck's storage moves](user-guide/emudeck-storage-moved.md)** — What the plugin tells you when EmuDeck now
+   stores on another drive
 8. **[Save Sync](user-guide/save-sync.md)** — Auto-sync, conflict resolution modes, manual sync, failed sync retries
 9. **[Troubleshooting](user-guide/troubleshooting.md)** — Common issues, fixes, Danger Zone explained
 

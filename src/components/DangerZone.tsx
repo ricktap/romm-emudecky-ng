@@ -34,7 +34,6 @@ import type { RegistryPlatform } from "../types";
 import { detach } from "../utils/detach";
 
 const DEFAULT_WHITELIST_PATTERNS: string[] = [
-  "retrodeck",
   "moonlight",
   "chiaki",
   "chrome",
@@ -437,7 +436,7 @@ const WhitelistSection: FC<WhitelistSectionProps> = ({
   );
 };
 
-interface RetroDeckSectionProps {
+interface NonSteamRemovalSectionProps {
   nonSteamApps: NonSteamApp[];
   whitelistedIds: Set<number>;
   disabledDefaults: string[];
@@ -449,7 +448,7 @@ interface RetroDeckSectionProps {
   setStatus: (s: string) => void;
 }
 
-const RetroDeckSection: FC<RetroDeckSectionProps> = ({
+const NonSteamRemovalSection: FC<NonSteamRemovalSectionProps> = ({
   nonSteamApps,
   whitelistedIds,
   disabledDefaults,
@@ -461,15 +460,15 @@ const RetroDeckSection: FC<RetroDeckSectionProps> = ({
   setStatus,
 }) => {
   const [confirmRemoveAll, setConfirmRemoveAll] = useState(false);
-  const [confirmRetrodeck, setConfirmRetrodeck] = useState(false);
+  const [confirmEmudeck, setConfirmEmudeck] = useState(false);
 
   const resetRemoveConfirms = () => {
     setConfirmRemoveAll(false);
-    setConfirmRetrodeck(false);
+    setConfirmEmudeck(false);
   };
 
-  const retrodeckAtRisk = nonSteamApps.some(
-    (a) => !whitelistedIds.has(a.appId) && a.name.toLowerCase().includes("retrodeck"),
+  const emudeckAtRisk = nonSteamApps.some(
+    (a) => !whitelistedIds.has(a.appId) && a.name.toLowerCase().includes("emudeck"),
   );
 
   const handleRemoveAll = async () => {
@@ -477,8 +476,8 @@ const RetroDeckSection: FC<RetroDeckSectionProps> = ({
       setConfirmRemoveAll(true);
       return;
     }
-    if (retrodeckAtRisk && !confirmRetrodeck) {
-      setConfirmRetrodeck(true);
+    if (emudeckAtRisk && !confirmEmudeck) {
+      setConfirmEmudeck(true);
       return;
     }
     const toRemove = nonSteamApps.filter((a) => !whitelistedIds.has(a.appId));
@@ -488,22 +487,22 @@ const RetroDeckSection: FC<RetroDeckSectionProps> = ({
     }
     setStatus(`Removed ${toRemove.length} non-steam game${toRemove.length === 1 ? "" : "s"}`);
     setConfirmRemoveAll(false);
-    setConfirmRetrodeck(false);
+    setConfirmEmudeck(false);
     loadNonSteamApps();
     refreshPlatforms().catch((e) => logError(`Failed to refresh platforms: ${e}`));
   };
 
   const removeButtonLabel = () => {
-    if (confirmRetrodeck) {
+    if (confirmEmudeck) {
       return (
-        <span style={{ color: "#ff4444", fontWeight: "bold" }}>!! RETRODECK WILL BE REMOVED !! Click to confirm</span>
+        <span style={{ color: "#ff4444", fontWeight: "bold" }}>!! EMUDECK WILL BE REMOVED !! Click to confirm</span>
       );
     }
     if (confirmRemoveAll) {
-      if (retrodeckAtRisk) {
+      if (emudeckAtRisk) {
         return (
           <span style={{ color: "#ff8800" }}>
-            WARNING: RetroDECK not protected! Remove {nonSteamApps.length - whitelistedIds.size} games?
+            WARNING: EmuDeck not protected! Remove {nonSteamApps.length - whitelistedIds.size} games?
           </span>
         );
       }
@@ -532,12 +531,12 @@ const RetroDeckSection: FC<RetroDeckSectionProps> = ({
               {removeButtonLabel()}
             </ButtonItem>
           </PanelSectionRow>
-          {confirmRetrodeck && (
+          {confirmEmudeck && (
             <PanelSectionRow>
               <Field
                 label={
                   <span style={{ color: "#ff4444" }}>
-                    RetroDECK is NOT in the whitelist and will be permanently removed!
+                    EmuDeck is NOT in the whitelist and will be permanently removed!
                   </span>
                 } focusable />
             </PanelSectionRow>
@@ -674,7 +673,7 @@ export const DangerZone: FC<DangerZoneProps> = ({ onBack }) => {
         setStatus={setStatus}
       />
 
-      <RetroDeckSection
+      <NonSteamRemovalSection
         nonSteamApps={nonSteamApps}
         whitelistedIds={whitelistedIds}
         disabledDefaults={disabledDefaults}

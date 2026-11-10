@@ -214,7 +214,7 @@ describe("DiscSelector — selecting a disc", () => {
     vi.mocked(backend.getDiscSelection).mockResolvedValue(m3uSelection);
     vi.mocked(backend.selectDisc).mockResolvedValue({
       success: true,
-      launch_options: "flatpak run net.retrodeck.retrodeck '/roms/ff7 (Disc 2).cue'",
+      launch_options: "/opt/emu/eden '/roms/ff7 (Disc 2).cue'",
       selected: "ff7 (Disc 2).cue",
     });
 
@@ -228,7 +228,7 @@ describe("DiscSelector — selecting a disc", () => {
     expect(backend.selectDisc).toHaveBeenCalledWith(42, "ff7 (Disc 2).cue");
     expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(
       100,
-      "flatpak run net.retrodeck.retrodeck '/roms/ff7 (Disc 2).cue'",
+      "/opt/emu/eden '/roms/ff7 (Disc 2).cue'",
     );
   });
 
@@ -237,7 +237,7 @@ describe("DiscSelector — selecting a disc", () => {
     vi.mocked(backend.getDiscSelection).mockResolvedValue({ ...m3uSelection, selected: "ff7 (Disc 2).cue" });
     vi.mocked(backend.selectDisc).mockResolvedValue({
       success: true,
-      launch_options: "flatpak run net.retrodeck.retrodeck '/roms/ff7.m3u'",
+      launch_options: "/opt/emu/eden '/roms/ff7.m3u'",
       selected: null,
     });
 
@@ -249,7 +249,7 @@ describe("DiscSelector — selecting a disc", () => {
     });
 
     expect(backend.selectDisc).toHaveBeenCalledWith(42, null);
-    expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(100, "flatpak run net.retrodeck.retrodeck '/roms/ff7.m3u'");
+    expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(100, "/opt/emu/eden '/roms/ff7.m3u'");
   });
 
   it("updates the icon-only face after a successful pick", async () => {

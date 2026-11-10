@@ -114,7 +114,7 @@ describe("index.tsx — download_complete launch-options sync", () => {
       platform_name: "PSX",
       file_path: "/games/test.bin",
       app_id: 5000,
-      launch_options: 'flatpak run net.retrodeck.retrodeck "/games/test.bin"',
+      launch_options: '/opt/emu/eden "/games/test.bin"',
     };
     act(() => {
       emitDeckyEvent<[DownloadCompleteEvent]>("download_complete", event);
@@ -123,7 +123,7 @@ describe("index.tsx — download_complete launch-options sync", () => {
 
     expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(
       5000,
-      'flatpak run net.retrodeck.retrodeck "/games/test.bin"',
+      '/opt/emu/eden "/games/test.bin"',
     );
     plugin.onDismount();
   });
@@ -182,7 +182,7 @@ describe("index.tsx — download_complete launch-options sync", () => {
         platform_name: "PSX",
         file_path: "/games/u.bin",
         app_id: null,
-        launch_options: 'flatpak run net.retrodeck.retrodeck "/games/u.bin"',
+        launch_options: '/opt/emu/eden "/games/u.bin"',
       });
     });
     await flush();
@@ -202,7 +202,7 @@ describe("index.tsx — download_complete launch-options sync", () => {
         platform_name: "PSX",
         file_path: "/games/test.bin",
         app_id: 5000,
-        launch_options: 'flatpak run net.retrodeck.retrodeck "/games/test.bin"',
+        launch_options: '/opt/emu/eden "/games/test.bin"',
       });
     });
     await flush();
@@ -270,14 +270,14 @@ describe("index.tsx — startup launch-options reconcile (#1043)", () => {
 
   it("confirm-sets launch options for each reconciled item after init", async () => {
     vi.mocked(getInstalledRelaunchOptions).mockResolvedValue([
-      { app_id: 100, launch_options: 'flatpak run net.retrodeck.retrodeck "/roms/a.bin"' },
-      { app_id: 200, launch_options: 'flatpak run net.retrodeck.retrodeck "/roms/b.bin"' },
+      { app_id: 100, launch_options: '/opt/emu/eden "/roms/a.bin"' },
+      { app_id: 200, launch_options: '/opt/emu/eden "/roms/b.bin"' },
     ]);
     const plugin = pluginFactory();
     await flush();
 
-    expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(100, 'flatpak run net.retrodeck.retrodeck "/roms/a.bin"');
-    expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(200, 'flatpak run net.retrodeck.retrodeck "/roms/b.bin"');
+    expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(100, '/opt/emu/eden "/roms/a.bin"');
+    expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(200, '/opt/emu/eden "/roms/b.bin"');
     expect(logError).not.toHaveBeenCalledWith(expect.stringContaining("startup_reconcile"));
     plugin.onDismount();
   });
@@ -295,12 +295,12 @@ describe("index.tsx — startup launch-options reconcile (#1043)", () => {
   it("surfaces a startup_reconcile-prefixed logError when a confirm returns false", async () => {
     setLaunchOptionsConfirmed.mockResolvedValue(false);
     vi.mocked(getInstalledRelaunchOptions).mockResolvedValue([
-      { app_id: 100, launch_options: 'flatpak run net.retrodeck.retrodeck "/roms/a.bin"' },
+      { app_id: 100, launch_options: '/opt/emu/eden "/roms/a.bin"' },
     ]);
     const plugin = pluginFactory();
     await flush();
 
-    expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(100, 'flatpak run net.retrodeck.retrodeck "/roms/a.bin"');
+    expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(100, '/opt/emu/eden "/roms/a.bin"');
     expect(logError).toHaveBeenCalledWith("startup_reconcile: failed to confirm launch options for appId 100");
     plugin.onDismount();
   });
@@ -344,7 +344,7 @@ describe("index.tsx — sync_complete launch-options reconcile (#1151)", () => {
     setLaunchOptionsConfirmed.mockClear();
     vi.mocked(getInstalledRelaunchOptions).mockClear();
     vi.mocked(getInstalledRelaunchOptions).mockResolvedValue([
-      { app_id: 100, launch_options: 'flatpak run net.retrodeck.retrodeck "/roms/a.bin"' },
+      { app_id: 100, launch_options: '/opt/emu/eden "/roms/a.bin"' },
     ]);
 
     act(() => {
@@ -357,7 +357,7 @@ describe("index.tsx — sync_complete launch-options reconcile (#1151)", () => {
     await flush();
 
     expect(getInstalledRelaunchOptions).toHaveBeenCalled();
-    expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(100, 'flatpak run net.retrodeck.retrodeck "/roms/a.bin"');
+    expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(100, '/opt/emu/eden "/roms/a.bin"');
     expect(logError).not.toHaveBeenCalledWith(expect.stringContaining("sync_reconcile"));
     plugin.onDismount();
   });
@@ -368,7 +368,7 @@ describe("index.tsx — sync_complete launch-options reconcile (#1151)", () => {
     setLaunchOptionsConfirmed.mockClear();
     vi.mocked(getInstalledRelaunchOptions).mockClear();
     vi.mocked(getInstalledRelaunchOptions).mockResolvedValue([
-      { app_id: 200, launch_options: 'flatpak run net.retrodeck.retrodeck "/roms/b.bin"' },
+      { app_id: 200, launch_options: '/opt/emu/eden "/roms/b.bin"' },
     ]);
 
     act(() => {
@@ -380,7 +380,7 @@ describe("index.tsx — sync_complete launch-options reconcile (#1151)", () => {
     });
     await flush();
 
-    expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(200, 'flatpak run net.retrodeck.retrodeck "/roms/b.bin"');
+    expect(setLaunchOptionsConfirmed).toHaveBeenCalledWith(200, '/opt/emu/eden "/roms/b.bin"');
     plugin.onDismount();
   });
 

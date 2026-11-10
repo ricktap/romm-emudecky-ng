@@ -510,7 +510,7 @@ describe("launchInterceptor — full funnel watcher", () => {
   // still relaunches (the launch must never be trapped).
   // ---------------------------------------------------------------------------
   describe("relaunch launch_options re-confirm (#1152)", () => {
-    const RELAUNCH_COMMAND = 'flatpak run net.retrodeck.retrodeck "/roms/snes/g.rom"';
+    const RELAUNCH_COMMAND = '/opt/emu/eden "/roms/snes/g.rom"';
 
     it("allow → re-confirms (getRomRelaunchOptions → setLaunchOptionsConfirmed) BEFORE RunGame", async () => {
       vi.mocked(launchGate.runLaunchGate).mockResolvedValue({ decision: "allow" });

@@ -2209,7 +2209,7 @@ describe("RomMPlaySection", () => {
       await setupCoreAction();
       vi.mocked(backend.setGameCore).mockResolvedValue({
         success: true,
-        launch_options: 'flatpak run net.retrodeck.retrodeck -e "...blastem.so..." "/roms/mario.sfc"',
+        launch_options: '/opt/emu/eden -e "...blastem.so..." "/roms/mario.sfc"',
         app_id: 777,
       });
       render(<RomMPlaySection appId={testAppId} />);
@@ -2230,7 +2230,7 @@ describe("RomMPlaySection", () => {
         // toasting success (R1).
         expect(vi.mocked(setLaunchOptionsConfirmed)).toHaveBeenCalledWith(
           777,
-          'flatpak run net.retrodeck.retrodeck -e "...blastem.so..." "/roms/mario.sfc"',
+          '/opt/emu/eden -e "...blastem.so..." "/roms/mario.sfc"',
         );
         // Core display refreshed via the dedicated rom_id path (#923/#945).
         expect(vi.mocked(backend.getPlatformCoreInfo)).toHaveBeenCalledWith(42);
@@ -2252,7 +2252,7 @@ describe("RomMPlaySection", () => {
       await setupCoreAction();
       vi.mocked(backend.setGameCore).mockResolvedValue({
         success: true,
-        launch_options: 'flatpak run net.retrodeck.retrodeck -e "...blastem.so..." "/roms/mario.sfc"',
+        launch_options: '/opt/emu/eden -e "...blastem.so..." "/roms/mario.sfc"',
         app_id: 777,
       });
       // The confirm poll never sees the read-back match → false.
@@ -2441,7 +2441,7 @@ describe("RomMPlaySection", () => {
       await setupCoreAction();
       vi.mocked(backend.clearGameCore).mockResolvedValue({
         success: true,
-        launch_options: 'flatpak run net.retrodeck.retrodeck "/roms/mario.sfc"',
+        launch_options: '/opt/emu/eden "/roms/mario.sfc"',
         app_id: 888,
       });
       render(<RomMPlaySection appId={testAppId} />);
@@ -2465,7 +2465,7 @@ describe("RomMPlaySection", () => {
         // The PLAIN (no -e) launch_options is confirm-set on the bound shortcut.
         expect(vi.mocked(setLaunchOptionsConfirmed)).toHaveBeenCalledWith(
           888,
-          'flatpak run net.retrodeck.retrodeck "/roms/mario.sfc"',
+          '/opt/emu/eden "/roms/mario.sfc"',
         );
         expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(
           expect.objectContaining({ body: "Now following the system core" }),
@@ -2483,7 +2483,7 @@ describe("RomMPlaySection", () => {
       await setupCoreAction();
       vi.mocked(backend.setGameCore).mockResolvedValue({
         success: true,
-        launch_options: 'flatpak run net.retrodeck.retrodeck -e "...snes9x.so..." "/roms/mario.sfc"',
+        launch_options: '/opt/emu/eden -e "...snes9x.so..." "/roms/mario.sfc"',
         app_id: 777,
       });
       render(<RomMPlaySection appId={testAppId} />);
@@ -2505,7 +2505,7 @@ describe("RomMPlaySection", () => {
       await setupCoreAction();
       vi.mocked(backend.clearGameCore).mockResolvedValue({
         success: true,
-        launch_options: 'flatpak run net.retrodeck.retrodeck "/roms/mario.sfc"',
+        launch_options: '/opt/emu/eden "/roms/mario.sfc"',
         app_id: 888,
       });
       vi.mocked(setLaunchOptionsConfirmed).mockResolvedValue(false);
@@ -2683,7 +2683,7 @@ describe("RomMPlaySection", () => {
       // 1 disabled compat note + Use System Override + 2 core items (both
       // separators filtered out by isMenuItem).
       expect(items).toHaveLength(4);
-      // The obsolete RetroDECK-bug warning MenuItem is gone — only ONE disabled item.
+      // The obsolete emulator-bug warning MenuItem is gone — only ONE disabled item.
       expect(items.filter((i) => i.props.disabled === true)).toHaveLength(1);
       expect(items[0]!.props.disabled).toBe(true);
       // The reset item carries the ✓ (no per-game override) and the fallback

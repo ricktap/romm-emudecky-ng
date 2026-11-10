@@ -1865,7 +1865,7 @@ describe("CustomPlayButton — F7 background save-status refresh on settle-to-pl
 // a None item skips the set, and a rejection logs + still launches.
 // ---------------------------------------------------------------------------
 describe("CustomPlayButton — pre-launch relaunch re-confirm (#1150)", () => {
-  const RELAUNCH_COMMAND = 'flatpak run net.retrodeck.retrodeck "/roms/gba/pokemon.gba"';
+  const RELAUNCH_COMMAND = '/opt/emu/eden "/roms/gba/pokemon.gba"';
 
   beforeEach(() => {
     vi.clearAllMocks();

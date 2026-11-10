@@ -42,7 +42,7 @@ export interface BackendResult {
   message: string;
   reason?: RommErrorCode;
   romm_version?: string;
-  /** Set when a callable was rejected because a RetroDECK migration is pending. */
+  /** Set when a callable was rejected because a storage migration is pending. */
   blocked_by_migration?: boolean;
 }
 
