@@ -10,6 +10,9 @@ The Connection Settings page manages your RomM server connection.
 
 - **RomM URL** — the full URL of your RomM server, including port if needed (e.g. `http://192.168.1.100:8080`). Tap
   **Edit** to change it; the URL saves automatically.
+- **External URL** — optional second address of the same server (e.g. `https://romm.example.com`), used automatically
+  when the main URL cannot be reached, such as away from home. The main URL is tried first. Sign in once; the login works
+  for both addresses and for nothing else.
 - **RomM Account** — shows **Signed in** once a token is stored, or **Not signed in** otherwise. Tap **Sign in** to open
   a one-time prompt. The prompt offers three sign-in methods, chosen from the **Sign-in method** dropdown:
   - **Username & password** (default) — enter your RomM username and password once. The plugin exchanges them for a RomM

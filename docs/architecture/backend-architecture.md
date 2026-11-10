@@ -488,6 +488,14 @@ a different destination, not the same one. A legacy token minted before origin s
 None` and is treated as un-bound: it is still attached (never blocked) so existing installs
 keep working until their next sign-in stamps the origin.
 
+**Internal and external URL (D6).** `romm_url` is the internal address, `romm_url_external` an optional second one for
+when the first is out of reach. The token is bound to both origins (`romm_api_token_origins`, set at sign-in and when
+the user saves or clears the external URL); `auth_header(url)` checks the origin of the URL the request actually goes
+to against that list, so the bearer never reaches an unlisted origin. The HTTP adapter picks the base per request:
+internal while its host accepts a TCP connection within 3 s, otherwise external; the choice is cached for 60 s and
+dropped when a request fails transiently. Only a connect failure counts, so a slow server is not abandoned. The
+registered device id is forgotten at sign-in only when none of the previously bound origins is the new server.
+
 **Sign-in ordering: validate → probe → mint → persist (one atomic save).** `establish_token` trims the entered URL and
 rejects a non-http(s) value before any network call. It then holds the candidate URL in memory only — clearing the
 stored token in memory first so the version probe never carries the old server's bearer to the candidate host — and

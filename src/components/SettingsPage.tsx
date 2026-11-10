@@ -3,6 +3,7 @@ import { PanelSection, PanelSectionRow, ButtonItem, ConfirmModal, showModal } fr
 import {
   getSettings,
   saveServerUrl,
+  saveExternalUrl,
   connectWithCredentials,
   connectWithToken,
   connectWithPairingCode,
@@ -45,6 +46,7 @@ interface SettingsPageProps {
 export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
   // Connection state
   const [url, setUrl] = useState("");
+  const [externalUrl, setExternalUrl] = useState("");
   const [hasToken, setHasToken] = useState(false);
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
@@ -83,6 +85,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
       .then((s) => {
         // Apply any pending edits that survived a remount, fall back to backend values
         setUrl(pendingEdits.url ?? s.romm_url);
+        setExternalUrl(s.romm_url_external ?? "");
         setHasToken(s.has_token);
         setAllowInsecureSsl(s.romm_allow_insecure_ssl);
         setSgdbApiKey(s.sgdb_api_key_masked);
@@ -264,6 +267,23 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
       setStatus("Failed to save settings");
     }
   };
+  const handleExternalUrlChange = async (value: string) => {
+    const trimmed = trimServerUrl(value);
+    if (trimmed !== "" && !isValidServerUrl(trimmed)) {
+      setStatus("Enter a valid http:// or https:// server URL");
+      return;
+    }
+    try {
+      const result = await saveExternalUrl(trimmed);
+      if (result && !result.success) {
+        setStatus(result.message || "Failed to save settings");
+        return;
+      }
+      setExternalUrl(trimmed);
+    } catch {
+      setStatus("Failed to save settings");
+    }
+  };
   const handleAllowInsecureSslChange = (val: boolean) => {
     setAllowInsecureSsl(val);
     // Auto-save the URL with the new SSL setting
@@ -429,12 +449,16 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onBack }) => {
       </PanelSection>
       <ConnectionSection
         url={url}
+        externalUrl={externalUrl}
         hasToken={hasToken}
         allowInsecureSsl={allowInsecureSsl}
         status={status}
         loading={loading}
         onUrlChange={(value) => {
           detach(handleUrlChange(value));
+        }}
+        onExternalUrlChange={(value) => {
+          detach(handleExternalUrlChange(value));
         }}
         onConnect={(username, password) => {
           detach(handleConnect(username, password));

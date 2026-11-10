@@ -50,6 +50,8 @@ export interface InstalledRom {
 
 export interface PluginSettings {
   romm_url: string;
+  /** Fallback address for when `romm_url` is unreachable (e.g. away from home); empty when not set. */
+  romm_url_external?: string;
   has_token: boolean;
   steam_input_mode: "default" | "force_on" | "force_off";
   sgdb_api_key_masked: string;

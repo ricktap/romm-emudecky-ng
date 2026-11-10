@@ -459,6 +459,43 @@ describe("SettingsPage", () => {
       );
     });
 
+    it("saves the external URL, shows it, and rejects a bad one without calling the backend", async () => {
+      vi.mocked(backend.saveExternalUrl).mockResolvedValue({ success: true, message: "" });
+      vi.mocked(backend.getSettings).mockResolvedValue({
+        romm_url: "http://romm.local", romm_url_external: "https://old.example.com", has_token: false,
+        steam_input_mode: "default", sgdb_api_key_masked: "", log_level: "warn", romm_allow_insecure_ssl: false,
+      } as never);
+      render(<SettingsPage onBack={vi.fn()} />);
+      await flushAsync();
+      expect(capturedConnection[capturedConnection.length - 1]?.externalUrl).toBe("https://old.example.com");
+
+      await act(async () => {
+        capturedConnection[capturedConnection.length - 1]?.onExternalUrlChange("  https://romm.example.com  ");
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(vi.mocked(backend.saveExternalUrl)).toHaveBeenCalledWith("https://romm.example.com");
+      expect(capturedConnection[capturedConnection.length - 1]?.externalUrl).toBe("https://romm.example.com");
+
+      vi.mocked(backend.saveExternalUrl).mockClear();
+      await act(async () => {
+        capturedConnection[capturedConnection.length - 1]?.onExternalUrlChange("romm.example.com");
+        await Promise.resolve();
+      });
+      expect(vi.mocked(backend.saveExternalUrl)).not.toHaveBeenCalled();
+      expect(capturedConnection[capturedConnection.length - 1]?.status).toBe("Enter a valid http:// or https:// server URL");
+
+      // Clearing is allowed, and a refusal from the backend is shown instead of swallowed.
+      vi.mocked(backend.saveExternalUrl).mockResolvedValue({ success: false, message: "Save failed" });
+      await act(async () => {
+        capturedConnection[capturedConnection.length - 1]?.onExternalUrlChange("");
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(vi.mocked(backend.saveExternalUrl)).toHaveBeenCalledWith("");
+      expect(capturedConnection[capturedConnection.length - 1]?.status).toBe("Save failed");
+    });
+
     it("trims the URL before persisting", async () => {
       vi.mocked(backend.saveServerUrl).mockResolvedValue({ success: true, message: "" });
       render(<SettingsPage onBack={vi.fn()} />);

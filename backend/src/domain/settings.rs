@@ -16,6 +16,8 @@ pub const RESET_NOTICE_KEY: &str = "_settings_reset_notice";
 pub fn default_settings() -> Map<String, Value> {
     let v = json!({
         "romm_url": "",
+        "romm_url_external": "",
+        "romm_api_token_origins": null,
         "romm_api_token": null,
         "romm_api_token_id": null,
         "romm_api_token_origin": null,

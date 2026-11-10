@@ -3,11 +3,17 @@
 //!
 //! Every request carries the plugin `User-Agent` (Cloudflare's Bot Fight Mode
 //! rejects anonymous clients). The bearer token is attached only when its
-//! minting origin matches the configured `romm_url`; a mismatch refuses the
-//! request with [`RommError::TokenHostMismatch`] before any byte leaves.
+//! minting origin (`romm_api_token_origins`, or the single legacy
+//! `romm_api_token_origin`) matches the URL the request goes to; a mismatch
+//! refuses the request with [`RommError::TokenHostMismatch`] before any byte leaves.
+//!
+//! With both `romm_url` (internal) and `romm_url_external` set, the internal one
+//! is used while its host accepts a TCP connection within a few seconds; only a
+//! genuine connect failure falls back to the external URL. The winner is cached
+//! for a short time and re-probed after a transient failure.
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use reqwest::header::HeaderMap;
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
@@ -75,7 +81,14 @@ impl Default for RetryPolicy {
     }
 }
 
+/// How long the chosen base URL is trusted before the internal one is probed again.
+const BASE_TTL: Duration = Duration::from_secs(60);
+/// A connect failure is decided within this long (a few seconds, never a short read timeout).
+const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+
 pub struct RommHttp {
+    /// The base URL last chosen between internal and external, and when.
+    base_cache: Mutex<Option<(String, Instant)>>,
     settings: SettingsStore,
     user_agent: String,
     secure: Client,
@@ -95,6 +108,7 @@ impl RommHttp {
         let timeouts = TransferTimeouts::default();
         let (secure, insecure) = Self::clients(&timeouts)?;
         Ok(Self {
+            base_cache: Mutex::new(None),
             settings,
             user_agent,
             secure,
@@ -127,21 +141,52 @@ impl RommHttp {
     /// `Bearer <token>`, `None` when no token is stored, or a mismatch error
     /// when the token's origin is not the configured URL's origin. A legacy
     /// token without a recorded origin is still attached.
-    pub fn auth_header(&self) -> Result<Option<String>, RommError> {
+    pub fn auth_header(&self, url: &str) -> Result<Option<String>, RommError> {
         let Some(token) = self.settings.get_str("romm_api_token").filter(|t| !t.is_empty()) else {
             return Ok(None);
         };
-        if let Some(origin) = self.settings.get_str("romm_api_token_origin") {
-            let url = self.settings.get_str("romm_url");
-            if !same_origin(Some(&origin), url.as_deref()) {
-                return Err(RommError::TokenHostMismatch);
+        let origins: Vec<String> = match self.settings.get("romm_api_token_origins") {
+            Some(Value::Array(list)) if !list.is_empty() => {
+                list.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
             }
+            _ => self.settings.get_str("romm_api_token_origin").into_iter().collect(),
+        };
+        // The bearer goes only to one of the origins it was minted for (none recorded: a legacy token).
+        if !origins.is_empty() && !origins.iter().any(|o| same_origin(Some(o), Some(url))) {
+            return Err(RommError::TokenHostMismatch);
         }
         Ok(Some(format!("Bearer {token}")))
     }
 
-    fn url(&self, path: &str) -> String {
-        let base = self.settings.get_str("romm_url").unwrap_or_default();
+    /// The base URL requests go to now: the internal URL, or the external one when the internal host
+    /// cannot be connected to. Cached for [`BASE_TTL`].
+    async fn base(&self) -> String {
+        let internal = self.settings.get_str("romm_url").unwrap_or_default().trim().to_string();
+        let external = self.settings.get_str("romm_url_external").unwrap_or_default().trim().to_string();
+        if external.is_empty() {
+            return internal;
+        }
+        if internal.is_empty() {
+            return external;
+        }
+        if let Some((base, at)) = self.base_cache.lock().unwrap().clone()
+            && at.elapsed() < BASE_TTL
+            && (base == internal || base == external)
+        {
+            return base;
+        }
+        let winner = if can_connect(&internal).await { internal } else { external };
+        *self.base_cache.lock().unwrap() = Some((winner.clone(), Instant::now()));
+        winner
+    }
+
+    /// Forget the chosen base so the next request probes again (after a transient failure).
+    fn forget_base(&self) {
+        *self.base_cache.lock().unwrap() = None;
+    }
+
+    async fn url(&self, path: &str) -> String {
+        let base = self.base().await;
         format!("{}{}", base.trim_end_matches('/'), path)
     }
 
@@ -162,7 +207,7 @@ impl RommHttp {
 
     fn authed(&self, method: Method, url: &str, timeout: Duration) -> Result<RequestBuilder, RommError> {
         let mut req = self.request(method, url, timeout);
-        if let Some(header) = self.auth_header()? {
+        if let Some(header) = self.auth_header(url)? {
             req = req.header(reqwest::header::AUTHORIZATION, header);
         }
         Ok(req)
@@ -170,7 +215,7 @@ impl RommHttp {
 
     /// Authenticated `GET` of a JSON resource, retried on transient failures.
     pub async fn get_json(&self, path: &str) -> Result<Value, RommError> {
-        let url = self.url(path);
+        let url = self.url(path).await;
         self.with_retry(|| async {
             let resp = send(self.authed(Method::GET, &url, REQUEST_TIMEOUT)?, &url, "GET").await?;
             json_body(resp, &url, "GET", false).await
@@ -180,7 +225,7 @@ impl RommHttp {
 
     /// Authenticated JSON `POST`/`PUT`, one attempt (a write is never replayed blindly). An empty answer is `{}`.
     pub async fn send_json(&self, method: Method, path: &str, body: &Value) -> Result<Value, RommError> {
-        let url = self.url(path);
+        let url = self.url(path).await;
         let label = method.as_str().to_string();
         let resp = send(self.authed(method, &url, REQUEST_TIMEOUT)?.json(body), &url, &label).await?;
         json_body(resp, &url, &label, true).await
@@ -189,7 +234,7 @@ impl RommHttp {
     /// Authenticated multipart upload of one in-memory file under the form field `saveFile` (RomM's save endpoints). One
     /// attempt, a longer timeout than a plain request; the file name never carries a line break, NUL or quote.
     pub async fn upload_save_file(&self, method: Method, path: &str, file_name: &str, data: Vec<u8>) -> Result<Value, RommError> {
-        let url = self.url(path);
+        let url = self.url(path).await;
         let label = method.as_str().to_string();
         let safe: String = file_name.chars().filter(|c| !matches!(c, '\r' | '\n' | '\0' | '"')).collect();
         let part = reqwest::multipart::Part::bytes(data).file_name(safe).mime_str("application/octet-stream").map_err(|e| RommError::Api(e.to_string()))?;
@@ -200,7 +245,7 @@ impl RommHttp {
 
     /// Authenticated `GET` of a binary body held in memory (a save is small), refused beyond `limit` bytes.
     pub async fn get_bytes(&self, path: &str, limit: u64) -> Result<Vec<u8>, RommError> {
-        let url = self.url(path);
+        let url = self.url(path).await;
         self.with_retry(|| async {
             let resp = send(self.authed(Method::GET, &url, Duration::from_secs(60))?, &url, "GET").await?;
             if resp.content_length().is_some_and(|n| n > limit) {
@@ -217,7 +262,7 @@ impl RommHttp {
 
     /// Authenticated `GET` in a single attempt with a short timeout.
     pub async fn get_json_once(&self, path: &str, timeout: Duration) -> Result<Value, RommError> {
-        let url = self.url(path);
+        let url = self.url(path).await;
         let resp = send(self.authed(Method::GET, &url, timeout)?, &url, "GET").await?;
         json_body(resp, &url, "GET", false).await
     }
@@ -226,7 +271,7 @@ impl RommHttp {
     /// owns retries and needs the structured FastAPI 422 detail intact.
     pub async fn post_json_once(&self,path:&str,body:&Value)->Result<Value,crate::services::ports::PlaytimeApiError>{
         use crate::services::ports::PlaytimeApiError;
-        let url=self.url(path);
+        let url=self.url(path).await;
         let response=self.authed(Method::POST,&url,REQUEST_TIMEOUT)?.json(body).send().await.map_err(|e|translate_transport(&e,&url))?;
         let status=response.status();
         if status.as_u16()==422{
@@ -240,7 +285,7 @@ impl RommHttp {
     /// `POST` JSON to a public endpoint: no `Authorization`, no retry (the body
     /// is a single-use credential). Error responses carry their `detail`.
     pub async fn unauthenticated_post_json(&self, path: &str, body: &Value) -> Result<Value, RommError> {
-        let url = self.url(path);
+        let url = self.url(path).await;
         let req = self.request(Method::POST, &url, REQUEST_TIMEOUT).json(body);
         let resp = req.send().await.map_err(|e| translate_transport(&e, &url))?;
         let status = resp.status();
@@ -265,7 +310,7 @@ impl RommHttp {
         method: Method,
         body: Option<&Value>,
     ) -> Result<Value, RommError> {
-        let url = self.url(path);
+        let url = self.url(path).await;
         let label = method.as_str().to_string();
         let mut req = self
             .request(method, &url, REQUEST_TIMEOUT)
@@ -288,6 +333,7 @@ impl RommHttp {
             match attempt_fn().await {
                 Ok(v) => return Ok(v),
                 Err(e) if attempt + 1 < max && e.is_retryable() => {
+                    self.forget_base();
                     let delay = self.retry.base_delay * 3u32.pow(attempt);
                     tracing::info!("Retry {}/{max} after {:?}: {e}", attempt + 1, delay);
                     if let Some(listener) = &self.on_retry {
@@ -300,6 +346,22 @@ impl RommHttp {
             }
         }
     }
+}
+
+/// Whether the host of `base` accepts a TCP connection within [`PROBE_CONNECT_TIMEOUT`]. Only a genuine connect
+/// failure counts: a slow or erroring server that did accept the connection is still the right one.
+async fn can_connect(base: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(base) else {
+        return false;
+    };
+    let (Some(host), Some(port)) = (url.host_str(), url.port_or_known_default()) else {
+        return false;
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']').to_string();
+    matches!(
+        tokio::time::timeout(PROBE_CONNECT_TIMEOUT, tokio::net::TcpStream::connect((host, port))).await,
+        Ok(Ok(_))
+    )
 }
 
 /// The caller's callbacks, borrowed for the duration of one transfer.
@@ -389,7 +451,7 @@ impl RommHttp {
         mode: TransferMode,
         hooks: TransferHooks,
     ) -> anyhow::Result<TransferOutcome> {
-        let url = self.url(&quote(path, "/:?=&@"));
+        let url = self.url(&quote(path, "/:?=&@")).await;
         if let Some(parent) = std::path::Path::new(dest).parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -460,7 +522,7 @@ impl RommHttp {
 
     fn base_request(&self, url: &str) -> anyhow::Result<RequestBuilder> {
         let mut req = self.client().get(url).header(reqwest::header::USER_AGENT, &self.user_agent);
-        if let Some(header) = self.auth_header()? {
+        if let Some(header) = self.auth_header(url)? {
             req = req.header(reqwest::header::AUTHORIZATION, header);
         }
         Ok(req)

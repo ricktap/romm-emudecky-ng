@@ -79,6 +79,8 @@ export interface CachedGameDetail {
 export { getCachedGameDetail, invalidateCachedGameDetail } from "../utils/cachedGameDetailStore";
 export const getSettings = callable<[], PluginSettings>("get_settings");
 export const saveServerUrl = callable<[string, boolean], BackendResult>("save_server_url");
+// Optional second RomM address, used when the main URL cannot be reached; an empty string clears it.
+export const saveExternalUrl = callable<[string], BackendResult>("save_external_url");
 export const connectWithCredentials = callable<[string, string, string, boolean], BackendResult>(
   "connect_with_credentials",
 );
