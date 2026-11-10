@@ -66,6 +66,8 @@ export function coverStatus(rom: LibraryOverviewRom, live: LiveDownloads): Cover
 
 export interface GridQuery {
   platform: string | null;
+  /** Steam app ids of the chosen RomM collection; null = no collection chosen. */
+  collection?: ReadonlySet<number> | null;
   filter: GridFilter;
   search: string;
 }
@@ -88,11 +90,15 @@ const matchesSearch = (rom: LibraryOverviewRom, search: string): boolean => {
   return needle === "" || rom.name.toLowerCase().includes(needle);
 };
 
+const inCollection = (rom: LibraryOverviewRom, collection?: ReadonlySet<number> | null): boolean =>
+  !collection || collection.has(rom.app_id);
+
 /** The covers to show: platform, filter chip and search together (a filter chip never ignores the platform). */
 export function visibleRoms(roms: readonly LibraryOverviewRom[], query: GridQuery, live: LiveDownloads): LibraryOverviewRom[] {
   return roms.filter(
     (rom) =>
       (query.platform === null || rom.platform_slug === query.platform) &&
+      inCollection(rom, query.collection) &&
       matchesSearch(rom, query.search) &&
       matchesFilter(coverStatus(rom, live), query.filter),
   );
@@ -101,12 +107,13 @@ export function visibleRoms(roms: readonly LibraryOverviewRom[], query: GridQuer
 /** Counts for the filter chips, under the current platform and search (so the numbers match what a chip would show). */
 export function filterCounts(
   roms: readonly LibraryOverviewRom[],
-  query: Pick<GridQuery, "platform" | "search">,
+  query: Pick<GridQuery, "platform" | "search" | "collection">,
   live: LiveDownloads,
 ): Record<GridFilter, number> {
   const counts: Record<GridFilter, number> = { all: 0, installed: 0, romm_only: 0, attention: 0 };
   for (const rom of roms) {
     if (query.platform !== null && rom.platform_slug !== query.platform) continue;
+    if (!inCollection(rom, query.collection)) continue;
     if (!matchesSearch(rom, query.search)) continue;
     const status = coverStatus(rom, live);
     counts.all++;

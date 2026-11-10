@@ -15,7 +15,10 @@ import { getLibraryOverview, getPlatforms, pauseDownload, resumeDownload, startD
 import { setDownloads } from "../utils/downloadStore";
 import { emitDeckyEvent } from "../test-utils/decky-api-mock";
 import { getLibraryPlatformFilter, setLibraryPlatformFilter } from "../utils/libraryRoute";
+import { loadRommCollections } from "../utils/romCollections";
 import { LibraryGrid } from "./LibraryGrid";
+
+vi.mock("../utils/romCollections", () => ({ loadRommCollections: vi.fn() }));
 
 const rom = (id: number, over = {}) => ({
   rom_id: id, app_id: 1000 + id, name: `Game ${id}`, platform_slug: "switch", cover_path: null, installed: false, download: null, issues: [], ...over,
@@ -41,6 +44,7 @@ describe("LibraryGrid", () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     setDownloads([]);
     setLibraryPlatformFilter(null);
+    vi.mocked(loadRommCollections).mockResolvedValue([]);
     vi.mocked(getLibraryOverview).mockResolvedValue(sample() as never);
     vi.mocked(getPlatforms).mockResolvedValue(PLATFORMS as never);
     vi.mocked(startDownload).mockResolvedValue({ success: true, message: "" });
@@ -178,6 +182,39 @@ describe("LibraryGrid", () => {
       vi.mocked(startDownload).mockRejectedValue(new Error("x"));
       await act(async () => pressX(getByTestId("cover-4")));
       expect(toaster.toast).toHaveBeenCalledWith(expect.objectContaining({ body: "Could not download the download" }));
+    });
+  });
+
+  describe("collections rail", () => {
+    const withCollections = () =>
+      vi.mocked(loadRommCollections).mockResolvedValue([{ name: "Favourites", appIds: new Set([1001, 1002]) }]);
+
+    it("shows no Collections heading when the device has none", async () => {
+      const { queryByText } = await renderGrid();
+      expect(queryByText("Collections")).toBeNull();
+    });
+
+    it("lists this device's collections with counts and narrows the grid to one", async () => {
+      withCollections();
+      const { getByTestId, queryByTestId } = await renderGrid();
+      expect(getByTestId("rail-collection-Favourites").textContent).toBe("Favourites (2)");
+      fireEvent.click(getByTestId("rail-collection-Favourites"));
+      expect(getByTestId("cover-1")).toBeTruthy();
+      expect(getByTestId("cover-2")).toBeTruthy();
+      expect(queryByTestId("cover-3")).toBeNull();
+      expect(getByTestId("filter-all").textContent).toBe("All 2");
+    });
+
+    it("choosing a platform clears the collection and the other way round", async () => {
+      withCollections();
+      const { getByTestId, queryByTestId } = await renderGrid();
+      fireEvent.click(getByTestId("rail-collection-Favourites"));
+      fireEvent.click(getByTestId("rail-snes"));
+      expect(getByTestId("cover-2")).toBeTruthy();
+      expect(queryByTestId("cover-1")).toBeNull();
+      fireEvent.click(getByTestId("rail-collection-Favourites"));
+      expect(getByTestId("cover-1")).toBeTruthy();
+      expect(getLibraryPlatformFilter()).toBeNull();
     });
   });
 });

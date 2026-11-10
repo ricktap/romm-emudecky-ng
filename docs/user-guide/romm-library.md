@@ -33,7 +33,8 @@ Open it with **Open RomM Library** in the Quick Access Menu. **L1** / **R1** swi
 
 ### Library
 
-- **Left:** *All games* and one entry per platform with its game count. A platform whose sync is off is dimmed.
+- **Left:** *All games*, one entry per platform with its game count (a platform whose sync is off is dimmed), and below
+  them your RomM *Collections* on this device. A platform and a collection are alternatives: choosing one clears the other.
 - **Top:** a search field, and filter chips with counts: *All*, *Installed*, *On RomM only*, *Needs attention*.
 - **Grid:** one cover per game. Badges: green check = installed, cloud = only on RomM, blue = downloading or queued (with
   a progress bar along the bottom edge), amber = paused, interrupted or something needs a look.
@@ -44,7 +45,10 @@ If a cover shows only a name, Steam has no image for that shortcut yet (see *Ref
 
 ### Downloads
 
-The whole queue: pause or resume each download (or **Pause all** / **Resume all**), cancel one, and the finished list.
+The whole queue, in the order it will run: pause or resume each download (or **Pause all** / **Resume all**), cancel
+one, and the finished list. The running download shows its speed and the time left. **Start now** on a waiting or
+paused game puts it first and pauses the running one (resume that one later). A download that stopped because the
+server was unreachable continues by itself, within about 30 seconds of the server being back.
 **Open** on a finished game goes to its Steam page.
 
 ### Systems & BIOS
