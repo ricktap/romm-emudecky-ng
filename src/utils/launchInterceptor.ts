@@ -41,7 +41,7 @@ import { showCoreChangeModal } from "../components/CoreChangeModal";
 import { handleConflicts } from "../components/SyncConflictModal";
 import { showOfflineDriftModal } from "../components/OfflineDriftModal";
 import { showFallbackLaunchModal } from "../components/FallbackLaunchModal";
-import { SAVEFILES_IN_CONTENT_DIR_REASON } from "../types";
+import { isBenignSyncSkip } from "../types";
 import { detach } from "./detach";
 
 let gameActionHook: { unregister: () => void } | null = null;
@@ -109,7 +109,7 @@ const PRE_LAUNCH_SYNC_TIMEOUT_MS = 15000;
 
 /**
  * Online pre-launch sync, mapped onto the gate's {@link PreLaunchSyncOutcome}.
- * The benign `savefiles_in_content_dir` skip is treated as a successful proceed
+ * The benign skips (`savefiles_in_content_dir`, `not_implemented`) are treated as a successful proceed
  * (no conflict, no failure) — exactly as the Play button does — so it never
  * surfaces a fallback confirm.
  *
@@ -131,7 +131,7 @@ async function preLaunchSyncWatcher(romId: number): Promise<PreLaunchSyncOutcome
     logError(`Watcher pre-launch sync failed (surfacing fallback confirm): ${e}`);
     return { success: false, message: "Couldn't sync saves with RomM server." };
   }
-  if (result.reason === SAVEFILES_IN_CONTENT_DIR_REASON) {
+  if (isBenignSyncSkip(result.reason)) {
     return { success: true, message: result.message };
   }
   const outcome: PreLaunchSyncOutcome = { success: result.success, message: result.message };

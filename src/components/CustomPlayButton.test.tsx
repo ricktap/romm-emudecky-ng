@@ -850,6 +850,41 @@ describe("CustomPlayButton — pre-launch savefiles_in_content_dir benign skip (
   });
 });
 
+describe("CustomPlayButton — save sync not implemented yet launches without a warning", () => {
+  beforeEach(() => {
+    vi.mocked(getCachedGameDetail).mockReset();
+    vi.mocked(toaster.toast).mockReset();
+    vi.mocked(backend.isSaveTrackingConfigured).mockResolvedValue({ configured: true, active_slot: "default" });
+    vi.mocked(backend.checkCoreChange).mockResolvedValue({ changed: false });
+    vi.mocked(backend.probeReachability).mockResolvedValue({ online: true });
+    vi.stubGlobal("SteamClient", { Apps: { RunGame: vi.fn() } });
+    vi.stubGlobal("appStore", {
+      GetAppOverviewByAppID: vi.fn(() => ({ GetGameID: () => "gid-1" })),
+      allApps: [],
+    });
+  });
+
+  it("a not_implemented pre-launch sync is a benign skip: the game launches, no toast, no fallback confirm", async () => {
+    vi.mocked(getCachedGameDetail).mockResolvedValue({ found: true, rom_id: 42, rom_name: "Test ROM", installed: true });
+    vi.mocked(backend.preLaunchSync).mockResolvedValue({
+      success: false,
+      reason: "not_implemented",
+      message: "Save sync is not implemented yet (planned for 0.55.0).",
+    });
+    const { findByText } = render(<CustomPlayButton appId={100} />);
+    const playBtn = await findByText("Play");
+    await act(async () => {
+      playBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(vi.mocked(SteamClient.Apps.RunGame)).toHaveBeenCalledWith("gid-1", "", -1, 100);
+    expect(vi.mocked(toaster.toast)).not.toHaveBeenCalled();
+  });
+});
+
 // #1148 round 2: the Play button is the sibling of the launch interceptor's
 // already-running guard in `handlePlay`. Since #1313 the button renders Resume
 // (not Play) whenever running is detected at/after mount, so this guard is now

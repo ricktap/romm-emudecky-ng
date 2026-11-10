@@ -1,4 +1,5 @@
 import { callable, toaster } from "@decky/api";
+import { NOT_IMPLEMENTED_REASON } from "../types/saves";
 
 /**
  * Callables whose Rust port is still pending (firmware: 0.45.0, save sync: 0.55.0).
@@ -8,7 +9,7 @@ import { callable, toaster } from "@decky/api";
  * The Python implementation (removed in rewrite step 6) lives at the commit noted
  * in HANDOFF.md, "Python reference implementation".
  */
-export const NOT_IMPLEMENTED_REASON = "not_implemented";
+export { NOT_IMPLEMENTED_REASON };
 
 type Feature = "firmware" | "saves";
 
@@ -44,7 +45,9 @@ const UNPORTED: Record<string, Entry> = {
   list_devices: { feature: "saves", silent: true, throws: true },
   get_save_status: { feature: "saves", silent: true, throws: true },
   refresh_save_status: { feature: "saves", silent: true, throws: true },
-  pre_launch_sync: { feature: "saves", silent: true, throws: true },
+  // Resolves to a failure result with reason `not_implemented`; the launch paths treat that as a benign
+  // skip (isBenignSyncSkip) so a game without save sync launches without a warning.
+  pre_launch_sync: { feature: "saves", silent: true },
   get_save_sync_settings: { feature: "saves", silent: true, throws: true },
   is_save_tracking_configured: { feature: "saves", silent: true, throws: true },
   get_save_setup_info: { feature: "saves", silent: true, throws: true },

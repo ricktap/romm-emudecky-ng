@@ -50,7 +50,7 @@ import { getActiveSessionRomId } from "../utils/sessionManager";
 import { isAppRunning } from "../utils/runningApps";
 import type { DownloadProgressEvent, DownloadCompleteEvent, DownloadFailedEvent } from "../types";
 import { phaseButtonLabel, useNowMs, type PhaseFields } from "../utils/downloadPhase";
-import { SAVEFILES_IN_CONTENT_DIR_REASON } from "../types";
+import { isBenignSyncSkip } from "../types";
 import { detach } from "../utils/detach";
 import { interruptedLabel, isStoppedStatus, isUnfinishedStatus } from "../utils/downloadStatus";
 import { setLaunchOptionsConfirmed } from "../utils/steamShortcuts";
@@ -507,13 +507,13 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
       ),
     );
 
-    // Benign skip (#239): RetroArch writes saves to the content dir, so sync
-    // is unsupported. NOT a failure — proceed to launch silently (no toast,
+    // Benign skip (#239): RetroArch writes saves to the content dir, or save sync
+    // is not implemented yet (0.55.0), so sync is unsupported. NOT a failure — proceed to launch silently (no toast,
     // no fallback-launch confirm). The "Save sync off" banner in
     // RomMPlaySection already informs the user; nagging on every launch would
     // be noise.
-    if (result.reason === SAVEFILES_IN_CONTENT_DIR_REASON) {
-      detach(debugLog("CustomPlayButton: pre-launch sync skipped (savefiles_in_content_dir) — launching"));
+    if (isBenignSyncSkip(result.reason)) {
+      detach(debugLog(`CustomPlayButton: pre-launch sync skipped (${result.reason}) — launching`));
       return { success: true, message: result.message };
     }
 

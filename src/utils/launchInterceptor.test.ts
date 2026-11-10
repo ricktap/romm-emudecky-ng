@@ -736,6 +736,14 @@ describe("launchInterceptor — full funnel watcher", () => {
       });
       expect(await ops.preLaunchSync()).toEqual({ success: true, message: "skip" });
 
+      // Save sync not implemented yet (0.55.0): nothing to sync, never a failure.
+      vi.mocked(backend.preLaunchSync).mockResolvedValueOnce({
+        success: false,
+        message: "Save sync is not implemented yet",
+        reason: "not_implemented",
+      });
+      expect(await ops.preLaunchSync()).toEqual({ success: true, message: "Save sync is not implemented yet" });
+
       const conflicts = [conflict()];
       vi.mocked(backend.preLaunchSync).mockResolvedValueOnce({ success: false, message: "c", conflicts });
       expect(await ops.preLaunchSync()).toEqual({ success: false, message: "c", conflicts });

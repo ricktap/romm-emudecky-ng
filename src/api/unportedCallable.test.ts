@@ -54,6 +54,13 @@ describe("unportedCallable", () => {
     expect(toast.mock.calls[0][0].body).toContain("Firmware management is not implemented yet");
   });
 
+  it("resolves the pre-launch sync to a not_implemented failure without a toast: launches treat it as a benign skip", async () => {
+    call.mockResolvedValue(NOT_IMPLEMENTED);
+    const result = await unportedCallable("pre_launch_sync")(7);
+    expect(result).toMatchObject({ success: false, reason: NOT_IMPLEMENTED_REASON });
+    expect(toast).not.toHaveBeenCalled();
+  });
+
   it("does not toast for passive reads: it rejects, as callers already handle", async () => {
     call.mockResolvedValue(NOT_IMPLEMENTED);
     await expect(unportedCallable("get_save_status")(7)).rejects.toThrow("Save sync is not implemented yet");
