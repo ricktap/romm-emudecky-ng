@@ -52,6 +52,15 @@ describe("visibleRoms and filterCounts", () => {
   const live = liveDownloads([dl(4, "downloading", 50)]);
   const q = (over = {}) => ({ platform: null, filter: "all" as const, search: "", ...over });
 
+  it("a collection narrows by app id, together with platform, chip and search", () => {
+    const collection = new Set([1001, 1002, 1003]);
+    expect(visibleRoms(roms, q({ collection }), live).map((r) => r.rom_id)).toEqual([1, 2, 3]);
+    expect(visibleRoms(roms, q({ collection, platform: "snes" }), live).map((r) => r.rom_id)).toEqual([2]);
+    expect(visibleRoms(roms, q({ collection, filter: "installed", search: "met" }), live).map((r) => r.rom_id)).toEqual([3]);
+    expect(filterCounts(roms, { platform: null, search: "", collection }, live)).toMatchObject({ all: 3, installed: 2 });
+    expect(visibleRoms(roms, q({ collection: null }), live)).toHaveLength(4);
+  });
+
   it("filters by chip", () => {
     expect(visibleRoms(roms, q({ filter: "installed" }), live).map((r) => r.rom_id)).toEqual([1, 3]);
     expect(visibleRoms(roms, q({ filter: "romm_only" }), live).map((r) => r.rom_id)).toEqual([2]);

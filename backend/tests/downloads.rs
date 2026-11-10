@@ -16,6 +16,7 @@ use common::fake_romm::FakeRomm;
 use common::{Backend, Dirs};
 use romm_backend::adapters::persistence::system_clock;
 use romm_backend::adapters::romm::http::RetryPolicy;
+use romm_backend::domain::download_job::JobKey;
 use romm_backend::app::{Backend as InProcess, BackendEnv};
 use romm_backend::rpc::server::{EventHub, Server};
 use serde_json::{Value, json};
@@ -508,10 +509,10 @@ async fn move_to_front_runs_that_download_next() {
     }
     wait_for_size(&roms(&dirs).join("switch/g1.nsp.tmp"), PARTIAL as u64).await;
     assert_eq!(
-        backend.downloads.move_to_front(3).await,
+        backend.downloads.move_to_front(JobKey::rom(3)).await,
         json!({"success": true, "message": "Moved to front"})
     );
-    assert_eq!(backend.downloads.move_to_front(99).await["reason"], "not_queued");
+    assert_eq!(backend.downloads.move_to_front(JobKey::rom(99)).await["reason"], "not_queued");
     let positions: Vec<(i64, i64)> = {
         let c = db(&dirs);
         let mut stmt = c.prepare("SELECT item_id, position FROM download_jobs ORDER BY position").unwrap();

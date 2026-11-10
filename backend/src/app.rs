@@ -70,6 +70,7 @@ pub const PORTED_CALLABLES: &[&str] = &[
     "get_settings_reset_notice",
     "get_sync_stats",
     "get_whitelist_settings",
+    "move_to_front",
     "pause_download",
     "probe_reachability",
     "clear_sync_cache",
@@ -358,6 +359,18 @@ impl Backend {
         // Restore the durable download queue: keep job partials, drop orphan
         // tmp files, and auto-resume interrupted jobs in the background.
         downloads.reconcile_persisted_downloads().await;
+        {
+            // Downloads cut off by an unreachable server pick up again once it is back.
+            let downloads = downloads.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+                tick.tick().await;
+                loop {
+                    tick.tick().await;
+                    downloads.resume_unreachable_interrupted().await;
+                }
+            });
+        }
         Ok(Self {
             settings,
             settings_service,
@@ -533,6 +546,10 @@ impl Backend {
             "pause_download" => bind(name, 1, 2, d, |d, a| async move {
                 let (id, kind) = job_args(&a)?;
                 Ok(d.pause_job(JobKey { kind, id }))
+            }),
+            "move_to_front" => bind(name, 1, 2, d, |d, a| async move {
+                let (id, kind) = job_args(&a)?;
+                Ok(d.move_to_front(JobKey { kind, id }).await)
             }),
             "get_download_queue" => bind(name, 0, 0, d, |d, _| async move { Ok(d.get_download_queue()) }),
             "get_installed_rom" => bind(name, 1, 1, d, |d, a| async move {
@@ -803,7 +820,7 @@ mod tests {
     #[test]
     fn surface_matches_python_backend_size_and_includes_ported() {
         let names = callable_names();
-        assert_eq!(names.len(), 112);
+        assert_eq!(names.len(), 113);
         let mut dedup = names.clone();
         dedup.dedup();
         assert_eq!(dedup.len(), names.len());

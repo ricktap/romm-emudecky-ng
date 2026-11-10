@@ -456,11 +456,11 @@ impl DownloadService {
 
     /// Move an unfinished download to the head of the queue: it gets the
     /// transfer slot next (a running transfer is not pre-empted).
-    pub async fn move_to_front(&self, rom_id: i64) -> Value {
+    pub async fn move_to_front(&self, key: JobKey) -> Value {
         let now = self.clock.now_iso();
         let _guard = self.job_lock.lock().await;
         let result: anyhow::Result<Option<i64>> = async {
-            let Some(mut job) = self.jobs.get(JobKey::rom(rom_id)).await? else {
+            let Some(mut job) = self.jobs.get(key).await? else {
                 return Ok(None);
             };
             if let Some(lowest) = self.jobs.min_position().await?
@@ -474,12 +474,12 @@ impl DownloadService {
         .await;
         match result {
             Ok(Some(position)) => {
-                self.st().positions.insert(JobKey::rom(rom_id), position);
+                self.st().positions.insert(key, position);
                 json!({"success": true, "message": "Moved to front"})
             }
             Ok(None) => failure("not_queued", "No queued download for this ROM"),
             Err(e) => {
-                tracing::warn!("Failed to move download {rom_id} to the front: {e:#}");
+                tracing::warn!("Failed to move download {key:?} to the front: {e:#}");
                 failure(reason::UNKNOWN, "Failed to reorder the queue")
             }
         }
@@ -670,6 +670,39 @@ impl DownloadService {
             }
             tracing::info!("Auto-resume of {key} skipped: {}", result["message"]);
         }
+    }
+
+    /// Resume downloads that stopped because the server could not be reached
+    /// (reason `server_unreachable` / `timeout`), in queue order. A no-op while
+    /// an earlier auto-resume is still running. Called periodically, so a
+    /// download picks up again once the server is back.
+    pub async fn resume_unreachable_interrupted(self: &Arc<Self>) {
+        let keys: Vec<JobKey> = {
+            let mut st = self.st();
+            if st.auto_resume.as_ref().is_some_and(|h| !h.is_finished()) {
+                return;
+            }
+            let positions = st.positions.clone();
+            let mut found: Vec<(i64, JobKey)> = st
+                .queue
+                .values()
+                .filter(|e| {
+                    e.status == "interrupted"
+                        && matches!(e.reason.as_deref(), Some(INTERRUPT_SERVER_UNREACHABLE | INTERRUPT_TIMEOUT))
+                })
+                .map(|e| (positions.get(&e.key()).copied().unwrap_or(i64::MAX), e.key()))
+                .collect();
+            found.sort();
+            let keys: Vec<JobKey> = found.into_iter().map(|(_, k)| k).collect();
+            if keys.is_empty() {
+                return;
+            }
+            let me = self.clone();
+            let task_keys = keys.clone();
+            st.auto_resume = Some(tokio::spawn(async move { me.auto_resume(task_keys).await }));
+            keys
+        };
+        tracing::info!("Retrying {} download(s) interrupted by an unreachable server", keys.len());
     }
 
     // ── Start / resume ──────────────────────────────────────────────────
@@ -1853,12 +1886,16 @@ impl DownloadService {
     }
 
     pub fn get_download_queue(&self) -> Value {
-        let mut entries: Vec<QueueEntry> = self.st().queue.values().cloned().collect();
+        let (mut entries, positions): (Vec<QueueEntry>, HashMap<JobKey, i64>) = {
+            let st = self.st();
+            (st.queue.values().cloned().collect(), st.positions.clone())
+        };
         for entry in &mut entries {
             if entry.status != "downloading" {
                 entry.clear_phase(); // a stopped download is not waiting for anything
             }
         }
+        entries.sort_by_key(|e| (positions.get(&e.key()).copied().unwrap_or(i64::MAX), e.item_id));
         let rows: Vec<Value> = entries.iter().map(QueueEntry::row).collect();
         json!({"downloads": rows})
     }

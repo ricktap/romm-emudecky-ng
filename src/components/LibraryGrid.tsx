@@ -18,6 +18,7 @@ import {
 } from "../utils/libraryGrid";
 import { getLibraryPlatformFilter, setLibraryPlatformFilter } from "../utils/libraryRoute";
 import { detach } from "../utils/detach";
+import { loadRommCollections, type RommCollection } from "../utils/romCollections";
 import type { DownloadItem, LibraryOverview, LibraryOverviewRom, PlatformSyncSetting } from "../types";
 
 type Loaded = Extract<LibraryOverview, { success: true }>;
@@ -92,6 +93,8 @@ export const LibraryGrid: FC = () => {
   const [platforms, setPlatforms] = useState<PlatformSyncSetting[]>([]);
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const [platform, setPlatform] = useState<string | null>(getLibraryPlatformFilter());
+  const [collections, setCollections] = useState<RommCollection[]>([]);
+  const [collection, setCollection] = useState<string | null>(null);
   const [filter, setFilter] = useState<GridFilter>("all");
   const [search, setSearch] = useState("");
 
@@ -106,6 +109,7 @@ export const LibraryGrid: FC = () => {
     getPlatforms()
       .then((r) => r?.success && setPlatforms(r.platforms))
       .catch(() => undefined);
+    loadRommCollections().then(setCollections).catch(() => undefined);
     const refresh = () => load();
     const onComplete = addEventListener("download_complete", refresh);
     const onSyncDone = addEventListener("sync_complete", refresh);
@@ -122,18 +126,32 @@ export const LibraryGrid: FC = () => {
 
   const live = useMemo(() => liveDownloads(downloads), [downloads]);
   const roms = overview?.success ? overview.roms : [];
-  const query = { platform, filter, search };
-  const shown = useMemo(() => visibleRoms(roms, query, live), [roms, platform, filter, search, live]);
-  const counts = useMemo(() => filterCounts(roms, { platform, search }, live), [roms, platform, search, live]);
+  const collectionApps = useMemo(
+    () => collections.find((c) => c.name === collection)?.appIds ?? null,
+    [collections, collection],
+  );
+  const query = { platform, collection: collectionApps, filter, search };
+  const shown = useMemo(() => visibleRoms(roms, query, live), [roms, platform, collectionApps, filter, search, live]);
+  const counts = useMemo(
+    () => filterCounts(roms, { platform, collection: collectionApps, search }, live),
+    [roms, platform, collectionApps, search, live],
+  );
 
   if (!overview) return <div style={{ padding: "16px" }}>Loading library...</div>;
   if (!overview.success) return <div style={{ padding: "16px" }}>{overview.message ?? "Could not load the library"}</div>;
   const loaded: Loaded = overview;
 
   const names = new Map(platforms.map((p) => [p.slug, p]));
+  // A platform and a collection are two ways to narrow the same list: choosing one clears the other.
   const choosePlatform = (slug: string | null) => {
     setLibraryPlatformFilter(slug);
     setPlatform(slug);
+    setCollection(null);
+  };
+  const chooseCollection = (name: string) => {
+    setLibraryPlatformFilter(null);
+    setPlatform(null);
+    setCollection(name);
   };
 
   const act = async (rom: LibraryOverviewRom, action: Exclude<QuickAction, null>) => {
@@ -153,7 +171,7 @@ export const LibraryGrid: FC = () => {
     <div style={{ display: "flex", gap: "16px", padding: "8px 16px" }}>
       <Focusable data-testid="rail" style={{ width: "200px", flex: "none", display: "flex", flexDirection: "column", gap: "4px" }}>
         <DialogButton
-          style={{ opacity: platform === null ? 1 : 0.8, textAlign: "left" }}
+          style={{ opacity: platform === null && collection === null ? 1 : 0.8, textAlign: "left" }}
           onClick={() => choosePlatform(null)}
         >
           All games ({loaded.roms.length})
@@ -172,6 +190,17 @@ export const LibraryGrid: FC = () => {
             </DialogButton>
           );
         })}
+        {collections.length > 0 && <div style={{ fontSize: "12px", opacity: 0.6, padding: "8px 4px 0" }}>Collections</div>}
+        {collections.map((c) => (
+          <DialogButton
+            key={c.name}
+            data-testid={`rail-collection-${c.name}`}
+            style={{ opacity: collection === c.name ? 1 : 0.8, textAlign: "left" }}
+            onClick={() => chooseCollection(c.name)}
+          >
+            {c.name} ({loaded.roms.filter((r) => c.appIds.has(r.app_id)).length})
+          </DialogButton>
+        ))}
       </Focusable>
       <div style={{ flex: 1, minWidth: 0 }}>
         <TextField label="Search" value={search} onChange={(e: { target: { value: string } }) => setSearch(e.target.value)} />
