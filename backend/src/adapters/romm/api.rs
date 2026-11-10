@@ -202,3 +202,22 @@ impl crate::services::ports::RommPlaytimeApi for RommApi {
         }Ok(result)
     }
 }
+
+#[async_trait]
+impl crate::services::ports::RommFirmwareApi for RommApi {
+    async fn list_firmware(&self) -> Result<Value, RommError> {
+        self.http.get_json("/api/firmware").await
+    }
+
+    async fn download_firmware_content(
+        &self,
+        firmware_id: i64,
+        file_name: &str,
+        dest: &str,
+        mode: TransferMode,
+        hooks: TransferHooks,
+    ) -> anyhow::Result<TransferOutcome> {
+        let path = format!("/api/firmware/{firmware_id}/content/{}", quote(file_name, ""));
+        self.http.download(&path, dest, mode, hooks).await
+    }
+}

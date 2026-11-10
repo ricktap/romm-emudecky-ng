@@ -49,7 +49,7 @@ import type { GateVerdict, LaunchGateOps, PreLaunchSyncOutcome } from "../utils/
 import { getActiveSessionRomId } from "../utils/sessionManager";
 import { isAppRunning } from "../utils/runningApps";
 import type { DownloadProgressEvent, DownloadCompleteEvent, DownloadFailedEvent } from "../types";
-import { phaseButtonLabel, useNowMs, type PhaseFields } from "../utils/downloadPhase";
+import { phaseButtonLabel, pickPhase, useNowMs, type PhaseFields } from "../utils/downloadPhase";
 import { isBenignSyncSkip } from "../types";
 import { detach } from "../utils/detach";
 import { interruptedLabel, isStoppedStatus, isUnfinishedStatus } from "../utils/downloadStatus";
@@ -170,17 +170,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
           interruptReason: entry.status === "interrupted" ? (entry.reason ?? "") : null,
           extracting: entry.status === "extracting",
           queued: entry.status === "queued",
-          ...(entry.phase && entry.status === "downloading"
-            ? {
-                phaseInfo: {
-                  phase: entry.phase,
-                  phase_since: entry.phase_since,
-                  attempt: entry.attempt,
-                  max_attempts: entry.max_attempts,
-                  retry_delay_s: entry.retry_delay_s,
-                },
-              }
-            : {}),
+          ...(entry.status === "downloading" && pickPhase(entry) ? { phaseInfo: pickPhase(entry) as PhaseFields } : {}),
         });
       }
     } catch (e) {
@@ -276,17 +266,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
             interruptReason: evt.status === "interrupted" ? (evt.reason ?? "") : null,
             extracting,
             queued: evt.status === "queued",
-            ...(evt.phase && evt.status === "downloading"
-              ? {
-                  phaseInfo: {
-                    phase: evt.phase,
-                    phase_since: evt.phase_since,
-                    attempt: evt.attempt,
-                    max_attempts: evt.max_attempts,
-                    retry_delay_s: evt.retry_delay_s,
-                  },
-                }
-              : {}),
+            ...(evt.status === "downloading" && pickPhase(evt) ? { phaseInfo: pickPhase(evt) as PhaseFields } : {}),
           }));
         }
       },

@@ -32,6 +32,10 @@ pub struct State {
     /// Content connections open right now, and the most there ever were.
     pub open_content: usize,
     pub peak_content: usize,
+    /// The JSON `GET /api/firmware` answers (404 when unset).
+    pub firmware: Option<Value>,
+    /// Firmware file bytes by firmware id, served at `/api/firmware/{id}/content/{name}`.
+    pub firmware_files: HashMap<i64, Vec<u8>>,
 }
 
 pub struct FakeRomm {
@@ -53,6 +57,14 @@ impl FakeRomm {
             }
         });
         Self { url, state, release }
+    }
+
+    pub fn set_firmware(&self, list: Value) {
+        self.state.lock().unwrap().firmware = Some(list);
+    }
+
+    pub fn set_firmware_file(&self, id: i64, bytes: Vec<u8>) {
+        self.state.lock().unwrap().firmware_files.insert(id, bytes);
     }
 
     pub fn set_rom(&self, rom: Value) {
@@ -121,17 +133,40 @@ async fn serve(mut sock: TcpStream, state: Arc<Mutex<State>>, release: Arc<Notif
         if_range: if_range.clone(),
         accept_encoding: get("accept-encoding"),
     });
+    if path == "/api/firmware" {
+        let firmware = state.lock().unwrap().firmware.clone();
+        let resp = match firmware {
+            Some(list) => {
+                let json = list.to_string();
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{json}",
+                    json.len()
+                )
+            }
+            None => "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_string(),
+        };
+        let _ = sock.write_all(resp.as_bytes()).await;
+        return;
+    }
     let rest = path.strip_prefix("/api/roms/").unwrap_or("");
     let (id_part, content) = match rest.split_once("/content/") {
         Some((id, _)) => (id, true),
         None => (rest, false),
     };
     let id: Option<i64> = id_part.parse().ok();
+    let firmware_id: Option<i64> = path
+        .strip_prefix("/api/firmware/")
+        .and_then(|r| r.split_once("/content/"))
+        .and_then(|(id, _)| id.parse().ok());
+    let content = content || firmware_id.is_some();
     let (rom, body, stall, etag) = {
         let st = state.lock().unwrap();
         (
             id.and_then(|i| st.roms.get(&i).cloned()),
-            id.and_then(|i| st.content.get(&i).cloned()),
+            match firmware_id {
+                Some(f) => st.firmware_files.get(&f).cloned(),
+                None => id.and_then(|i| st.content.get(&i).cloned()),
+            },
             st.stall_at,
             id.and_then(|i| st.etags.get(&i).cloned()),
         )

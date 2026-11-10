@@ -802,6 +802,8 @@ async fn progress_is_throttled_but_the_final_tick_always_emits() {
         has_multiple: false,
         extract_dir_name: String::new(),
         restart: false,
+        key: JobKey::rom(ROM),
+        firmware: None,
     };
     let svc = DownloadService::new(DownloadServiceConfig {
         romm: env.romm.clone(),
@@ -824,6 +826,8 @@ async fn progress_is_throttled_but_the_final_tick_always_emits() {
         })),
         events: env.events.clone(),
         clock,
+        firmware_api: env.romm.clone(),
+        firmware_jobs: env.firmware_jobs.clone(),
     });
     let mut hook = svc.progress_hook(&plan);
     hook(1, 10); // no entry yet: nothing
@@ -1188,5 +1192,244 @@ mod kinds {
         env.wait_status(ROM, "cancelled").await;
         let st = env.svc.st();
         assert_eq!(st.queue[&JobKey::firmware(ROM)].status, "paused");
+    }
+}
+
+// ── Firmware downloads ───────────────────────────────────────────────────
+
+mod firmware {
+    use super::*;
+    use crate::services::ports::{FirmwareFileKind, FirmwareTarget};
+
+    const FW: i64 = 3;
+
+    fn sha1(bytes: &[u8]) -> String {
+        let mut ctx = ring::digest::Context::new(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY);
+        ctx.update(bytes);
+        ctx.finish().as_ref().iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn target(env: &DownloadEnv, name: &str, bytes: &[u8], kind: FirmwareFileKind, copy_to: &[&str]) -> FirmwareTarget {
+        let dir = match kind {
+            FirmwareFileKind::Key => format!("{}/home/.local/share/eden/keys", env.dir.path().display()),
+            FirmwareFileKind::Archive => format!("{}/Emulation/bios/switch", env.dir.path().display()),
+        };
+        FirmwareTarget {
+            firmware_id: FW,
+            file_name: name.into(),
+            size: bytes.len() as u64,
+            sha1: Some(sha1(bytes)),
+            kind,
+            dest_path: format!("{dir}/{name}"),
+            copy_to: copy_to.iter().map(|p| format!("{}/home/{p}/{name}", env.dir.path().display())).collect(),
+        }
+    }
+
+    fn register(env: &DownloadEnv, t: &FirmwareTarget, bytes: &[u8]) {
+        env.firmware_jobs.targets.lock().unwrap().insert(t.firmware_id, t.clone());
+        env.romm.set_firmware_content(t.firmware_id, bytes.to_vec());
+    }
+
+    async fn wait_fw(env: &DownloadEnv, status: &str) -> Value {
+        for _ in 0..500 {
+            let entry = env.svc.get_download_queue()["downloads"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["firmware_id"] == FW)
+                .cloned();
+            if let Some(e) = entry.filter(|e| e["status"] == status && !env.svc.st().in_progress.contains(&JobKey::firmware(FW))) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                return e;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("firmware download never reached {status}");
+    }
+
+    #[tokio::test]
+    async fn a_key_file_is_verified_stored_and_copied_to_the_other_emulators_that_lack_it() {
+        let env = DownloadEnv::new().await;
+        let bytes = b"prod keys from RomM".to_vec();
+        let t = target(&env, "prod.keys", &bytes, FirmwareFileKind::Key, &[".config/Ryujinx/system", ".local/share/yuzu/keys"]);
+        register(&env, &t, &bytes);
+        assert_eq!(env.svc.start_firmware_download(FW).await["success"], true);
+        wait_fw(&env, "completed").await;
+        assert_eq!(std::fs::read(&t.dest_path).unwrap(), bytes);
+        for dst in &t.copy_to {
+            assert_eq!(std::fs::read(dst).unwrap(), bytes, "{dst}");
+        }
+        assert!(!std::path::Path::new(&format!("{}.tmp", t.dest_path)).exists());
+        assert!(env.jobs.get(JobKey::firmware(FW)).await.unwrap().is_none(), "the finished job's row is gone");
+        let [done] = env.events.named("download_complete").try_into().unwrap();
+        assert_eq!(done["kind"], "firmware");
+        assert_eq!(done["firmware_id"], FW);
+        assert!(done.get("rom_id").is_none(), "a firmware id is never announced as a ROM id");
+        assert_eq!(done["file_path"], t.dest_path);
+        // its progress frames are firmware frames too
+        let frames = env.events.named("download_progress");
+        assert!(frames.iter().all(|f| f["kind"] == "firmware" && f.get("rom_id").is_none()), "{frames:?}");
+    }
+
+    #[tokio::test]
+    async fn a_download_that_does_not_match_romms_checksum_is_not_installed() {
+        let env = DownloadEnv::new().await;
+        let bytes = b"expected".to_vec();
+        let t = target(&env, "prod.keys", &bytes, FirmwareFileKind::Key, &[".config/Ryujinx/system"]);
+        env.firmware_jobs.targets.lock().unwrap().insert(FW, t.clone());
+        env.romm.set_firmware_content(FW, b"corrupted!".to_vec());
+        env.svc.start_firmware_download(FW).await;
+        let entry = wait_fw(&env, "failed").await;
+        assert!(entry["error"].as_str().unwrap().contains("does not match the checksum"), "{entry}");
+        assert!(!std::path::Path::new(&t.dest_path).exists(), "nothing was installed");
+        assert!(!std::path::Path::new(&t.copy_to[0]).exists(), "and nothing was copied");
+        assert!(!std::path::Path::new(&format!("{}.tmp", t.dest_path)).exists(), "the bad download was removed");
+        assert_eq!(env.events.named("download_failed")[0]["firmware_id"], FW);
+    }
+
+    #[tokio::test]
+    async fn an_existing_key_file_that_appears_during_the_download_is_never_replaced() {
+        let env = DownloadEnv::new().await;
+        let bytes = b"romm keys".to_vec();
+        let t = target(&env, "title.keys", &bytes, FirmwareFileKind::Key, &[".config/Ryujinx/system"]);
+        register(&env, &t, &bytes);
+        // the user's own file shows up at the destination before the transfer finishes
+        std::fs::create_dir_all(std::path::Path::new(&t.dest_path).parent().unwrap()).unwrap();
+        std::fs::write(&t.dest_path, b"my own keys").unwrap();
+        env.svc.start_firmware_download(FW).await;
+        wait_fw(&env, "completed").await;
+        assert_eq!(std::fs::read(&t.dest_path).unwrap(), b"my own keys");
+        assert_eq!(std::fs::read(&t.copy_to[0]).unwrap(), bytes, "the other emulator still gets RomM's verified file");
+        assert!(!std::path::Path::new(&format!("{}.tmp", t.dest_path)).exists());
+    }
+
+    #[tokio::test]
+    async fn an_existing_copy_at_another_emulator_is_left_alone() {
+        let env = DownloadEnv::new().await;
+        let bytes = b"romm keys".to_vec();
+        let t = target(&env, "prod.keys", &bytes, FirmwareFileKind::Key, &[".config/Ryujinx/system"]);
+        register(&env, &t, &bytes);
+        std::fs::create_dir_all(std::path::Path::new(&t.copy_to[0]).parent().unwrap()).unwrap();
+        std::fs::write(&t.copy_to[0], b"ryujinx own").unwrap();
+        env.svc.start_firmware_download(FW).await;
+        wait_fw(&env, "completed").await;
+        assert_eq!(std::fs::read(&t.copy_to[0]).unwrap(), b"ryujinx own");
+    }
+
+    #[tokio::test]
+    async fn the_archive_goes_to_the_bios_folder_and_a_firmware_download_can_be_paused_and_resumed() {
+        let env = DownloadEnv::new().await;
+        let bytes: Vec<u8> = (0..4000u32).map(|i| (i % 251) as u8).collect();
+        let t = target(&env, "Firmware.23.0.1.zip", &bytes, FirmwareFileKind::Archive, &[]);
+        register(&env, &t, &bytes);
+        *env.romm.stall_at.lock().unwrap() = Some(1000);
+        *env.romm.range_supported.lock().unwrap() = true;
+        env.svc.start_firmware_download(FW).await;
+        env.romm.stalled.notified().await;
+        assert_eq!(env.svc.pause_job(JobKey::firmware(FW))["success"], true);
+        let paused = wait_fw(&env, "paused").await;
+        assert_eq!((paused["kind"].clone(), paused["bytes_downloaded"].clone()), (json!("firmware"), json!(1000)));
+        assert_eq!(std::fs::read(format!("{}.tmp", t.dest_path)).unwrap(), bytes[..1000], "the partial is kept");
+        assert!(env.jobs.get(JobKey::firmware(FW)).await.unwrap().is_some());
+
+        *env.romm.stall_at.lock().unwrap() = None;
+        assert_eq!(env.svc.resume_firmware_download(FW).await["success"], true);
+        wait_fw(&env, "completed").await;
+        let names: Vec<String> = env.romm.calls().iter().map(|c| c.file_name.clone()).collect();
+        assert_eq!(names, ["Firmware.23.0.1.zip", "Firmware.23.0.1.zip"], "the transfer and its resume");
+        assert!(env.romm.calls()[1].resume && env.romm.calls()[1].offset == 1000, "continued from the partial");
+        assert_eq!(std::fs::read(&t.dest_path).unwrap(), bytes, "byte-identical after the pause");
+    }
+
+    #[tokio::test]
+    async fn cancelling_removes_the_partial_but_never_the_destination() {
+        let env = DownloadEnv::new().await;
+        let bytes: Vec<u8> = vec![9u8; 4000];
+        let t = target(&env, "Firmware.23.0.1.zip", &bytes, FirmwareFileKind::Archive, &[]);
+        register(&env, &t, &bytes);
+        *env.romm.stall_at.lock().unwrap() = Some(500);
+        env.svc.start_firmware_download(FW).await;
+        env.romm.stalled.notified().await;
+        env.svc.cancel_job(JobKey::firmware(FW));
+        wait_fw(&env, "cancelled").await;
+        assert!(!std::path::Path::new(&format!("{}.tmp", t.dest_path)).exists());
+        assert!(env.jobs.get(JobKey::firmware(FW)).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn nothing_to_download_is_reported_and_leaves_no_job() {
+        let env = DownloadEnv::new().await;
+        let r = env.svc.start_firmware_download(99).await;
+        assert_eq!(r["success"], false);
+        assert_eq!(r["reason"], "nothing_to_download");
+        assert!(env.jobs.all().await.unwrap().is_empty());
+        assert!(env.svc.st().in_progress.is_empty(), "the claim is released");
+    }
+
+    #[tokio::test]
+    async fn a_firmware_download_shares_the_single_transfer_slot_with_rom_downloads() {
+        let env = env_with_rom().await;
+        let bytes = vec![1u8; 2000];
+        let t = target(&env, "prod.keys", &bytes, FirmwareFileKind::Key, &[]);
+        register(&env, &t, &bytes);
+        *env.romm.stall_at.lock().unwrap() = Some(100);
+        env.svc.start_download(ROM).await; // the ROM holds the slot (stalled)
+        env.romm.stalled.notified().await;
+        env.svc.start_firmware_download(FW).await;
+        // the firmware job queues behind it
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let queue = env.svc.get_download_queue();
+        let fw = queue["downloads"].as_array().unwrap().iter().find(|e| e["firmware_id"] == FW).unwrap();
+        assert_eq!(fw["status"], "queued");
+        assert!(!std::path::Path::new(&t.dest_path).exists());
+        // finishing the ROM hands over the slot
+        *env.romm.stall_at.lock().unwrap() = None;
+        env.romm.release.notify_waiters();
+        wait_fw(&env, "completed").await;
+        assert_eq!(std::fs::read(&t.dest_path).unwrap(), bytes);
+        // a firmware job does not block ROM-only guards
+        assert!(env.svc.active_download_rom_ids().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_firmware_job_resumes_after_a_restart_and_a_no_longer_needed_one_is_dropped() {
+        let env = DownloadEnv::new().await;
+        let bytes: Vec<u8> = (0..3000u32).map(|i| (i % 200) as u8).collect();
+        let t = target(&env, "Firmware.23.0.1.zip", &bytes, FirmwareFileKind::Archive, &[]);
+        register(&env, &t, &bytes);
+        std::fs::create_dir_all(std::path::Path::new(&t.dest_path).parent().unwrap()).unwrap();
+        std::fs::write(format!("{}.tmp", t.dest_path), &bytes[..1200]).unwrap();
+        let mut j = job(FW, &format!("{}.tmp", t.dest_path), JobStatus::Interrupted, 1, Some(bytes.len() as u64));
+        j.kind = JobKind::Firmware;
+        j.is_multi = false;
+        j.target_path = t.dest_path.clone();
+        env.jobs.save(&j).await.unwrap();
+        *env.romm.range_supported.lock().unwrap() = true;
+        env.svc.reconcile_persisted_downloads().await;
+        wait_fw(&env, "completed").await;
+        assert_eq!(std::fs::read(&t.dest_path).unwrap(), bytes);
+
+        // A second stopped job whose file is no longer needed (the target vanished) is evicted, not retried forever.
+        env.firmware_jobs.targets.lock().unwrap().clear();
+        let r = env.svc.resume_firmware_download(FW).await;
+        assert_eq!(r["reason"], "not_paused");
+    }
+
+    #[tokio::test]
+    async fn the_partial_of_a_running_firmware_job_survives_startup_cleanup_but_orphans_do_not() {
+        let env = DownloadEnv::new().await;
+        let bios = format!("{}/Emulation/bios/switch", env.dir.path().display());
+        std::fs::create_dir_all(&bios).unwrap();
+        let owned = format!("{bios}/Firmware.23.0.1.zip.tmp");
+        let orphan = format!("{bios}/Firmware.9.2.0.zip.tmp");
+        std::fs::write(&owned, b"partial").unwrap();
+        std::fs::write(&orphan, b"abandoned").unwrap();
+        let mut j = job(FW, &owned, JobStatus::Paused, 1, Some(100));
+        j.kind = JobKind::Firmware;
+        j.is_multi = false;
+        env.jobs.save(&j).await.unwrap();
+        env.svc.reconcile_persisted_downloads().await;
+        assert!(std::path::Path::new(&owned).exists(), "a job's partial under bios/ is kept");
+        assert!(!std::path::Path::new(&orphan).exists(), "an orphan is cleaned");
     }
 }

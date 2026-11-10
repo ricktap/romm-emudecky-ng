@@ -45,13 +45,7 @@ describe("unportedCallable", () => {
       message: "Save sync is not implemented yet (planned for 0.55.0).",
     });
     expect(toast).toHaveBeenCalledTimes(1);
-    expect(toast.mock.calls[0][0].body).toContain("Save sync is not implemented yet");
-  });
-
-  it("names firmware separately from save sync", async () => {
-    call.mockResolvedValue(NOT_IMPLEMENTED);
-    await unportedCallable("download_all_firmware")("switch");
-    expect(toast.mock.calls[0][0].body).toContain("Firmware management is not implemented yet");
+    expect(toast.mock.calls[0]?.[0].body).toContain("Save sync is not implemented yet");
   });
 
   it("resolves the pre-launch sync to a not_implemented failure without a toast: launches treat it as a benign skip", async () => {
@@ -64,13 +58,6 @@ describe("unportedCallable", () => {
   it("does not toast for passive reads: it rejects, as callers already handle", async () => {
     call.mockResolvedValue(NOT_IMPLEMENTED);
     await expect(unportedCallable("get_save_status")(7)).rejects.toThrow("Save sync is not implemented yet");
-    expect(toast).not.toHaveBeenCalled();
-  });
-
-  it("resolves the firmware overview to a failure result (the System page shows its message) without a toast", async () => {
-    call.mockResolvedValue(NOT_IMPLEMENTED);
-    const result = await unportedCallable("get_firmware_status")();
-    expect(result).toMatchObject({ success: false, message: "Firmware management is not implemented yet (planned for 0.45.0)." });
     expect(toast).not.toHaveBeenCalled();
   });
 
@@ -88,11 +75,9 @@ describe("unportedCallable", () => {
     await sync(2);
     await unportedCallable("switch_slot")(1, "a");
     expect(toast).toHaveBeenCalledTimes(1);
-    await unportedCallable("download_all_firmware")("switch");
-    expect(toast).toHaveBeenCalledTimes(2);
     vi.advanceTimersByTime(TOAST_THROTTLE_MS + 1);
     await sync(3);
-    expect(toast).toHaveBeenCalledTimes(3);
+    expect(toast).toHaveBeenCalledTimes(2);
   });
 
   it("propagates a real transport failure unchanged", async () => {

@@ -16,7 +16,7 @@ use crate::adapters::plugin_metadata::read_plugin_version;
 use crate::adapters::repositories::{SqliteDownloadJobs, SqliteKvConfig, SqliteLibrary, SqliteRomRegions};
 use crate::adapters::romm::api::RommApi;
 use crate::adapters::romm::http::{RetryListener, RetryPolicy, RommHttp};
-use crate::domain::download_job::JobKind;
+use crate::domain::download_job::{JobKey, JobKind};
 use crate::domain::errors::unknown_failure;
 use crate::domain::settings::{RESET_NOTICE_KEY, fold_legacy_save_sync_settings, migrate_settings, stored_version};
 use crate::domain::version::MIN_REQUIRED_VERSION;
@@ -39,6 +39,7 @@ const CALLABLE_NAMES_JSON: &str = include_str!("../callables.json");
 /// (a result, not a protocol error: Decky turns an error frame into an opaque
 /// "Python Exception", so the frontend could not tell it from a crash).
 pub const PORTED_CALLABLES: &[&str] = &[
+    "get_firmware_status", "save_firmware_version", "download_required_firmware", "download_all_firmware",
     "get_version_list", "switch_version", "evaluate_launch", "check_local_drift", "check_core_change",
     "remove_rom", "uninstall_all_roms", "apply_steam_input_setting", "check_for_update",
     "record_session_start", "finalize_game_session", "get_all_playtime", "get_playtime_scope_notice", "reconcile_playtime",
@@ -136,6 +137,7 @@ pub struct Backend {
     /// Adoption of ROM files already on disk. Library sync and the game page
     /// (rewrite step 3) call it; no callable reaches it yet.
     pub adoption: Arc<InstallAdoptionService>,
+    pub firmware: Arc<crate::services::firmware::FirmwareService>,
 }
 
 impl Backend {
@@ -215,6 +217,16 @@ impl Backend {
             files: files.clone(),
             paths: paths.clone(),
         }));
+        let firmware = crate::services::firmware::FirmwareService::new(crate::services::firmware::FirmwareServiceConfig {
+            romm: romm_api.clone(),
+            files: files.clone(),
+            locator: Arc::new(HomeEmulatorLocator::new(&env.user_home)),
+            paths: paths.clone(),
+            clock: clock.clone(),
+            home: env.user_home.to_string_lossy().into_owned(),
+            settings: settings.clone(),
+            persister: persister.clone(),
+        });
         let launch_choices = Arc::new(crate::services::launch_choices::LaunchChoicesService::new(
             crate::services::launch_choices::LaunchChoicesServiceConfig { preferences: library.clone(), launch: launch.clone() }
         ));
@@ -229,6 +241,8 @@ impl Backend {
             removal: removal.clone(),
             events: events.clone(),
             clock: clock.clone(),
+            firmware_api: romm_api.clone(),
+            firmware_jobs: firmware.clone(),
         });
         let active = downloads.clone();
         let adoption = InstallAdoptionService::new(InstallAdoptionServiceConfig {
@@ -319,6 +333,7 @@ impl Backend {
             sync,
             shortcuts,
             adoption,
+            firmware,
         })
     }
 
@@ -349,7 +364,14 @@ impl Backend {
         let actions=self.game_actions.clone();
         let playtime=self.playtime.clone();
         let update=self.update.clone();
+        let firmware=self.firmware.clone();
         let h: Handler = match name {
+            "get_firmware_status" => bind(name,0,0,firmware.clone(),|s,_|async move{Ok(s.get_firmware_status().await)}),
+            "save_firmware_version" => bind(name,1,1,firmware.clone(),|s,a|async move{
+                match a[0].as_str() {Some(v)=>Ok(s.set_firmware_version(v).await),None=>Ok(crate::domain::errors::failure("invalid_version","Not a firmware version"))}
+            }),
+            "download_required_firmware" => { let d2=d.clone(); bind(name,1,1,firmware.clone(),move|s,a|{let d=d2.clone();async move{firmware_download(&s,&d,&a[0],false).await}}) }
+            "download_all_firmware" => { let d2=d.clone(); bind(name,1,1,firmware,move|s,a|{let d=d2.clone();async move{firmware_download(&s,&d,&a[0],true).await}}) }
             "get_version_list" => bind(name,1,1,versions,|s,a|async move{s.list(rom_id_arg(&a[0])?).await.map_err(err)}),
             "switch_version" => bind(name,3,3,versions,|s,a|async move{Ok(s.switch(rom_id_arg(&a[0])?,rom_id_arg(&a[1])?,crate::domain::settings::truthy(&a[2])).await.unwrap_or_else(|e|unknown_failure(&e)))}),
             "evaluate_launch" => bind(name,1,1,gate,|s,a|async move{s.evaluate(rom_id_arg(&a[0])?).await.map_err(err)}),
@@ -409,26 +431,22 @@ impl Backend {
             "start_download" => bind(name, 1, 2, d, |d, a| async move {
                 match job_args(&a)? {
                     (id, JobKind::Rom) => Ok(d.start_download(id).await),
-                    (_, JobKind::Firmware) => Ok(unsupported_kind()),
+                    (id, JobKind::Firmware) => Ok(d.start_firmware_download(id).await),
                 }
             }),
             "resume_download" => bind(name, 1, 2, d, |d, a| async move {
                 match job_args(&a)? {
                     (id, JobKind::Rom) => Ok(d.resume_download(id).await),
-                    (_, JobKind::Firmware) => Ok(unsupported_kind()),
+                    (id, JobKind::Firmware) => Ok(d.resume_firmware_download(id).await),
                 }
             }),
             "cancel_download" => bind(name, 1, 2, d, |d, a| async move {
-                match job_args(&a)? {
-                    (id, JobKind::Rom) => Ok(d.cancel_download(id)),
-                    (_, JobKind::Firmware) => Ok(unsupported_kind()),
-                }
+                let (id, kind) = job_args(&a)?;
+                Ok(d.cancel_job(JobKey { kind, id }))
             }),
             "pause_download" => bind(name, 1, 2, d, |d, a| async move {
-                match job_args(&a)? {
-                    (id, JobKind::Rom) => Ok(d.pause_download(id)),
-                    (_, JobKind::Firmware) => Ok(unsupported_kind()),
-                }
+                let (id, kind) = job_args(&a)?;
+                Ok(d.pause_job(JobKey { kind, id }))
             }),
             "get_download_queue" => bind(name, 0, 0, d, |d, _| async move { Ok(d.get_download_queue()) }),
             "get_installed_rom" => bind(name, 1, 1, d, |d, a| async move {
@@ -604,9 +622,17 @@ fn job_args(a: &[Value]) -> Result<(i64, JobKind), String> {
     Ok((id, kind))
 }
 
-/// Firmware downloads join the queue with the firmware work; until then the queue answers this.
-fn unsupported_kind() -> Value {
-    crate::domain::errors::failure("unsupported_kind", "Firmware downloads are not supported yet")
+/// `download_required_firmware` / `download_all_firmware`: only the Switch has firmware handling.
+async fn firmware_download(
+    firmware: &Arc<crate::services::firmware::FirmwareService>,
+    downloads: &Arc<DownloadService>,
+    slug: &Value,
+    all: bool,
+) -> Result<Value, String> {
+    match slug.as_str() {
+        Some(s) if s.eq_ignore_ascii_case("switch") => Ok(firmware.start_downloads(downloads, all).await),
+        _ => Ok(crate::domain::errors::failure("unsupported_platform", "Firmware is only supported for the Switch")),
+    }
 }
 
 /// A ROM id argument: an integer, or a string holding one (Python `int()`).
@@ -649,7 +675,7 @@ mod tests {
     #[test]
     fn surface_matches_python_backend_size_and_includes_ported() {
         let names = callable_names();
-        assert_eq!(names.len(), 106);
+        assert_eq!(names.len(), 107);
         let mut dedup = names.clone();
         dedup.dedup();
         assert_eq!(dedup.len(), names.len());

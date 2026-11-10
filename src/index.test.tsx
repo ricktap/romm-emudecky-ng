@@ -20,7 +20,14 @@ import { getSettingsResetState, setSettingsResetState } from "./utils/settingsRe
 import { recordSyncCreated, resetSyncDelta } from "./utils/syncDeltaStore";
 import { resetSyncCancel } from "./utils/syncManager";
 import { getDownloadState } from "./utils/downloadStore";
-import type { DownloadCompleteEvent, SyncPlanData, SyncStaleData } from "./types";
+import type {
+  DownloadCompleteEvent,
+  DownloadFailedEvent,
+  DownloadProgressEvent,
+  SyncPlanData,
+  SyncStaleData,
+} from "./types";
+import { setDownloads } from "./utils/downloadStore";
 
 vi.mock("./patches/gameDetailPatch", () => ({
   registerGameDetailPatch: vi.fn(),
@@ -800,6 +807,101 @@ describe("index.tsx — sync_complete toast shows the true delta (#744)", () => 
     await flush();
 
     expect(lastToastBody()).toBe("Sync cancelled.");
+    plugin.onDismount();
+  });
+});
+
+
+describe("index.tsx — firmware downloads share the queue without being mistaken for ROMs", () => {
+  beforeEach(() => {
+    setLaunchOptionsConfirmed.mockClear();
+    vi.mocked(toaster.toast).mockClear();
+    setDownloads([]);
+  });
+
+  const fwFrame: DownloadProgressEvent = {
+    kind: "firmware",
+    firmware_id: 7,
+    rom_name: "prod.keys",
+    platform_name: "Switch firmware",
+    file_name: "prod.keys",
+    status: "downloading",
+    progress: 0.5,
+    bytes_downloaded: 8,
+    total_bytes: 16,
+  };
+
+  it("a firmware frame and a ROM frame with the same number are two store entries", () => {
+    const plugin = pluginFactory();
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", fwFrame);
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", {
+        ...fwFrame,
+        kind: "rom",
+        rom_id: 7,
+        rom_name: "Zelda",
+        platform_name: "Switch",
+        file_name: "zelda.nsp",
+      });
+    });
+    const items = getDownloadState();
+    expect(items).toHaveLength(2);
+    expect(items.map((d) => [d.kind ?? "rom", d.kind === "firmware" ? d.firmware_id : d.rom_id]).sort()).toEqual([
+      ["firmware", 7],
+      ["rom", 7],
+    ]);
+    // a later firmware frame updates the firmware entry only
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", { ...fwFrame, bytes_downloaded: 12 });
+    });
+    expect(getDownloadState().find((d) => d.kind === "firmware")?.bytes_downloaded).toBe(12);
+    expect(getDownloadState().find((d) => d.kind !== "firmware")?.bytes_downloaded).toBe(8);
+    plugin.onDismount();
+  });
+
+  it("a finished firmware download toasts, marks its entry done, tells the System page, and sets no launch options", async () => {
+    const plugin = pluginFactory();
+    const changed = vi.fn();
+    globalThis.addEventListener("romm_data_changed", changed);
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", fwFrame);
+      emitDeckyEvent<[DownloadCompleteEvent]>("download_complete", {
+        kind: "firmware",
+        firmware_id: 7,
+        rom_name: "prod.keys",
+        platform_name: "Switch firmware",
+        file_path: "/home/deck/.local/share/eden/keys/prod.keys",
+      } as DownloadCompleteEvent);
+    });
+    await flush();
+    const entry = getDownloadState().find((d) => d.kind === "firmware");
+    expect(entry?.status).toBe("completed");
+    expect(entry?.firmware_id).toBe(7);
+    expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(expect.objectContaining({ body: "Downloaded prod.keys" }));
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ detail: { type: "firmware" } }));
+    expect(setLaunchOptionsConfirmed).not.toHaveBeenCalled();
+    globalThis.removeEventListener("romm_data_changed", changed);
+    plugin.onDismount();
+  });
+
+  it("a failed firmware download is shown as a failure for that firmware entry", () => {
+    const plugin = pluginFactory();
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", fwFrame);
+      emitDeckyEvent<[DownloadFailedEvent]>("download_failed", {
+        kind: "firmware",
+        firmware_id: 7,
+        rom_name: "prod.keys",
+        platform_name: "Switch firmware",
+        error_message: "prod.keys does not match the checksum RomM reports",
+      });
+    });
+    const entry = getDownloadState().find((d) => d.kind === "firmware");
+    expect(entry?.status).toBe("failed");
+    expect(entry?.error).toContain("does not match the checksum");
+    expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.stringContaining("Download failed: prod.keys") }),
+    );
     plugin.onDismount();
   });
 });

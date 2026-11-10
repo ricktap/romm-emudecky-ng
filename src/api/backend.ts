@@ -13,6 +13,7 @@ import type {
   CollectionKind,
   RegistryPlatform,
   FirmwareStatus,
+  DownloadKind,
   FirmwareDownloadResult,
   CoreInfo,
   RomMetadata,
@@ -103,10 +104,11 @@ export const syncCancelPreview = callable<[], BackendResult>("sync_cancel_previe
 export const getSyncStatus = callable<[], SyncProgress>("get_sync_status");
 export const clearSyncCache = callable<[], BackendResult>("clear_sync_cache");
 export const getSyncStats = callable<[], SyncStats>("get_sync_stats");
-export const startDownload = callable<[number], BackendResult>("start_download");
-export const cancelDownload = callable<[number], BackendResult>("cancel_download");
-export const pauseDownload = callable<[number], BackendResult>("pause_download");
-export const resumeDownload = callable<[number], BackendResult>("resume_download");
+// The optional second argument is the download kind ("rom" by default); firmware downloads pass "firmware".
+export const startDownload = callable<[number, DownloadKind?], BackendResult>("start_download");
+export const cancelDownload = callable<[number, DownloadKind?], BackendResult>("cancel_download");
+export const pauseDownload = callable<[number, DownloadKind?], BackendResult>("pause_download");
+export const resumeDownload = callable<[number, DownloadKind?], BackendResult>("resume_download");
 export const getDownloadQueue = callable<[], { downloads: DownloadItem[] }>("get_download_queue");
 export const getInstalledRom = callable<[number], InstalledRom | null>("get_installed_rom");
 export const evaluateLaunch = callable<[number], LaunchVerdict>("evaluate_launch");
@@ -224,9 +226,13 @@ export const saveSgdbApiKey = callable<[string], { success: boolean; message: st
 export const verifySgdbApiKey = callable<[string], { success: boolean; message: string }>("verify_sgdb_api_key");
 export const saveSteamInputSetting = callable<[string], { success: boolean }>("save_steam_input_setting");
 export const applySteamInputSetting = callable<[], { success: boolean; message: string }>("apply_steam_input_setting");
-export const getFirmwareStatus = unportedCallable<[], FirmwareStatus>("get_firmware_status");
-export const downloadAllFirmware = unportedCallable<[string], FirmwareDownloadResult>("download_all_firmware");
-export const downloadRequiredFirmware = unportedCallable<[string], FirmwareDownloadResult>("download_required_firmware");
+export const getFirmwareStatus = callable<[], FirmwareStatus>("get_firmware_status");
+export const downloadAllFirmware = callable<[string], FirmwareDownloadResult>("download_all_firmware");
+export const downloadRequiredFirmware = callable<[string], FirmwareDownloadResult>("download_required_firmware");
+/** Save the firmware version to download (`""` = the newest RomM has). */
+export const saveFirmwareVersion = callable<[string], { success: boolean; message?: string; reason?: string }>(
+  "save_firmware_version",
+);
 /**
  * Result of pinning / clearing a per-game emulator override. On success for an
  * installed + bound ROM, the backend re-bakes and returns the fresh

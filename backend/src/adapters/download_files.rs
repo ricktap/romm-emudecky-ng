@@ -66,6 +66,26 @@ fn verify_blocking(archive: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Streamed SHA-1 of a regular file (RomM publishes SHA-1 for its firmware files).
+fn sha1_blocking(path: &str) -> Option<String> {
+    use std::io::Read;
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut ctx = ring::digest::Context::new(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY);
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        ctx.update(&buf[..n]);
+    }
+    Some(ctx.finish().as_ref().iter().map(|b| format!("{b:02x}")).collect())
+}
+
 fn extract_blocking(archive: &str, dest: &str, safe_root: &str, mut progress: ExtractProgress) -> anyhow::Result<()> {
     let real_dest = realpath(dest);
     let real_safe = realpath(safe_root);
@@ -232,6 +252,29 @@ impl DownloadFiles for LocalFiles {
         tokio::task::spawn_blocking(move || extract_blocking(&archive, &dest, &safe_root, progress)).await?
     }
 
+    async fn copy_file(&self, src: &str, dst: &str) -> std::io::Result<()> {
+        let (src, dst) = (src.to_string(), dst.to_string());
+        tokio::task::spawn_blocking(move || {
+            let dst_path = std::path::Path::new(&dst);
+            if let Some(parent) = dst_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let tmp = format!("{dst}.tmp");
+            if let Err(e) = std::fs::copy(&src, &tmp).and_then(|_| std::fs::rename(&tmp, &dst)) {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(e);
+            }
+            Ok(())
+        })
+        .await
+        .map_err(std::io::Error::other)?
+    }
+
+    async fn sha1_hex(&self, path: &str) -> Option<String> {
+        let path = path.to_string();
+        tokio::task::spawn_blocking(move || sha1_blocking(&path)).await.ok().flatten()
+    }
+
     async fn verify_zip(&self, archive: &str) -> anyhow::Result<()> {
         let archive = archive.to_string();
         tokio::task::spawn_blocking(move || verify_blocking(&archive)).await?
@@ -392,6 +435,38 @@ mod tests {
             );
             assert_eq!(std::fs::read(dest.join("updates/Big Game [v65536].nsp")).unwrap(), b"update");
         }
+    }
+
+    #[tokio::test]
+    async fn copy_file_creates_the_directory_leaves_no_temp_file_and_a_failed_copy_leaves_the_target_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src.bin");
+        std::fs::write(&src, b"keys").unwrap();
+        let dst = dir.path().join("deep/er/dst.bin");
+        LocalFiles.copy_file(&s(&src), &s(&dst)).await.unwrap();
+        assert_eq!(std::fs::read(&dst).unwrap(), b"keys");
+        assert!(!dir.path().join("deep/er/dst.bin.tmp").exists());
+        std::fs::write(&dst, b"keep me").unwrap();
+        let err = LocalFiles.copy_file(&s(&dir.path().join("missing")), &s(&dst)).await;
+        assert!(err.is_err());
+        assert_eq!(std::fs::read(&dst).unwrap(), b"keep me", "a failed copy never replaces the target");
+        assert!(!dir.path().join("deep/er/dst.bin.tmp").exists());
+    }
+
+    #[tokio::test]
+    async fn sha1_of_a_file_matches_the_known_digest_and_missing_or_directories_are_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("abc.txt");
+        std::fs::write(&f, b"abc").unwrap();
+        assert_eq!(
+            LocalFiles.sha1_hex(&s(&f)).await.as_deref(),
+            Some("a9993e364706816aba3e25717850c26c9cd0d89d")
+        );
+        let big = dir.path().join("big.bin");
+        std::fs::write(&big, vec![7u8; 200_000]).unwrap(); // several read chunks
+        assert_eq!(LocalFiles.sha1_hex(&s(&big)).await.unwrap().len(), 40);
+        assert_eq!(LocalFiles.sha1_hex(&s(&dir.path().join("missing"))).await, None);
+        assert_eq!(LocalFiles.sha1_hex(&s(dir.path())).await, None, "a directory is not a file");
     }
 
     #[tokio::test]

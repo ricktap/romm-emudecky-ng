@@ -12,6 +12,18 @@ import type { DownloadItem } from "../types";
 /** The part of a download item that carries a live phase. */
 export type PhaseFields = Pick<DownloadItem, "phase" | "phase_since" | "attempt" | "max_attempts" | "retry_delay_s">;
 
+/** The phase fields of a frame or queue row, or `undefined` when bytes are flowing (no phase). */
+export function pickPhase(src: PhaseFields): PhaseFields | undefined {
+  if (!src.phase) return undefined;
+  return {
+    phase: src.phase,
+    ...(src.phase_since !== undefined ? { phase_since: src.phase_since } : {}),
+    ...(src.attempt !== undefined ? { attempt: src.attempt } : {}),
+    ...(src.max_attempts !== undefined ? { max_attempts: src.max_attempts } : {}),
+    ...(src.retry_delay_s !== undefined ? { retry_delay_s: src.retry_delay_s } : {}),
+  };
+}
+
 export const WAITING_TEXT = "Waiting for RomM to respond. A download archive may be preparing…";
 
 /** `45s`, `2m 14s`, `1h 02m`. */

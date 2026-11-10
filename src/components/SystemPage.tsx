@@ -1,50 +1,27 @@
 import { useState, useEffect, FC } from "react";
-import { PanelSection, PanelSectionRow, ButtonItem, Field, Focusable } from "@decky/ui";
-import { getFirmwareStatus, downloadAllFirmware, downloadRequiredFirmware } from "../api/backend";
-import type { FirmwarePlatformExt } from "../types";
+import { PanelSection, PanelSectionRow, ButtonItem, Field, DropdownItem } from "@decky/ui";
+import {
+  getFirmwareStatus,
+  downloadAllFirmware,
+  downloadRequiredFirmware,
+  saveFirmwareVersion,
+} from "../api/backend";
+import type { FirmwareStatus, KeyState, SwitchKeyFile } from "../types";
+import { formatBytes } from "../utils/formatters";
 import { scrollToTop } from "../utils/scrollHelpers";
 import { detach } from "../utils/detach";
 
-/**
- * Build the per-platform summary label/description from the backend BIOS
- * aggregates. The ok/partial/missing DECISION is the backend's `bios_level`
- * (`compute_bios_level`) — `requiredReady` is `bios_level === "ok"`, so the
- * required-files threshold is no longer re-compared here. `requiredCount` still
- * selects the phrasing axis (required vs. plain file counts), and the
- * optional-missing breakdown stays a local computation passed in by the caller.
- */
-function getBiosSummary(
-  requiredCount: number,
-  requiredDone: number,
-  requiredReady: boolean,
-  optionalMissing: number,
-  done: number,
-  total: number,
-  allDone: boolean,
-) {
-  if (requiredCount > 0 && requiredReady) {
-    return {
-      summaryLabel: `${requiredDone} / ${requiredCount} required`,
-      summaryDescription:
-        optionalMissing > 0 ? `All required ready (${optionalMissing} optional missing)` : "All required ready",
-    };
-  }
-  if (requiredCount > 0) {
-    return {
-      summaryLabel: `${requiredDone} / ${requiredCount} required`,
-      summaryDescription: `${requiredCount - requiredDone} required missing — games may not launch`,
-    };
-  }
-  return {
-    summaryLabel: `${done} / ${total} files`,
-    summaryDescription: allDone ? "All downloaded" : `${total - done} missing`,
-  };
-}
+const KEY_STATE_LABEL: Record<KeyState, string> = {
+  matches: "matches RomM",
+  differs: "differs from RomM — kept as is",
+  present: "present",
+  missing: "missing",
+};
 
-function hashIndicator(hv: boolean | null): string {
-  if (hv === true) return " ✓";
-  if (hv === false) return " ⚠";
-  return " —";
+/** `Eden: matches RomM · Ryujinx: missing` — one line per key file. */
+export function keyStateSummary(key: SwitchKeyFile): string {
+  if (key.emulators.length === 0) return "No Switch emulator found";
+  return key.emulators.map((e) => `${e.label}: ${KEY_STATE_LABEL[e.state]}`).join(" · ");
 }
 
 interface SystemPageProps {
@@ -52,222 +29,76 @@ interface SystemPageProps {
 }
 
 /**
- * Top-level QAM destination for per-system firmware: the firmware files each
- * synced platform needs and their download state, from the
- * `get_firmware_status` multi-platform overview. The active emulator core is
- * shown read-only (per-system core selection and BIOS deletion were removed
- * until v0.90 — see REMOVED_TILL_0_90_0.md).
+ * Top-level QAM destination for the Switch firmware and keys RomM hosts: the key files with their state in every
+ * installed emulator, and the firmware versions. The buttons put downloads in the shared download queue (progress,
+ * pause and cancel are in the Downloads list). Downloads only fill gaps: an existing key file that differs from
+ * RomM's is reported and kept, never replaced.
  */
 export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
-  const [biosPlatforms, setBiosPlatforms] = useState<FirmwarePlatformExt[]>([]);
-  const [biosLoading, setBiosLoading] = useState(true);
-  const [biosError, setBiosError] = useState("");
-  const [serverOffline, setServerOffline] = useState(false);
-  const [downloading, setDownloading] = useState<string | null>(null);
-  const [biosStatus, setBiosStatus] = useState("");
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [status, setStatus] = useState<FirmwareStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const [note, setNote] = useState("");
 
-  async function refreshSystem() {
-    setBiosLoading(true);
-    setBiosError("");
+  async function refresh() {
+    setLoading(true);
+    setError("");
     try {
       const result = await getFirmwareStatus();
       if (result.success) {
-        setBiosPlatforms(result.platforms);
-        setServerOffline(result.server_offline ?? false);
+        setStatus(result);
       } else {
-        setBiosError(result.message || "Failed to fetch firmware status");
+        setError(result.message || "Failed to fetch firmware status");
       }
     } catch (e) {
-      setBiosError(`Failed to fetch firmware status: ${e}`);
+      setError(`Failed to fetch firmware status: ${e}`);
     }
-    setBiosLoading(false);
+    setLoading(false);
   }
 
-  // Load System data (core + BIOS) on mount — this page IS the System view.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial async data loads on mount are the standard React pattern; the rule is overzealous here
-    detach(refreshSystem());
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial async data load on mount
+    detach(refresh());
+    // A finished firmware download (announced by the global listener) changes what is on disk.
+    const onChanged = (e: Event) => {
+      if ((e as CustomEvent<{ type?: string }>).detail?.type === "firmware") detach(refresh());
+    };
+    globalThis.addEventListener("romm_data_changed", onChanged);
+    return () => globalThis.removeEventListener("romm_data_changed", onChanged);
   }, []);
 
-  const handleDownloadAll = async (platformSlug: string) => {
-    setDownloading(platformSlug);
-    setBiosStatus("");
+  const chooseVersion = async (version: string) => {
+    setNote("");
     try {
-      const result = await downloadAllFirmware(platformSlug);
-      if (result.success) {
-        setBiosStatus(result.message || `Downloaded ${result.downloaded} files`);
-        await refreshSystem();
-      } else {
-        setBiosStatus(result.message || "Download failed");
-      }
+      const result = await saveFirmwareVersion(version);
+      if (!result.success) setNote(result.message || "Could not save the firmware version");
+      await refresh();
     } catch (e) {
-      setBiosStatus(`Download failed: ${e}`);
+      setNote(`Could not save the firmware version: ${e}`);
     }
-    setDownloading(null);
   };
 
-  const handleDownloadRequired = async (platformSlug: string) => {
-    setDownloading(platformSlug);
-    setBiosStatus("");
+  const runDownload = async (
+    download: (slug: string) => Promise<{ success: boolean; message?: string; queued?: number }>,
+  ) => {
+    setDownloading(true);
+    setNote("");
     try {
-      const result = await downloadRequiredFirmware(platformSlug);
-      if (result.success) {
-        setBiosStatus(result.message || `Downloaded ${result.downloaded} required files`);
-        await refreshSystem();
-      } else {
-        setBiosStatus(result.message || "Download failed");
-      }
+      const result = await download("switch");
+      const text = result.message || (result.success ? "Done" : "Download failed");
+      // The transfers run in the Downloads list; point there instead of implying they are done.
+      setNote(result.queued ? `${text} — progress is in Downloads` : text);
     } catch (e) {
-      setBiosStatus(`Download failed: ${e}`);
+      setNote(`Download failed: ${e}`);
     }
-    setDownloading(null);
+    setDownloading(false);
   };
 
-  // Only currently-synced systems are shown (#956): a platform counts as synced
-  // when it has at least one ROM bound to a Steam shortcut (has_games).
-  const syncedPlatforms = biosPlatforms.filter((p) => p.has_games);
-
-  const renderBiosPlatform = (platform: FirmwarePlatformExt) => {
-    const unknownFiles = platform.files.filter((f) => f.classification === "unknown");
-    // Display counts come from the backend aggregates (computed from the same
-    // core-aware files); fall back to local derivation only if a payload omits
-    // them. The optional-missing breakdown stays a local file-level axis — the
-    // 3-state bios_level doesn't model it.
-    const total = platform.server_count ?? platform.files.length;
-    const done = platform.local_count ?? platform.files.filter((f) => f.downloaded).length;
-    const allDone = done === total;
-    const isDownloading = downloading === platform.platform_slug;
-    const isExpanded = expanded[platform.platform_slug] ?? false;
-
-    const requiredFiles = platform.files.filter((f) => f.classification === "required");
-    const requiredCount = platform.required_count ?? requiredFiles.length;
-    const requiredDone = platform.required_downloaded ?? requiredFiles.filter((f) => f.downloaded).length;
-    const optionalMissing = platform.files.filter((f) => f.classification === "optional" && !f.downloaded).length;
-
-    // The ok/partial/missing DECISION is the backend's bios_level — "ready"
-    // means all required files present (bios_level === "ok"). Fall back to the
-    // local count comparison only when the level is absent from the payload.
-    const requiredReady = platform.bios_level == null ? requiredDone === requiredCount : platform.bios_level === "ok";
-
-    const needsAttention = platform.has_games && requiredCount > 0 && !requiredReady;
-    const { summaryLabel, summaryDescription } = getBiosSummary(
-      requiredCount,
-      requiredDone,
-      requiredReady,
-      optionalMissing,
-      done,
-      total,
-      allDone,
-    );
-    const hasRequiredMissing = requiredCount > 0 && !requiredReady;
-    const hasOptionalMissing = optionalMissing > 0;
-
-    return (
-      <PanelSection
-        key={platform.platform_slug}
-        title={`${platform.platform_slug}${needsAttention ? " — BIOS needed" : ""}`}
-      >
-        {platform.active_core_label && (
-          <PanelSectionRow>
-            <Field label="Emulator Core" description={platform.active_core_label} />
-          </PanelSectionRow>
-        )}
-        <PanelSectionRow>
-          <Field label={summaryLabel} description={summaryDescription} />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            onClick={() =>
-              setExpanded((prev) => ({
-                ...prev,
-                [platform.platform_slug]: !prev[platform.platform_slug],
-              }))
-            }
-          >
-            {isExpanded ? "Hide Files" : `Show Files (${total})`}
-          </ButtonItem>
-        </PanelSectionRow>
-        {isExpanded && (
-          <Focusable>
-            {platform.files.map((file) => {
-              let dotColor: string;
-              if (file.classification === "unknown") {
-                dotColor = "#d4a72c";
-              } else if (file.downloaded) {
-                dotColor = "#5ba32b";
-              } else if (file.classification === "required") {
-                dotColor = "#d94126";
-              } else {
-                dotColor = "#8f98a0";
-              }
-              return (
-                <PanelSectionRow key={file.id}>
-                  <Field
-                    label={
-                      <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                        <span
-                          style={{
-                            display: "inline-block",
-                            width: "8px",
-                            height: "8px",
-                            borderRadius: "50%",
-                            backgroundColor: dotColor,
-                            flexShrink: 0,
-                          }}
-                        />
-                        {`${file.description || file.file_name} (${file.classification})`}
-                      </span>
-                    }
-                    description={
-                      file.downloaded
-                        ? `${file.file_name}${hashIndicator(file.hash_valid)}`
-                        : `${file.file_name} — Missing`
-                    }
-                  />
-                </PanelSectionRow>
-              );
-            })}
-            {unknownFiles.length > 0 && (
-              <PanelSectionRow>
-                <Field
-                  label={`${unknownFiles.length} file(s) not recognized`}
-                  description="Report at github.com/danielcopper/decky-romm-sync/issues if needed."
-                />
-              </PanelSectionRow>
-            )}
-          </Focusable>
-        )}
-        {hasRequiredMissing && !serverOffline && (
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              onClick={() => {
-                detach(handleDownloadRequired(platform.platform_slug));
-              }}
-              disabled={isDownloading}
-            >
-              {isDownloading ? "Downloading..." : "Download Required"}
-            </ButtonItem>
-          </PanelSectionRow>
-        )}
-        {!allDone && (hasOptionalMissing || hasRequiredMissing) && !serverOffline && (
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              onClick={() => {
-                detach(handleDownloadAll(platform.platform_slug));
-              }}
-              disabled={isDownloading}
-            >
-              {isDownloading ? "Downloading..." : "Download All"}
-            </ButtonItem>
-          </PanelSectionRow>
-        )}
-      </PanelSection>
-    );
-  };
+  const keys = status?.keys ?? [];
+  const firmware = status?.firmware ?? [];
+  const requiredMissing = keys.filter((k) => k.required && k.emulators.some((e) => e.state === "missing")).length;
+  const onRomm = keys.filter((k) => k.on_romm).length + firmware.length;
 
   return (
     <>
@@ -284,47 +115,113 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
         </PanelSectionRow>
       </PanelSection>
 
-      <PanelSection title="System">
+      <PanelSection title="Switch firmware and keys">
         <PanelSectionRow>
           <div style={{ fontSize: "11px", color: "#8f98a0", padding: "0 16px 4px" }}>
-            Per-system firmware files. The active core determines which files a system needs.
+            Keys are read from each emulator&apos;s own folder. A key file you already have is never replaced.
           </div>
         </PanelSectionRow>
-        {biosLoading && (
+
+        {loading && (
           <PanelSectionRow>
             <Field label="Loading firmware status..." />
           </PanelSectionRow>
         )}
 
-        {biosError && (
+        {error && (
           <PanelSectionRow>
-            <Field label="Error" description={biosError} />
+            <Field label="Error" description={error} />
           </PanelSectionRow>
         )}
 
-        {serverOffline && (
+        {status?.server_offline && (
           <PanelSectionRow>
             <Field
               label="Server offline"
-              description="RomM server is unreachable. Firmware downloads are unavailable."
+              description="RomM is unreachable. Showing what is on this machine; downloads are unavailable."
             />
           </PanelSectionRow>
         )}
 
-        {!biosLoading && !biosError && syncedPlatforms.length === 0 && (
+        {status && (status.emulators?.length ?? 0) === 0 && (
           <PanelSectionRow>
-            <Field label="No synced systems" description="Sync some games to manage their firmware files here." />
+            <Field label="No Switch emulator found" description="Install Eden, yuzu or Ryujinx with EmuDeck first." />
           </PanelSectionRow>
         )}
 
-        {biosStatus && (
+        {status && !loading && onRomm === 0 && !status.server_offline && (
           <PanelSectionRow>
-            <Field label={biosStatus} />
+            <Field label="No Switch firmware on RomM" description="Upload firmware and keys to RomM's bios/Switch folder." />
+          </PanelSectionRow>
+        )}
+
+        {note && (
+          <PanelSectionRow>
+            <Field label={note} />
           </PanelSectionRow>
         )}
       </PanelSection>
 
-      {syncedPlatforms.map(renderBiosPlatform)}
+      {status && keys.length > 0 && (
+        <PanelSection title={requiredMissing > 0 ? "Keys — required keys missing" : "Keys"}>
+          {keys.map((key) => (
+            <PanelSectionRow key={key.file_name}>
+              <Field
+                label={`${key.file_name}${key.required ? "" : " (optional)"}${key.on_romm ? "" : " — not on RomM"}`}
+                description={keyStateSummary(key)}
+              />
+            </PanelSectionRow>
+          ))}
+        </PanelSection>
+      )}
+
+      {status && firmware.length > 0 && (
+        <PanelSection title="Firmware">
+          <PanelSectionRow>
+            <DropdownItem
+              label="Firmware version"
+              description="The version Download Required fetches"
+              rgOptions={[
+                { data: "", label: `Newest available (${firmware[0]?.version ?? ""})` },
+                ...firmware.map((fw) => ({ data: fw.version, label: fw.version })),
+              ]}
+              selectedOption={status.version_pinned ? (status.selected_version ?? "") : ""}
+              onChange={(option) => detach(chooseVersion(option.data as string))}
+            />
+          </PanelSectionRow>
+          {firmware.map((fw) => (
+            <PanelSectionRow key={fw.file_name}>
+              <Field
+                label={`${fw.version}${fw.selected ? " (selected)" : ""}`}
+                description={`${fw.size != null ? formatBytes(fw.size) : "size unknown"} — ${
+                  fw.downloaded ? "downloaded" : "not downloaded"
+                }`}
+              />
+            </PanelSectionRow>
+          ))}
+          <PanelSectionRow>
+            <div style={{ fontSize: "11px", color: "#8f98a0", padding: "0 16px 4px" }}>
+              Firmware is saved to {status.archive_dir}. Install it from Eden&apos;s or Ryujinx&apos;s own Install
+              Firmware menu.
+            </div>
+          </PanelSectionRow>
+        </PanelSection>
+      )}
+
+      {status && !status.server_offline && onRomm > 0 && (
+        <PanelSection>
+          <PanelSectionRow>
+            <ButtonItem layout="below" disabled={downloading} onClick={() => detach(runDownload(downloadRequiredFirmware))}>
+              {downloading ? "Downloading..." : "Download Required"}
+            </ButtonItem>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem layout="below" disabled={downloading} onClick={() => detach(runDownload(downloadAllFirmware))}>
+              {downloading ? "Downloading..." : "Download All"}
+            </ButtonItem>
+          </PanelSectionRow>
+        </PanelSection>
+      )}
     </>
   );
 };

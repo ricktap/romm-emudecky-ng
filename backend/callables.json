@@ -75,6 +75,7 @@
   "resume_download",
   "save_collection_platform_groups",
   "save_collection_sync",
+  "save_firmware_version",
   "save_log_level",
   "save_platform_sync",
   "save_preferred_region",

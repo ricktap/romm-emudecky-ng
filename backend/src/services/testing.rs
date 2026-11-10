@@ -244,7 +244,7 @@ use crate::services::downloads::{DownloadService, DownloadServiceConfig};
 use crate::services::launch::{LaunchService, LaunchServiceConfig};
 use crate::services::ports::{
     Clock, DownloadFiles, EmuDeckPaths, EmulatorLocator, EventSink, ExtractProgress, RommRomApi, SystemResolver,
-    TransferHooks, TransferMode, TransferOutcome, TransferPhase,
+    TransferHooks, TransferMode, TransferOutcome, TransferPhase, FirmwareJobs, FirmwareTarget, RommFirmwareApi,
 };
 use crate::services::rom_removal::{RomRemovalService, RomRemovalServiceConfig};
 
@@ -323,6 +323,8 @@ pub struct TransferCall {
 pub struct FakeRomRomm {
     pub roms: Mutex<HashMap<i64, Result<Value, RommError>>>,
     pub content: Mutex<HashMap<i64, Vec<u8>>>,
+    /// Firmware file bytes by firmware id.
+    pub firmware_content: Mutex<HashMap<i64, Vec<u8>>>,
     pub transfer_error: Mutex<Option<Arc<dyn Fn() -> anyhow::Error + Send + Sync>>>,
     pub range_supported: Mutex<bool>,
     pub stall_at: Mutex<Option<u64>>,
@@ -351,6 +353,9 @@ impl FakeRomRomm {
     pub fn set_content(&self, id: i64, bytes: Vec<u8>) {
         self.content.lock().unwrap().insert(id, bytes);
     }
+    pub fn set_firmware_content(&self, id: i64, bytes: Vec<u8>) {
+        self.firmware_content.lock().unwrap().insert(id, bytes);
+    }
     pub fn fail_transfers(&self, f: impl Fn() -> anyhow::Error + Send + Sync + 'static) {
         *self.transfer_error.lock().unwrap() = Some(Arc::new(f));
     }
@@ -374,6 +379,20 @@ impl RommRomApi for FakeRomRomm {
     async fn download_rom_content(
         &self,
         rom_id: i64,
+        file_name: &str,
+        dest: &str,
+        mode: TransferMode,
+        hooks: TransferHooks,
+    ) -> anyhow::Result<TransferOutcome> {
+        self.fake_transfer(rom_id, false, file_name, dest, mode, hooks).await
+    }
+}
+
+impl FakeRomRomm {
+    async fn fake_transfer(
+        &self,
+        rom_id: i64,
+        firmware: bool,
         file_name: &str,
         dest: &str,
         mode: TransferMode,
@@ -415,7 +434,11 @@ impl RommRomApi for FakeRomRomm {
         if let Some(meta) = hooks.on_meta.take() {
             meta(*self.range_supported.lock().unwrap());
         }
-        let body = self.content.lock().unwrap().get(&rom_id).cloned().unwrap_or_default();
+        let body = if firmware {
+            self.firmware_content.lock().unwrap().get(&rom_id).cloned().unwrap_or_default()
+        } else {
+            self.content.lock().unwrap().get(&rom_id).cloned().unwrap_or_default()
+        };
         let total = body.len() as u64;
         if let Some(parent) = std::path::Path::new(dest).parent() {
             std::fs::create_dir_all(parent)?;
@@ -452,6 +475,36 @@ impl RommRomApi for FakeRomRomm {
         std::io::Write::write_all(&mut f, &body[written as usize..])?;
         (hooks.progress)(total, total);
         Ok(TransferOutcome::Downloaded)
+    }
+}
+
+#[async_trait]
+impl RommFirmwareApi for FakeRomRomm {
+    async fn list_firmware(&self) -> Result<Value, RommError> {
+        Ok(Value::Array(Vec::new()))
+    }
+    async fn download_firmware_content(
+        &self,
+        firmware_id: i64,
+        file_name: &str,
+        dest: &str,
+        mode: TransferMode,
+        hooks: TransferHooks,
+    ) -> anyhow::Result<TransferOutcome> {
+        self.fake_transfer(firmware_id, true, file_name, dest, mode, hooks).await
+    }
+}
+
+/// Firmware targets by firmware id.
+#[derive(Default)]
+pub struct FakeFirmwareJobs {
+    pub targets: Mutex<HashMap<i64, FirmwareTarget>>,
+}
+
+#[async_trait]
+impl FirmwareJobs for FakeFirmwareJobs {
+    async fn target(&self, firmware_id: i64) -> Option<FirmwareTarget> {
+        self.targets.lock().unwrap().get(&firmware_id).cloned()
     }
 }
 
@@ -503,6 +556,12 @@ impl DownloadFiles for FakeFiles {
     }
     async fn extract_zip(&self, a: &str, d: &str, s: &str, p: ExtractProgress) -> anyhow::Result<()> {
         self.inner.extract_zip(a, d, s, p).await
+    }
+    async fn copy_file(&self, src: &str, dst: &str) -> std::io::Result<()> {
+        self.inner.copy_file(src, dst).await
+    }
+    async fn sha1_hex(&self, path: &str) -> Option<String> {
+        self.inner.sha1_hex(path).await
     }
     async fn verify_zip(&self, archive: &str) -> anyhow::Result<()> {
         self.inner.verify_zip(archive).await
@@ -571,6 +630,7 @@ pub struct DownloadEnv {
     pub jobs: Arc<SqliteDownloadJobs>,
     pub library: Arc<SqliteLibrary>,
     pub romm: Arc<FakeRomRomm>,
+    pub firmware_jobs: Arc<FakeFirmwareJobs>,
     pub events: Arc<RecordingEvents>,
     pub files: Arc<FakeFiles>,
     pub locator: Arc<FakeLocator>,
@@ -619,6 +679,7 @@ impl DownloadEnv {
             files: files.clone(),
             paths: paths.clone(),
         }));
+        let firmware_jobs = Arc::new(FakeFirmwareJobs::default());
         let svc = DownloadService::new(DownloadServiceConfig {
             romm: romm.clone(),
             files: files.clone(),
@@ -630,6 +691,8 @@ impl DownloadEnv {
             removal,
             events: events.clone(),
             clock: clock.clone(),
+            firmware_api: romm.clone(),
+            firmware_jobs: firmware_jobs.clone(),
         });
         let active = svc.clone();
         let adoption = InstallAdoptionService::new(InstallAdoptionServiceConfig {
@@ -650,6 +713,7 @@ impl DownloadEnv {
             jobs,
             library,
             romm,
+            firmware_jobs,
             events,
             files,
             locator,

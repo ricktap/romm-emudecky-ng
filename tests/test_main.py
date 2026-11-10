@@ -222,7 +222,7 @@ async def test_shim_against_the_real_rust_backend(tmp_path):
     assert await plugin.get_settings_reset_notice() == {"pending": False, "backed_up_to": None}  # type: ignore[attr-defined]
 
     assert await plugin.get_download_queue() == {"downloads": []}  # type: ignore[attr-defined]
-    unported = await plugin.get_firmware_status()  # type: ignore[attr-defined]
+    unported = await plugin.get_save_sync_settings()  # type: ignore[attr-defined]
     assert unported["success"] is False
     assert unported["reason"] == "not_implemented"
     process = plugin._backend.process

@@ -25,6 +25,7 @@ pub fn default_settings() -> Map<String, Value> {
         "collection_create_platform_groups": false,
         "preferred_region": "auto",
         "steam_input_mode": "default",
+        "switch_firmware_version": "",
         "steamgriddb_api_key": "",
         "romm_allow_insecure_ssl": false,
         "log_level": "warn",
