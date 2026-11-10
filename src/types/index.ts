@@ -7,6 +7,7 @@
  */
 
 export * from "./api";
+export * from "./emudeck";
 export * from "./sync";
 export * from "./downloads";
 export * from "./firmware";

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { Navigation, GamepadButton } from "@decky/ui";
-import { getSettings, getSyncStats } from "../api/backend";
+import { getEmudeckHealth, getSettings, getSyncStats } from "../api/backend";
 import { setDownloads } from "../utils/downloadStore";
 import { setRommConnectionState } from "../utils/connectionState";
 
@@ -84,6 +84,24 @@ describe("LibraryRoute", () => {
         await Promise.resolve();
       });
       expect(screen.getByText("romm.home.lan:8443 · synced 2h ago")).toBeTruthy();
+    });
+
+    it("shows a banner while EmuDeck's storage is unusable and none once it is fine", async () => {
+      vi.mocked(getEmudeckHealth).mockResolvedValue({ health: "absent", ok: false, message: "EmuDeck is not set up on this device.", storage_path: null });
+      const first = render(<LibraryRoute />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByTestId("emudeck-banner").textContent).toContain("EmuDeck not set up");
+      first.unmount();
+      vi.mocked(getEmudeckHealth).mockResolvedValue({ health: "ok", ok: true, message: "", storage_path: "/sd" });
+      render(<LibraryRoute />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.queryByTestId("emudeck-banner")).toBeNull();
     });
 
     it("typing in the search field hands the text to the grid", () => {

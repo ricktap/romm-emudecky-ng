@@ -14,6 +14,7 @@ import type {
   CollectionKind,
   RegistryPlatform,
   FirmwareStatus,
+  EmuDeckHealthInfo,
   DownloadKind,
   FirmwareDownloadResult,
   CoreInfo,
@@ -113,6 +114,8 @@ export const cancelDownload = callable<[number, DownloadKind?], BackendResult>("
 export const pauseDownload = callable<[number, DownloadKind?], BackendResult>("pause_download");
 export const resumeDownload = callable<[number, DownloadKind?], BackendResult>("resume_download");
 export const moveToFront = callable<[number, DownloadKind?], BackendResult>("move_to_front");
+/** Whether EmuDeck's storage can be used right now (see `EmuDeckHealthInfo`). */
+export const getEmudeckHealth = callable<[], EmuDeckHealthInfo>("get_emudeck_health");
 export const getDownloadQueue = callable<[], { downloads: DownloadItem[] }>("get_download_queue");
 export const getInstalledRom = callable<[number], InstalledRom | null>("get_installed_rom");
 export const evaluateLaunch = callable<[number], LaunchVerdict>("evaluate_launch");

@@ -59,6 +59,7 @@ pub const PORTED_CALLABLES: &[&str] = &[
     "dismiss_settings_reset_notice",
     "frontend_log",
     "get_download_queue",
+    "get_emudeck_health",
     "get_app_id_rom_id_map",
     "get_library_overview",
     "get_collections",
@@ -552,6 +553,7 @@ impl Backend {
                 let (id, kind) = job_args(&a)?;
                 Ok(d.move_to_front(JobKey { kind, id }).await)
             }),
+            "get_emudeck_health" => bind(name, 0, 0, d, |d, _| async move { Ok(d.emudeck_health()) }),
             "get_download_queue" => bind(name, 0, 0, d, |d, _| async move { Ok(d.get_download_queue()) }),
             "get_installed_rom" => bind(name, 1, 1, d, |d, a| async move {
                 let id = rom_id_arg(&a[0])?;
@@ -825,7 +827,7 @@ mod tests {
     #[test]
     fn surface_matches_python_backend_size_and_includes_ported() {
         let names = callable_names();
-        assert_eq!(names.len(), 114);
+        assert_eq!(names.len(), 115);
         let mut dedup = names.clone();
         dedup.dedup();
         assert_eq!(dedup.len(), names.len());

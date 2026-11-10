@@ -10,7 +10,8 @@ import { SettingsPage } from "./SettingsPage";
 import { SystemPage } from "./SystemPage";
 import { DownloadQueue } from "./DownloadQueue";
 import { LibraryGrid } from "./LibraryGrid";
-import { Glyph, Icon, RmButton, RmStyles } from "./rm";
+import { AttRow, Glyph, Icon, RmButton, RmStyles } from "./rm";
+import { emudeckTitle, useEmudeckHealth } from "../utils/emudeckHealth";
 
 // The moved pages keep their "Back" button; inside the route it leaves the route (history back).
 const leave = () => Navigation.NavigateBack();
@@ -45,6 +46,7 @@ export const LibraryRoute: FC = () => {
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [queued, setQueued] = useState(0);
   const connection = useRommConnectionState();
+  const emudeck = useEmudeckHealth();
   const searchRef = useRef<HTMLInputElement | null>(null);
 
   const setTab = (t: LibraryTab) => {
@@ -124,6 +126,11 @@ export const LibraryRoute: FC = () => {
           ))}
           <Glyph side="right">R1</Glyph>
         </div>
+        {emudeck && !emudeck.ok && (
+          <div style={{ padding: "8px 28px 0" }} data-testid="emudeck-banner">
+            <AttRow title={emudeckTitle(emudeck.health)} sub={emudeck.message} onActivate={() => setTab("systems")} />
+          </div>
+        )}
         {tab === "library" && <LibraryGrid search={search} />}
         {tab === "downloads" && (
           <div className="rm-lmain" style={{ maxWidth: 900 }}>

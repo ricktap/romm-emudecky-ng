@@ -12,17 +12,19 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::domain::download_failure::iso_from_epoch;
+use crate::domain::emudeck_health::{ConfigRead, EmuDeckHealth, classify};
 use crate::domain::emulator_table::table_for;
 use crate::services::ports::{Clock, EmuDeckPaths, EmulatorLocator, SystemResolver};
 
 const EMULATION_DIR: &str = "Emulation";
 const CONFIG_TTL: Duration = Duration::from_secs(30);
 
-/// Reads `storagePath` from EmuDeck's `settings.json` (cached for 30 s). A
-/// missing or unreadable file falls back to `<home>/Emulation`.
+/// Reads `storagePath` from EmuDeck's `settings.json` (cached for 30 s) and checks that `<storagePath>/Emulation`
+/// is there (never cached: an ejected SD card must show at once). There is no fallback to `~/Emulation`: when the
+/// config cannot be used, [`EmuDeckPaths::health`] says why and the services refuse to write.
 pub struct EmuDeckSettingsPaths {
     user_home: PathBuf,
-    cache: Mutex<Option<(Instant, Option<String>)>>,
+    cache: Mutex<Option<(Instant, ConfigRead)>>,
 }
 
 impl EmuDeckSettingsPaths {
@@ -37,7 +39,7 @@ impl EmuDeckSettingsPaths {
         self.user_home.join(".config/EmuDeck/settings.json")
     }
 
-    fn storage_path(&self) -> Option<String> {
+    fn read_config(&self) -> ConfigRead {
         let mut cache = self.cache.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((at, value)) = cache.as_ref()
             && at.elapsed() < CONFIG_TTL
@@ -46,31 +48,41 @@ impl EmuDeckSettingsPaths {
         }
         let raw = match std::fs::read(self.config_path()) {
             Ok(bytes) => bytes,
-            Err(_) => {
-                // A missing file is the pre-install state; re-read next time.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // The pre-install state; look again next time.
                 *cache = None;
-                return None;
+                return ConfigRead::Absent;
+            }
+            Err(e) => {
+                tracing::warn!("Failed to read EmuDeck config at {}: {e}", self.config_path().display());
+                *cache = None;
+                return ConfigRead::Unreadable;
             }
         };
         let value = match serde_json::from_slice::<Value>(&raw) {
-            Ok(config) => config
+            Ok(config) => match config
                 .get("storagePath")
                 .and_then(Value::as_str)
                 .filter(|s| !s.trim().is_empty())
-                .map(|s| expand(s, &self.user_home)),
+            {
+                Some(s) => ConfigRead::Storage(expand(s, &self.user_home)),
+                None => ConfigRead::Invalid,
+            },
             Err(e) => {
-                tracing::warn!("Failed to load EmuDeck config at {}: {e}", self.config_path().display());
-                None
+                tracing::warn!("Failed to parse EmuDeck config at {}: {e}", self.config_path().display());
+                ConfigRead::Unreadable
             }
         };
         *cache = Some((Instant::now(), value.clone()));
         value
     }
 
+    /// `<storagePath>/Emulation/<sub>`; when no storage path is known the path is rooted at `~/Emulation` **only so a
+    /// caller that ignores [`EmuDeckPaths::health`] still gets a well-formed value** — it is never created.
     fn under_emulation(&self, sub: &str) -> String {
-        let root = match self.storage_path() {
-            Some(storage) => PathBuf::from(storage).join(EMULATION_DIR),
-            None => self.user_home.join(EMULATION_DIR),
+        let root = match self.read_config() {
+            ConfigRead::Storage(storage) => PathBuf::from(storage).join(EMULATION_DIR),
+            _ => self.user_home.join(EMULATION_DIR),
         };
         root.join(sub).to_string_lossy().into_owned()
     }
@@ -116,6 +128,20 @@ impl EmuDeckPaths for EmuDeckSettingsPaths {
     }
     fn bios_path(&self) -> String {
         self.under_emulation("bios")
+    }
+    fn health(&self) -> EmuDeckHealth {
+        let read = self.read_config();
+        let root_exists = match &read {
+            ConfigRead::Storage(storage) => Path::new(storage).join(EMULATION_DIR).is_dir(),
+            _ => false,
+        };
+        classify(&read, root_exists)
+    }
+    fn storage_path(&self) -> Option<String> {
+        match self.read_config() {
+            ConfigRead::Storage(storage) => Some(storage),
+            _ => None,
+        }
     }
 }
 
@@ -293,6 +319,38 @@ mod tests {
         std::fs::write(fresh.config_path(), r#"{"storagePath": "  "}"#).unwrap();
         let blank = EmuDeckSettingsPaths::new(home.path());
         assert_eq!(blank.bios_path(), format!("{}/Emulation/bios", home.path().display()));
+    }
+
+    #[test]
+    fn health_names_every_state_and_never_falls_back_to_the_home_folder() {
+        let home = tempfile::tempdir().unwrap();
+        let config_dir = home.path().join(".config/EmuDeck");
+        // No settings file at all: absent, and nothing to write to.
+        let none = EmuDeckSettingsPaths::new(home.path());
+        assert_eq!(none.health(), EmuDeckHealth::Absent);
+        assert_eq!(none.storage_path(), None);
+        // The home folder's own Emulation/ does not make it healthy.
+        std::fs::create_dir_all(home.path().join("Emulation")).unwrap();
+        assert_eq!(EmuDeckSettingsPaths::new(home.path()).health(), EmuDeckHealth::Absent);
+
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let settings = config_dir.join("settings.json");
+        std::fs::write(&settings, b"{broken").unwrap();
+        assert_eq!(EmuDeckSettingsPaths::new(home.path()).health(), EmuDeckHealth::Unreadable);
+        std::fs::write(&settings, r#"{"storagePath": "  "}"#).unwrap();
+        assert_eq!(EmuDeckSettingsPaths::new(home.path()).health(), EmuDeckHealth::Invalid);
+        std::fs::write(&settings, r#"{"other": 1}"#).unwrap();
+        assert_eq!(EmuDeckSettingsPaths::new(home.path()).health(), EmuDeckHealth::Invalid);
+
+        let sd = home.path().join("sd");
+        std::fs::write(&settings, format!(r#"{{"storagePath": "{}"}}"#, sd.display())).unwrap();
+        let p = EmuDeckSettingsPaths::new(home.path());
+        assert_eq!(p.health(), EmuDeckHealth::RootMissing, "the card is out");
+        assert_eq!(p.storage_path().as_deref(), sd.to_str());
+        std::fs::create_dir_all(sd.join("Emulation")).unwrap();
+        assert_eq!(p.health(), EmuDeckHealth::Ok, "the card is back — the root check is never cached");
+        std::fs::remove_dir_all(&sd).unwrap();
+        assert_eq!(p.health(), EmuDeckHealth::RootMissing, "and gone again");
     }
 
     #[test]

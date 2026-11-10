@@ -854,6 +854,12 @@ impl DownloadService {
         let release = |me: &Self| {
             me.st().in_progress.remove(&JobKey::rom(rom_id));
         };
+        // Nothing is written while EmuDeck's storage is missing or its settings unusable (an ejected SD card must
+        // never turn into files on internal storage). A stopped job keeps its partial for when the card is back.
+        if let Some(refusal) = self.emudeck_refusal() {
+            release(self);
+            return refusal;
+        }
         let rom = match self.romm.get_rom(rom_id).await {
             Ok(rom) => rom,
             Err(e) => {
@@ -1078,6 +1084,10 @@ impl DownloadService {
         let release = |me: &Self| {
             me.st().in_progress.remove(&key);
         };
+        if let Some(refusal) = self.emudeck_refusal() {
+            release(self);
+            return refusal;
+        }
         let Some(target) = self.firmware_jobs.target(firmware_id).await else {
             release(self);
             if resume {
@@ -1840,6 +1850,19 @@ impl DownloadService {
             None => file_path.to_string(),
         };
         (rom.shortcut_app_id, self.launch.launch_options(emulator.as_ref(), &bake))
+    }
+
+    // ── EmuDeck health ──────────────────────────────────────────────────
+
+    /// The refusal to answer a start/resume with while EmuDeck's storage cannot be trusted; `None` when it can.
+    fn emudeck_refusal(&self) -> Option<Value> {
+        let health = self.paths.health();
+        (!health.is_ok()).then(|| failure("emudeck_unavailable", health.message()))
+    }
+
+    /// The `get_emudeck_health` answer.
+    pub fn emudeck_health(&self) -> Value {
+        self.paths.health().to_value(self.paths.storage_path().as_deref())
     }
 
     // ── Callables ───────────────────────────────────────────────────────

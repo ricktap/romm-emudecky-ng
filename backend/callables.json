@@ -32,6 +32,7 @@
   "get_collections",
   "get_disc_selection",
   "get_download_queue",
+  "get_emudeck_health",
   "get_firmware_status",
   "get_installed_relaunch_options",
   "get_installed_rom",

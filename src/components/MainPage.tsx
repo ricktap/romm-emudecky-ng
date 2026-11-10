@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, FC, ReactNode } from "react";
 import { Focusable } from "@decky/ui";
 import { AttRow, Icon, NavRow, RmButton, RmStyles } from "./rm";
+import { emudeckTitle, useEmudeckHealth } from "../utils/emudeckHealth";
 import { openLibraryRoute } from "../utils/libraryRoute";
 import { getSkipPreview, onSyncPreferencesChange } from "../utils/syncPreferences";
 import { missingRequiredKeys } from "../utils/missingKeys";
@@ -177,6 +178,7 @@ function formatPreviewDescription(s: SyncPreviewSummary): string {
 }
 
 export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
+  const emudeck = useEmudeckHealth();
   const [stats, setStats] = useState<SyncStats | null>(null);
   const [connected, setConnected] = useState<boolean | null | BackendFailed>(null);
   const versionError = useVersionError();
@@ -582,6 +584,17 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
   }
 
   const attention: ReactNode[] = [];
+  // EmuDeck's storage comes first: without it nothing can be downloaded or installed.
+  if (emudeck && !emudeck.ok) {
+    attention.push(
+      <AttRow
+        key="emudeck"
+        title={emudeckTitle(emudeck.health)}
+        sub={emudeck.message}
+        onActivate={() => openLibraryRoute("systems")}
+      />,
+    );
+  }
   if (settingsReset.pending) attention.push(<SettingsResetBanner key="reset" backedUpTo={settingsReset.backedUpTo} />);
   if (playtimeScope.pending) attention.push(<PlaytimeScopeBanner key="playtime" />);
   if (updateState.info?.update_available) attention.push(<UpdateBanner key="update" info={updateState.info} />);

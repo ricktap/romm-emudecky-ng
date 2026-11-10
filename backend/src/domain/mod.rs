@@ -4,6 +4,7 @@ pub mod archive_transfer;
 pub mod disc_selection;
 pub mod download_failure;
 pub mod download_job;
+pub mod emudeck_health;
 pub mod emulator_table;
 pub mod errors;
 pub mod install_layout;
