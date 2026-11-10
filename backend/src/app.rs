@@ -39,6 +39,7 @@ const CALLABLE_NAMES_JSON: &str = include_str!("../callables.json");
 /// (a result, not a protocol error: Decky turns an error frame into an opaque
 /// "Python Exception", so the frontend could not tell it from a crash).
 pub const PORTED_CALLABLES: &[&str] = &[
+    "get_firmware_status",
     "get_version_list", "switch_version", "evaluate_launch", "check_local_drift", "check_core_change",
     "remove_rom", "uninstall_all_roms", "apply_steam_input_setting", "check_for_update",
     "record_session_start", "finalize_game_session", "get_all_playtime", "get_playtime_scope_notice", "reconcile_playtime",
@@ -136,6 +137,7 @@ pub struct Backend {
     /// Adoption of ROM files already on disk. Library sync and the game page
     /// (rewrite step 3) call it; no callable reaches it yet.
     pub adoption: Arc<InstallAdoptionService>,
+    pub firmware: Arc<crate::services::firmware::FirmwareService>,
 }
 
 impl Backend {
@@ -215,6 +217,14 @@ impl Backend {
             files: files.clone(),
             paths: paths.clone(),
         }));
+        let firmware = crate::services::firmware::FirmwareService::new(crate::services::firmware::FirmwareServiceConfig {
+            romm: romm_api.clone(),
+            files: files.clone(),
+            locator: Arc::new(HomeEmulatorLocator::new(&env.user_home)),
+            paths: paths.clone(),
+            clock: clock.clone(),
+            home: env.user_home.to_string_lossy().into_owned(),
+        });
         let launch_choices = Arc::new(crate::services::launch_choices::LaunchChoicesService::new(
             crate::services::launch_choices::LaunchChoicesServiceConfig { preferences: library.clone(), launch: launch.clone() }
         ));
@@ -319,6 +329,7 @@ impl Backend {
             sync,
             shortcuts,
             adoption,
+            firmware,
         })
     }
 
@@ -349,7 +360,9 @@ impl Backend {
         let actions=self.game_actions.clone();
         let playtime=self.playtime.clone();
         let update=self.update.clone();
+        let firmware=self.firmware.clone();
         let h: Handler = match name {
+            "get_firmware_status" => bind(name,0,0,firmware,|s,_|async move{Ok(s.get_firmware_status().await)}),
             "get_version_list" => bind(name,1,1,versions,|s,a|async move{s.list(rom_id_arg(&a[0])?).await.map_err(err)}),
             "switch_version" => bind(name,3,3,versions,|s,a|async move{Ok(s.switch(rom_id_arg(&a[0])?,rom_id_arg(&a[1])?,crate::domain::settings::truthy(&a[2])).await.unwrap_or_else(|e|unknown_failure(&e)))}),
             "evaluate_launch" => bind(name,1,1,gate,|s,a|async move{s.evaluate(rom_id_arg(&a[0])?).await.map_err(err)}),

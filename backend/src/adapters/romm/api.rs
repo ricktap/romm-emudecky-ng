@@ -202,3 +202,10 @@ impl crate::services::ports::RommPlaytimeApi for RommApi {
         }Ok(result)
     }
 }
+
+#[async_trait]
+impl crate::services::ports::RommFirmwareApi for RommApi {
+    async fn list_firmware(&self) -> Result<Value, RommError> {
+        self.http.get_json("/api/firmware").await
+    }
+}

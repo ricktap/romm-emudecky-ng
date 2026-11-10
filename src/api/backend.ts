@@ -224,7 +224,7 @@ export const saveSgdbApiKey = callable<[string], { success: boolean; message: st
 export const verifySgdbApiKey = callable<[string], { success: boolean; message: string }>("verify_sgdb_api_key");
 export const saveSteamInputSetting = callable<[string], { success: boolean }>("save_steam_input_setting");
 export const applySteamInputSetting = callable<[], { success: boolean; message: string }>("apply_steam_input_setting");
-export const getFirmwareStatus = unportedCallable<[], FirmwareStatus>("get_firmware_status");
+export const getFirmwareStatus = callable<[], FirmwareStatus>("get_firmware_status");
 export const downloadAllFirmware = unportedCallable<[string], FirmwareDownloadResult>("download_all_firmware");
 export const downloadRequiredFirmware = unportedCallable<[string], FirmwareDownloadResult>("download_required_firmware");
 /**

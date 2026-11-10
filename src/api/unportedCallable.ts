@@ -35,9 +35,7 @@ interface Entry {
 }
 
 const UNPORTED: Record<string, Entry> = {
-  // firmware
-  // passive read, but its page (System) shows a failure message, so it resolves to a failure result
-  get_firmware_status: { feature: "firmware", silent: true },
+  // firmware (get_firmware_status is ported; the downloads come with the firmware queue work)
   download_all_firmware: { feature: "firmware" },
   download_required_firmware: { feature: "firmware" },
   // save sync — passive reads (rejecting, like any unreachable backend call; callers catch it)

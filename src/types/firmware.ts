@@ -1,24 +1,6 @@
 /**
- * Firmware and BIOS types — server-side firmware inventory, local BIOS
- * file status, and the available-cores selection presented in the UI.
+ * Firmware types — the Switch firmware/keys status, and the available-cores selection presented in the UI.
  */
-
-interface FirmwareFile {
-  id: number;
-  file_name: string;
-  size: number;
-  md5: string;
-  downloaded: boolean;
-  required: boolean;
-  description: string;
-  hash_valid: boolean | null;
-  classification: "required" | "optional" | "unknown";
-}
-
-interface FirmwarePlatform {
-  platform_slug: string;
-  files: FirmwareFile[];
-}
 
 /**
  * One ES-DE `<command>` classified for launch-bakeability (#1210), the shape the
@@ -59,63 +41,62 @@ export interface CoreInfo {
   game_override_label?: string | null;
 }
 
-/**
- * Per-platform entry in the `get_firmware_status` overview. Carries the
- * platform's active/available cores alongside its BIOS file state so the System
- * page can render the combined core+BIOS overview for every platform from one
- * call. This is the system-wide overview path — distinct from the per-game
- * `check_platform_bios` payload, which no longer carries any core fields (#923).
- */
-export interface FirmwarePlatformExt extends FirmwarePlatform {
-  has_games?: boolean;
-  all_downloaded?: boolean;
-  active_core?: string;
-  active_core_label?: string;
-  emulators?: EmulatorOption[];
-  emulator_data_available?: boolean;
-  // Per-platform BIOS aggregates computed by the backend from the same
-  // core-aware enriched files (`compute_bios_level`), so the System page reads
-  // the ok/partial/missing decision and display counts off the payload instead
-  // of re-deriving the threshold logic. The optional-missing breakdown stays a
-  // local file-level computation (a richer axis the 3-state level doesn't model).
-  bios_level?: "ok" | "partial" | "missing" | null;
-  required_count?: number;
-  required_downloaded?: number;
-  server_count?: number;
-  local_count?: number;
+/** How an emulator's copy of a key file compares with RomM's. */
+export type KeyState = "missing" | "matches" | "differs" | "present";
+
+export interface KeyEmulatorState {
+  id: string;
+  label: string;
+  state: KeyState;
 }
 
+/** One Switch key file (`prod.keys`, `title.keys`, ...) with its state per installed emulator. */
+export interface SwitchKeyFile {
+  file_name: string;
+  description: string;
+  required: boolean;
+  on_romm: boolean;
+  firmware_id: number | null;
+  size: number | null;
+  /** Only the installed emulators that read this file. */
+  emulators: KeyEmulatorState[];
+}
+
+/** One firmware archive RomM hosts (`Firmware.23.0.1.zip`). */
+export interface SwitchFirmwareArchive {
+  firmware_id: number | null;
+  file_name: string;
+  version: string;
+  size: number | null;
+  /** The version "Download required" will fetch (the newest, until it becomes selectable). */
+  selected: boolean;
+  downloaded: boolean;
+  local_size: number | null;
+}
+
+export interface SwitchEmulator {
+  id: string;
+  label: string;
+  keys_dir: string;
+}
+
+/**
+ * `get_firmware_status` (Switch only): the files RomM hosts for the Switch and how this machine compares.
+ * Reading never writes anything.
+ */
 export interface FirmwareStatus {
   success: boolean;
   message?: string;
+  /** RomM could not be reached: the last known list (or none) is shown. */
   server_offline?: boolean;
-  platforms: FirmwarePlatformExt[];
-}
-
-export interface BiosFileStatus {
-  file_name: string;
-  downloaded: boolean;
-  local_path: string;
-  required: boolean;
-  description: string;
-  classification: "required" | "optional" | "unknown";
-  cores?: Record<string, { required: boolean }>;
-  used_by_active?: boolean;
-}
-
-export interface BiosStatus {
-  needs_bios: boolean;
-  server_count?: number;
-  local_count?: number;
-  all_downloaded?: boolean;
-  required_count?: number;
-  required_downloaded?: number;
-  unknown_count?: number;
-  files?: BiosFileStatus[];
-  // ok/partial/missing trichotomy computed by the backend (compute_bios_level)
-  // so the frontend reads the classification off the payload instead of
-  // re-deriving the threshold logic. Present only when needs_bios is true.
-  bios_level?: "ok" | "partial" | "missing" | null;
+  platform_slug?: string;
+  /** Where firmware archives are saved (`<Emulation>/bios/switch`). */
+  archive_dir?: string;
+  emulators?: SwitchEmulator[];
+  keys?: SwitchKeyFile[];
+  firmware?: SwitchFirmwareArchive[];
+  /** Files under `bios/Switch` that are neither keys nor firmware archives. */
+  unrecognized?: number;
 }
 
 export interface FirmwareDownloadResult {

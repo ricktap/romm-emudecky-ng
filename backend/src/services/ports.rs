@@ -226,6 +226,13 @@ pub trait RommRomApi: Send + Sync {
     ) -> anyhow::Result<TransferOutcome>;
 }
 
+/// RomM's firmware inventory (`GET /api/firmware`).
+#[async_trait]
+pub trait RommFirmwareApi: Send + Sync {
+    /// Every firmware / BIOS file RomM hosts, as the API lists them.
+    async fn list_firmware(&self) -> Result<Value, RommError>;
+}
+
 /// `(extracted bytes, total bytes)` while a ZIP extracts.
 pub type ExtractProgress = Box<dyn FnMut(u64, u64) + Send>;
 
@@ -261,6 +268,8 @@ pub trait DownloadFiles: Send + Sync {
         safe_root: &str,
         progress: ExtractProgress,
     ) -> anyhow::Result<()>;
+    /// Lower-case hex SHA-1 of the regular file at `path`; `None` when it is missing or unreadable.
+    async fn sha1_hex(&self, path: &str) -> Option<String>;
     /// Check that `archive` is a structurally valid ZIP whose every member
     /// passes its CRC, without extracting anything.
     async fn verify_zip(&self, archive: &str) -> anyhow::Result<()>;

@@ -67,13 +67,6 @@ describe("unportedCallable", () => {
     expect(toast).not.toHaveBeenCalled();
   });
 
-  it("resolves the firmware overview to a failure result (the System page shows its message) without a toast", async () => {
-    call.mockResolvedValue(NOT_IMPLEMENTED);
-    const result = await unportedCallable("get_firmware_status")();
-    expect(result).toMatchObject({ success: false, message: "Firmware management is not implemented yet (planned for 0.45.0)." });
-    expect(toast).not.toHaveBeenCalled();
-  });
-
   it("toasts, then rejects, for status-shaped user actions", async () => {
     call.mockResolvedValue(NOT_IMPLEMENTED);
     await expect(unportedCallable("saves_rollback_to_version")(1, "a", 2)).rejects.toThrow("not implemented yet");

@@ -504,6 +504,9 @@ impl DownloadFiles for FakeFiles {
     async fn extract_zip(&self, a: &str, d: &str, s: &str, p: ExtractProgress) -> anyhow::Result<()> {
         self.inner.extract_zip(a, d, s, p).await
     }
+    async fn sha1_hex(&self, path: &str) -> Option<String> {
+        self.inner.sha1_hex(path).await
+    }
     async fn verify_zip(&self, archive: &str) -> anyhow::Result<()> {
         self.inner.verify_zip(archive).await
     }
