@@ -6,7 +6,13 @@ import { getDownloadState, setDownloads } from "../utils/downloadStore";
 import { formatBytes } from "../utils/formatters";
 import { scrollToTop } from "../utils/scrollHelpers";
 import { detach } from "../utils/detach";
-import { isStoppedStatus, isUnfinishedStatus, stoppedCaptionSuffix } from "../utils/downloadStatus";
+import {
+  isStoppedStatus,
+  isUnfinishedStatus,
+  resumeActionLabel,
+  stoppedCaptionSuffix,
+} from "../utils/downloadStatus";
+import { phaseLines, useNowMs } from "../utils/downloadPhase";
 import type { DownloadItem } from "../types";
 
 interface DownloadQueueProps {
@@ -21,6 +27,21 @@ function formatFinishedDescription(item: DownloadItem): string {
   }
   return "Cancelled";
 }
+
+/**
+ * The honest waiting state: the request is out and no response headers have arrived (a multipart archive may
+ * still be preparing on RomM). Elapsed time ticks locally every second; no request is sent to refresh it.
+ */
+const WaitingNote: FC<{ item: DownloadItem }> = ({ item }) => {
+  const now = useNowMs(true);
+  const [headline, detail] = phaseLines(item, now);
+  return (
+    <div data-testid="dl-waiting" style={{ fontSize: "12px", opacity: 0.85, marginBottom: "4px" }}>
+      <div data-testid="dl-waiting-text">{headline}</div>
+      <div data-testid="dl-waiting-detail">{detail}</div>
+    </div>
+  );
+};
 
 export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
   const [downloads, setLocalDownloads] = useState<DownloadItem[]>([]); // NOSONAR(typescript:S6754) — setter intentionally renamed (local wrapper around global download state).
@@ -167,14 +188,17 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
                       {item.rom_name} ({item.platform_name}){stoppedCaptionSuffix(item.status, item.reason)}
                       {item.status === "extracting" ? " — Extracting…" : ""}
                     </span>
-                    <span data-testid="dl-bytes" style={{ flexShrink: 0 }}>
-                      {item.total_bytes > 0
-                        ? `${formatBytes(item.bytes_downloaded)} / ${formatBytes(item.total_bytes)}`
-                        : formatBytes(item.bytes_downloaded)}
-                    </span>
+                    {!(item.status === "downloading" && item.phase) && (
+                      <span data-testid="dl-bytes" style={{ flexShrink: 0 }}>
+                        {item.total_bytes > 0
+                          ? `${formatBytes(item.bytes_downloaded)} / ${formatBytes(item.total_bytes)}`
+                          : formatBytes(item.bytes_downloaded)}
+                      </span>
+                    )}
                   </div>
+                  {item.status === "downloading" && item.phase && <WaitingNote item={item} />}
                   <ProgressBar
-                    indeterminate={item.total_bytes === 0}
+                    indeterminate={item.total_bytes === 0 || (item.status === "downloading" && Boolean(item.phase))}
                     {...(item.total_bytes > 0 ? { nProgress: (item.bytes_downloaded / item.total_bytes) * 100 } : {})}
                   />
                 </div>
@@ -186,7 +210,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
               // matching the game-detail button's disabled throbber.
               item.status === "extracting" ? null : (
                 <Fragment key={`actions-${item.rom_id}`}>
-                  {item.status === "downloading" && item.resumable && (
+                  {item.status === "downloading" && (item.resumable || item.phase) && (
                     <PanelSectionRow>
                       <ButtonItem
                         layout="below"
@@ -206,7 +230,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
                           detach(handleResume(item.rom_id));
                         }}
                       >
-                        Resume {item.rom_name}
+                        {resumeActionLabel(item.reason)} {item.rom_name}
                       </ButtonItem>
                     </PanelSectionRow>
                   )}

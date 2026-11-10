@@ -22,10 +22,11 @@ use tokio::sync::{Mutex as AsyncMutex, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::domain::download_failure::{Outcome, TransferCancelled, classify_download_failure};
+use crate::domain::archive_transfer::{ArchiveIdentity, ResumePlan, plan_resume};
+use crate::domain::download_failure::{ArchiveRecoveryNeeded, Outcome, TransferCancelled, classify_download_failure};
 use crate::domain::download_job::{
-    DownloadJob, INTERRUPT_AUTH_FAILED, INTERRUPT_DISK_FULL, INTERRUPT_SERVER_UNREACHABLE, JobError, JobStatus,
-    NewJob,
+    DownloadJob, INTERRUPT_AUTH_FAILED, INTERRUPT_DISK_FULL, INTERRUPT_NEEDS_RECOVERY, INTERRUPT_SERVER_UNREACHABLE,
+    INTERRUPT_TIMEOUT, JobError, JobStatus, NewJob,
 };
 use crate::domain::errors::{failure, reason};
 use crate::domain::install_layout::resolve_download_names;
@@ -33,8 +34,8 @@ use crate::domain::rom_files::{detect_launch_file, is_multi_file_download};
 use crate::domain::rom_install::RomInstall;
 use crate::services::launch::LaunchService;
 use crate::services::ports::{
-    Clock, DownloadFiles, DownloadJobRepo, EmuDeckPaths, EventSink, LibraryRepo, RommRomApi, SystemResolver,
-    TransferHooks,
+    Clock, DownloadFiles, DownloadJobRepo, EmuDeckPaths, EventSink, IdentitySink, LibraryRepo, RommRomApi,
+    SystemResolver, TransferHooks, TransferMode, TransferOutcome, TransferPhase,
 };
 use crate::services::rom_removal::RomRemovalService;
 use crate::util::path_safety::{basename, join, safe_join_lexical};
@@ -55,7 +56,7 @@ fn dirname(path: &str) -> &str {
 
 /// One row of the in-memory queue the frontend reads (`get_download_queue`)
 /// and the `download_progress` frames mirror.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct QueueEntry {
     pub rom_id: i64,
     pub rom_name: String,
@@ -70,6 +71,20 @@ pub struct QueueEntry {
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Live transfer phase while the status is `downloading`: `waiting` (request
+    /// out, no response headers yet) or `retrying` (backing off). `None` while
+    /// bytes flow. Never persisted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    /// Epoch seconds when the current phase began (the UI counts elapsed time locally).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase_since: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_attempts: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_delay_s: Option<f64>,
 }
 
 impl QueueEntry {
@@ -88,7 +103,26 @@ impl QueueEntry {
         if let Some(reason) = self.reason.as_deref().filter(|r| !r.is_empty()) {
             v["reason"] = json!(reason);
         }
+        if self.status == "downloading"
+            && let Some(phase) = &self.phase
+        {
+            v["phase"] = json!(phase);
+            v["phase_since"] = json!(self.phase_since);
+            v["attempt"] = json!(self.attempt);
+            v["max_attempts"] = json!(self.max_attempts);
+            if let Some(delay) = self.retry_delay_s {
+                v["retry_delay_s"] = json!(delay);
+            }
+        }
         v
+    }
+
+    fn clear_phase(&mut self) {
+        self.phase = None;
+        self.phase_since = None;
+        self.attempt = None;
+        self.max_attempts = None;
+        self.retry_delay_s = None;
     }
 }
 
@@ -218,6 +252,8 @@ struct Plan {
     platform_name: String,
     has_multiple: bool,
     extract_dir_name: String,
+    /// The user chose to restart a partial of unknown origin.
+    restart: bool,
 }
 
 impl DownloadService {
@@ -505,6 +541,7 @@ impl DownloadService {
                 resumable: job.range_supported.unwrap_or(false),
                 reason: job.interrupt_reason.clone().filter(|r| !r.is_empty()),
                 error: None,
+                ..QueueEntry::default()
             };
             let mut st = self.st();
             st.positions.insert(job.rom_id, job.position);
@@ -569,12 +606,12 @@ impl DownloadService {
     /// or rejected login, marking the rest with that reason (no retry loop).
     async fn auto_resume(self: Arc<Self>, rom_ids: Vec<i64>) {
         for (index, rom_id) in rom_ids.iter().enumerate() {
-            let result = self.resume_download(*rom_id).await;
+            let result = self.resume_inner(*rom_id, false).await;
             if result["success"] == true {
                 continue;
             }
             let why = result["reason"].as_str().unwrap_or_default();
-            if why == INTERRUPT_SERVER_UNREACHABLE || why == INTERRUPT_AUTH_FAILED {
+            if why == INTERRUPT_SERVER_UNREACHABLE || why == INTERRUPT_TIMEOUT || why == INTERRUPT_AUTH_FAILED {
                 for remaining in &rom_ids[index + 1..] {
                     self.mark_interrupted(*remaining, why).await;
                 }
@@ -598,13 +635,22 @@ impl DownloadService {
             self.st().in_progress.remove(&rom_id);
             return fail;
         }
-        self.begin_download(rom_id, false).await
+        self.begin_download(rom_id, false, false).await
     }
 
     /// Resume a paused or interrupted download from its partial. Refused
     /// (`superseded`, entry dropped) when a version switch moved the group's
     /// shortcut binding to a sibling while this one was stopped.
+    ///
+    /// A multipart partial of unknown origin (`needs_recovery`: made before
+    /// archive validators were stored) is never resumed on its own. The user's
+    /// resume of such a job is the explicit restart: the partial is replaced
+    /// once the server's response for the whole archive is accepted.
     pub async fn resume_download(self: &Arc<Self>, rom_id: i64) -> Value {
+        self.resume_inner(rom_id, true).await
+    }
+
+    async fn resume_inner(self: &Arc<Self>, rom_id: i64, user_initiated: bool) -> Value {
         let _mutation = self.mutation_lock.lock().await;
         let resumable = self
             .st()
@@ -621,12 +667,29 @@ impl DownloadService {
             self.evict(rom_id).await;
             return failure("superseded", "Another version is now active");
         }
+        let job = self.load_job(rom_id).await;
+        // A partial of unknown origin waits for the user, unless it is already as long as the
+        // whole archive: the transfer then validates it (structure + CRCs) and finishes it.
+        let unverified = match &job {
+            Some(job) if job.is_multi && job.needs_recovery => {
+                let partial = self.files.file_size(&job.tmp_path).await;
+                partial > 0 && job.total_bytes != Some(partial)
+            }
+            _ => false,
+        };
+        if unverified && !user_initiated {
+            self.mark_interrupted(rom_id, INTERRUPT_NEEDS_RECOVERY).await;
+            return failure(
+                INTERRUPT_NEEDS_RECOVERY,
+                "The partial download cannot be verified; restart it to continue",
+            );
+        }
         self.st().in_progress.insert(rom_id);
         if let Some(fail) = self.remove_conflicting_sibling_installs(rom_id).await {
             self.st().in_progress.remove(&rom_id);
             return fail;
         }
-        self.begin_download(rom_id, true).await
+        self.begin_download(rom_id, true, unverified).await
     }
 
     async fn resume_target_superseded(&self, rom_id: i64) -> bool {
@@ -702,7 +765,7 @@ impl DownloadService {
     /// pre-flight the disk, persist the `queued` job, and spawn the transfer.
     /// A resume that cannot proceed keeps the partial whenever it could
     /// succeed later; only a can-never-succeed failure drops the job.
-    async fn begin_download(self: &Arc<Self>, rom_id: i64, resume: bool) -> Value {
+    async fn begin_download(self: &Arc<Self>, rom_id: i64, resume: bool, restart: bool) -> Value {
         self.st().in_progress.insert(rom_id);
         let release = |me: &Self| {
             me.st().in_progress.remove(&rom_id);
@@ -836,6 +899,7 @@ impl DownloadService {
             platform_name: platform_name.clone(),
             has_multiple: is_multi,
             extract_dir_name: names.extract_dir_name.clone(),
+            restart,
         };
         let control = {
             let mut st = self.st();
@@ -864,6 +928,7 @@ impl DownloadService {
                     resumable,
                     reason: None,
                     error: None,
+                    ..QueueEntry::default()
                 },
             );
             st.reserved.insert(rom_id, required);
@@ -1044,10 +1109,82 @@ impl DownloadService {
         plan.rom.get("fs_size_bytes").and_then(Value::as_u64).unwrap_or(0)
     }
 
+    /// Live phase changes (waiting for headers, retry back-off, bytes flowing)
+    /// as queue frames, so the UI can show an honest waiting state.
+    fn phase_hook(self: &Arc<Self>, rom_id: i64) -> Box<dyn FnMut(TransferPhase) + Send> {
+        let me = self.clone();
+        Box::new(move |phase| {
+            let now = me.clock.epoch_seconds();
+            let frame = {
+                let mut st = me.st();
+                let Some(entry) = st.queue.get_mut(&rom_id) else {
+                    return;
+                };
+                match phase {
+                    TransferPhase::Waiting { attempt, max_attempts } => {
+                        entry.phase = Some("waiting".into());
+                        entry.phase_since = Some(now);
+                        entry.attempt = Some(attempt);
+                        entry.max_attempts = Some(max_attempts);
+                        entry.retry_delay_s = None;
+                    }
+                    TransferPhase::Retrying { attempt, max_attempts, delay_secs } => {
+                        entry.phase = Some("retrying".into());
+                        entry.phase_since = Some(now);
+                        entry.attempt = Some(attempt);
+                        entry.max_attempts = Some(max_attempts);
+                        entry.retry_delay_s = Some(delay_secs);
+                    }
+                    TransferPhase::Transferring => entry.clear_phase(),
+                }
+                let mut frame = entry.frame();
+                strip_reason(&mut frame);
+                frame
+            };
+            me.emit("download_progress", frame);
+        })
+    }
+
+    /// Saves a representation's validators (or clears them) in the job row.
+    /// The transfer awaits this before it writes the first byte of that
+    /// representation, so a crash can never leave bytes the row vouches for
+    /// wrongly. A failed write is an error, not a log line.
+    fn identity_sink(self: &Arc<Self>, rom_id: i64) -> IdentitySink {
+        let me = self.clone();
+        Box::new(move |identity: Option<ArchiveIdentity>| {
+            let me = me.clone();
+            Box::pin(async move {
+                let now = me.clock.now_iso();
+                let _guard = me.job_lock.lock().await;
+                let Some(mut job) = me.jobs.get(rom_id).await? else {
+                    return Ok(());
+                };
+                job.record_archive_identity(identity.as_ref(), &now);
+                if let Some(i) = &identity {
+                    job.observe_transfer(Some(i.length), Some(true), &now);
+                }
+                me.jobs.save(&job).await
+            })
+        })
+    }
+
+    fn hooks(self: &Arc<Self>, plan: &Plan, control: &Control) -> TransferHooks {
+        TransferHooks {
+            progress: self.progress_hook(plan),
+            on_meta: Some(self.meta_hook(plan.rom_id)),
+            on_phase: self.phase_hook(plan.rom_id),
+            on_identity: plan.has_multiple.then(|| self.identity_sink(plan.rom_id)),
+            cancel: control.token.clone(),
+        }
+    }
+
     /// Run the HTTP transfer into `tmp_path` unless the partial is already
-    /// complete (returns `true`: skipped). A partial larger than expected is
-    /// stale: it is deleted and the transfer restarts.
+    /// complete (returns `true`: skipped). A single-file partial larger than
+    /// expected is stale: it is deleted and the transfer restarts.
     async fn transfer(self: &Arc<Self>, plan: &Plan, tmp_path: &str, control: &Control, resume: bool) -> anyhow::Result<bool> {
+        if plan.has_multiple {
+            return self.transfer_archive(plan, tmp_path, control).await;
+        }
         let mut resume = resume;
         if resume {
             let expected = self.expected_transfer_total(plan).await;
@@ -1073,15 +1210,83 @@ impl DownloadService {
                 resume = false;
             }
         }
-        let hooks = TransferHooks {
-            progress: self.progress_hook(plan),
-            on_meta: Some(self.meta_hook(plan.rom_id)),
-            cancel: control.token.clone(),
-        };
         self.romm
-            .download_rom_content(plan.rom_id, &plan.file_name, tmp_path, resume, hooks)
+            .download_rom_content(
+                plan.rom_id,
+                &plan.file_name,
+                tmp_path,
+                TransferMode::Single { resume },
+                self.hooks(plan, control),
+            )
             .await?;
         Ok(false)
+    }
+
+    /// A multipart ROM as RomM's cached ZIP. The first request already asks for
+    /// the cached archive (`Range: bytes=0-`); a partial is continued only
+    /// against the strong validator saved with it, and a partial that predates
+    /// validators is left alone until the user restarts it.
+    ///
+    /// A partial whose size equals the known complete length is checked first
+    /// (structure and every CRC): a complete, valid ZIP is done whichever
+    /// representation produced it, so no transfer is needed. One that fails the
+    /// check is discarded once and fetched again.
+    async fn transfer_archive(self: &Arc<Self>, plan: &Plan, tmp_path: &str, control: &Control) -> anyhow::Result<bool> {
+        let mut restart = plan.restart;
+        for pass in 0..2 {
+            let job = self.load_job(plan.rom_id).await;
+            let partial = self.files.file_size(tmp_path).await;
+            let identity = job.as_ref().and_then(DownloadJob::archive_identity);
+            let needs_recovery = job.as_ref().is_some_and(|j| j.needs_recovery);
+            let known_total = identity.as_ref().map(|i| i.length).or(job.as_ref().and_then(|j| j.total_bytes));
+            let outcome = if partial > 0 && known_total == Some(partial) {
+                TransferOutcome::AlreadyComplete
+            } else {
+                let mode = plan_resume(partial, identity.as_ref(), needs_recovery, restart);
+                if mode == ResumePlan::NeedsRecovery {
+                    return Err(ArchiveRecoveryNeeded("a partial of unknown origin".into()).into());
+                }
+                self.romm
+                    .download_rom_content(
+                        plan.rom_id,
+                        &plan.file_name,
+                        tmp_path,
+                        TransferMode::Archive(mode),
+                        self.hooks(plan, control),
+                    )
+                    .await?
+            };
+            if outcome == TransferOutcome::Downloaded {
+                return Ok(false);
+            }
+            match self.files.verify_zip(tmp_path).await {
+                Ok(()) => {
+                    let on_disk = self.files.file_size(tmp_path).await;
+                    self.update_entry(plan.rom_id, |e| {
+                        e.progress = 1.0;
+                        e.bytes_downloaded = on_disk;
+                        e.total_bytes = on_disk;
+                    });
+                    return Ok(true);
+                }
+                Err(e) if pass == 0 => {
+                    tracing::warn!(
+                        "Archive for ROM {} is complete on disk but invalid ({e:#}); fetching it again",
+                        plan.rom_id
+                    );
+                    self.remove_tmp_files(&[tmp_path.to_string()]).await;
+                    let now = self.clock.now_iso();
+                    self.mutate_job(plan.rom_id, |job| {
+                        job.record_archive_identity(None, &now);
+                        Ok(())
+                    })
+                    .await;
+                    restart = true;
+                }
+                Err(e) => return Err(e.context("the downloaded archive failed validation")),
+            }
+        }
+        unreachable!("the second pass always returns")
     }
 
     /// Persist the install record a finished download (or adoption) writes.
@@ -1163,6 +1368,7 @@ impl DownloadService {
         self.update_entry(plan.rom_id, |e| {
             e.status = "downloading".into();
             e.reason = None;
+            e.clear_phase();
         });
         let now = self.clock.now_iso();
         self.mutate_job(plan.rom_id, |job| job.start(&now)).await;
@@ -1231,6 +1437,15 @@ impl DownloadService {
             Ended::Error(e) => match classify_download_failure(&e) {
                 Outcome::Interrupted(why) => {
                     tracing::warn!("Download interrupted for {} ({why}): {e:#}", plan.rom_name);
+                    if why == INTERRUPT_NEEDS_RECOVERY {
+                        // The partial stays untouched; it is no longer auto-resumed.
+                        let now = self.clock.now_iso();
+                        self.mutate_job(rom_id, |job| {
+                            job.flag_needs_recovery(&now);
+                            Ok(())
+                        })
+                        .await;
+                    }
                     self.mark_interrupted(rom_id, why).await;
                 }
                 Outcome::Failed => {
@@ -1362,7 +1577,12 @@ impl DownloadService {
     }
 
     pub fn get_download_queue(&self) -> Value {
-        let entries: Vec<QueueEntry> = self.st().queue.values().cloned().collect();
+        let mut entries: Vec<QueueEntry> = self.st().queue.values().cloned().collect();
+        for entry in &mut entries {
+            if entry.status != "downloading" {
+                entry.clear_phase(); // a stopped download is not waiting for anything
+            }
+        }
         json!({"downloads": entries})
     }
 

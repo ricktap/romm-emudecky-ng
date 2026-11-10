@@ -521,6 +521,67 @@ describe("CustomPlayButton — pause/resume on active download (#1124)", () => {
   });
 });
 
+describe("CustomPlayButton — waiting for the server (archive preparation)", () => {
+  const START = 1_700_000_000;
+
+  beforeEach(() => {
+    vi.mocked(getCachedGameDetail).mockReset();
+    vi.mocked(backend.startDownload).mockResolvedValue({ success: true, message: "" });
+    vi.mocked(backend.getDownloadQueue).mockResolvedValue({ downloads: [] });
+    vi.setSystemTime(new Date((START + 134) * 1000));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("shows the waiting state instead of byte progress, keeps the actions, then returns to progress", async () => {
+    mockCachedDetail({ rom_id: 42, installed: false });
+    const { findByText, findByLabelText, queryByText } = render(<CustomPlayButton appId={100} />);
+    const downloadBtn = await findByText("Download");
+    await act(async () => {
+      downloadBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const frame = {
+      rom_id: 42,
+      rom_name: "Test ROM",
+      platform_name: "Switch",
+      file_name: "game.zip",
+      status: "downloading",
+      progress: 0,
+      bytes_downloaded: 0,
+      total_bytes: 0,
+    };
+
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", {
+        ...frame,
+        phase: "waiting",
+        phase_since: START,
+        attempt: 1,
+        max_attempts: 3,
+      });
+    });
+    expect(await findByText("Waiting for RomM… 2m 14s")).toBeInTheDocument();
+    // Pause/Cancel stay reachable (the actions chevron), even though no byte has arrived.
+    expect(await findByLabelText("Download actions")).toBeInTheDocument();
+
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", {
+        ...frame,
+        progress: 0.5,
+        bytes_downloaded: 512,
+        total_bytes: 1024,
+        resumable: true,
+      });
+    });
+    expect(await findByText("0.5 / 1.0 KB")).toBeInTheDocument();
+    expect(queryByText(/Waiting for RomM/)).toBeNull();
+  });
+});
+
 describe("CustomPlayButton — interrupted download (durable queue)", () => {
   beforeEach(() => {
     vi.mocked(getCachedGameDetail).mockReset();

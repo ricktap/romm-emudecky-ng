@@ -53,6 +53,19 @@ fn inside(path: &Path, root: &Path) -> bool {
     path == root || path.starts_with(root)
 }
 
+/// Read the central directory and every member to its end, so a truncated
+/// archive or any CRC mismatch is an error. Nothing is written.
+fn verify_blocking(archive: &str) -> anyhow::Result<()> {
+    let file = std::fs::File::open(archive).with_context(|| format!("opening {archive}"))?;
+    let mut zip = zip::ZipArchive::new(file).context("reading the ZIP archive")?;
+    for i in 0..zip.len() {
+        let mut member = zip.by_index(i)?;
+        let name = member.name()?.to_string();
+        std::io::copy(&mut member, &mut std::io::sink()).with_context(|| format!("checking ZIP member {name}"))?;
+    }
+    Ok(())
+}
+
 fn extract_blocking(archive: &str, dest: &str, safe_root: &str, mut progress: ExtractProgress) -> anyhow::Result<()> {
     let real_dest = realpath(dest);
     let real_safe = realpath(safe_root);
@@ -219,6 +232,11 @@ impl DownloadFiles for LocalFiles {
         tokio::task::spawn_blocking(move || extract_blocking(&archive, &dest, &safe_root, progress)).await?
     }
 
+    async fn verify_zip(&self, archive: &str) -> anyhow::Result<()> {
+        let archive = archive.to_string();
+        tokio::task::spawn_blocking(move || verify_blocking(&archive)).await?
+    }
+
     async fn decode_url_encoded_names(&self, dir: &str) -> anyhow::Result<()> {
         let dir = PathBuf::from(dir);
         tokio::task::spawn_blocking(move || decode_blocking(&dir)).await?
@@ -374,6 +392,28 @@ mod tests {
             );
             assert_eq!(std::fs::read(dest.join("updates/Big Game [v65536].nsp")).unwrap(), b"update");
         }
+    }
+
+    #[tokio::test]
+    async fn verify_zip_accepts_a_good_archive_and_rejects_truncated_or_corrupt_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let good = dir.path().join("good.zip");
+        let payload: Vec<u8> = (0..50_000u32).map(|i| (i % 251) as u8).collect();
+        write_zip(&good, &[("a.bin", &payload), ("sub/b.txt", b"hello")]);
+        LocalFiles.verify_zip(&s(&good)).await.unwrap();
+
+        let bytes = std::fs::read(&good).unwrap();
+        // structurally broken: the central directory at the end is gone
+        let truncated = dir.path().join("cut.zip");
+        std::fs::write(&truncated, &bytes[..bytes.len() - 40]).unwrap();
+        assert!(LocalFiles.verify_zip(&s(&truncated)).await.is_err());
+        // structurally fine, but a data byte flipped: the CRC catches it
+        let corrupt = dir.path().join("flipped.zip");
+        let mut flipped = bytes.clone();
+        flipped[100] ^= 0xff;
+        std::fs::write(&corrupt, &flipped).unwrap();
+        assert!(LocalFiles.verify_zip(&s(&corrupt)).await.is_err());
+        assert!(LocalFiles.verify_zip(&s(&dir.path().join("missing.zip"))).await.is_err());
     }
 
     #[tokio::test]

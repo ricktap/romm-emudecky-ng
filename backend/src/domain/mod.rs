@@ -1,5 +1,6 @@
 //! Pure compute: no I/O, no state, no service or adapter imports.
 
+pub mod archive_transfer;
 pub mod disc_selection;
 pub mod download_failure;
 pub mod download_job;

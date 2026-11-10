@@ -11,7 +11,7 @@ use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 use super::*;
 use crate::adapters::romm::api::RommApi;
 use crate::domain::download_failure::{Outcome, classify_download_failure};
-use crate::services::ports::RommRomApi;
+use crate::services::ports::{RommRomApi, TransferMode, TransferOutcome};
 
 const PAYLOAD_LEN: usize = 4096;
 
@@ -49,6 +49,8 @@ fn hooks(cancel: CancellationToken) -> (TransferHooks, Seen, Meta) {
         TransferHooks {
             progress: Box::new(move |d, t| s.lock().unwrap().push((d, t))),
             on_meta: Some(Box::new(move |r| m.lock().unwrap().push(r))),
+            on_phase: Box::new(|_| {}),
+            on_identity: None,
             cancel,
         },
         seen,
@@ -60,9 +62,9 @@ fn range_of(req: &Request) -> Option<String> {
     req.headers.get("range").map(|v| v.to_str().unwrap().to_string())
 }
 
-async fn run(server: &MockServer, dest: &str, resume: bool) -> (anyhow::Result<()>, Seen, Meta) {
+async fn run(server: &MockServer, dest: &str, resume: bool) -> (anyhow::Result<TransferOutcome>, Seen, Meta) {
     let (h, seen, meta) = hooks(CancellationToken::new());
-    let r = http(server).download("/api/roms/7/content/x.nsp", dest, resume, h).await;
+    let r = http(server).download("/api/roms/7/content/x.nsp", dest, TransferMode::Single { resume }, h).await;
     (r, seen, meta)
 }
 
@@ -291,7 +293,7 @@ async fn unreachable_server_is_interrupted() {
     .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let (hk, _, _) = hooks(CancellationToken::new());
-    let err = h.download("/x", &tmp(&dir), false, hk).await.unwrap_err();
+    let err = h.download("/x", &tmp(&dir), TransferMode::Single { resume: false }, hk).await.unwrap_err();
     assert_eq!(classify_download_failure(&err), Outcome::Interrupted("server_unreachable"));
 }
 
@@ -331,7 +333,7 @@ async fn cancellation_stops_the_transfer() {
     let (h, _, _) = hooks(cancel.clone());
     let client = http(&server);
     let dest = tmp(&dir);
-    let task = async { client.download("/a", &dest, false, h).await };
+    let task = async { client.download("/a", &dest, TransferMode::Single { resume: false }, h).await };
     let stopper = async {
         tokio::time::sleep(Duration::from_millis(50)).await;
         cancel.cancel();
@@ -342,7 +344,7 @@ async fn cancellation_stops_the_transfer() {
     let cancelled = CancellationToken::new();
     cancelled.cancel();
     let (h, _, _) = hooks(cancelled);
-    let err = http(&server).download("/a", &dest, false, h).await.unwrap_err();
+    let err = http(&server).download("/a", &dest, TransferMode::Single { resume: false }, h).await.unwrap_err();
     assert!(err.downcast_ref::<TransferCancelled>().is_some());
 }
 
@@ -364,7 +366,7 @@ async fn api_quotes_the_file_name_like_python() {
     assert_eq!(api.get_rom(7).await.unwrap()["id"], 7);
     let dir = tempfile::tempdir().unwrap();
     let (h, _, _) = hooks(CancellationToken::new());
-    api.download_rom_content(7, "Mario Kart [v0].nsp", &tmp(&dir), false, h)
+    api.download_rom_content(7, "Mario Kart [v0].nsp", &tmp(&dir), TransferMode::Single { resume: false }, h)
         .await
         .unwrap();
 }

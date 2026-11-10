@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::adapters::romm::http::RommHttp;
 use crate::domain::errors::RommError;
-use crate::services::ports::{RommConnectionApi, RommLibraryApi, RommRomApi, TransferHooks};
+use crate::services::ports::{RommConnectionApi, RommLibraryApi, RommRomApi, TransferHooks, TransferMode, TransferOutcome};
 use crate::util::path_safety::quote;
 
 /// Timeout of the single-shot reachability probe.
@@ -155,11 +155,11 @@ impl RommRomApi for RommApi {
         rom_id: i64,
         file_name: &str,
         dest: &str,
-        resume: bool,
+        mode: TransferMode,
         hooks: TransferHooks,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<TransferOutcome> {
         let path = format!("/api/roms/{rom_id}/content/{}", quote(file_name, ""));
-        self.http.download(&path, dest, resume, hooks).await
+        self.http.download(&path, dest, mode, hooks).await
     }
 }
 
@@ -184,7 +184,7 @@ impl crate::services::ports::RommCoverApi for RommApi {
         // RomM cover paths are relative; the HTTP adapter binds credentials to
         // the configured server and quotes spaces through the normal download path.
         anyhow::ensure!(url.starts_with('/')&&!url.starts_with("//"),"Invalid RomM cover path");
-        self.http.download(url,dest,false,TransferHooks{progress:Box::new(|_,_|{}),on_meta:None,cancel:tokio_util::sync::CancellationToken::new()}).await
+        self.http.download(url,dest,TransferMode::Single{resume:false},TransferHooks::basic(Box::new(|_,_|{}),tokio_util::sync::CancellationToken::new())).await.map(|_|())
     }
 }
 

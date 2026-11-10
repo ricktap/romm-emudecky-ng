@@ -278,6 +278,148 @@ async fn cancel_deletes_the_partial_and_one_transfer_runs_at_a_time() {
     b.shutdown().await;
 }
 
+// ── Multipart ROMs as RomM's cached ZIP ──────────────────────────────────
+
+const ETAG_V1: &str = "\"cached-v1\"";
+const CUT: usize = 20_000;
+
+fn multi_rom(id: i64) -> Value {
+    json!({
+        "id": id, "name": "Mario Kart 8 Deluxe", "fs_name": "Mario Kart 8 Deluxe",
+        "fs_name_no_ext": "Mario Kart 8 Deluxe", "fs_path": "switch", "fs_size_bytes": 50_000,
+        "platform_slug": "switch", "platform_fs_slug": "switch", "platform_name": "Nintendo Switch",
+        "has_multiple_files": false, "has_nested_single_file": true,
+        "files": [
+            {"file_path": "switch/Mario Kart 8 Deluxe", "file_name": "base.nsp", "file_size_bytes": 40_000},
+            {"file_path": "switch/Mario Kart 8 Deluxe/update", "file_name": "u.nsp", "file_size_bytes": 9_000},
+        ],
+    })
+}
+
+/// A ZIP (stored, so the bytes are easy to reason about) of two members.
+fn archive(seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    use std::io::Write;
+    let base: Vec<u8> = (0..40_000usize).map(|i| ((i * 7 + usize::from(seed)) % 251) as u8).collect();
+    let update: Vec<u8> = (0..9_000usize).map(|i| ((i * 13 + usize::from(seed)) % 241) as u8).collect();
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buf);
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("base.nsp", opts).unwrap();
+        zip.write_all(&base).unwrap();
+        zip.start_file("update/u.nsp", opts).unwrap();
+        zip.write_all(&update).unwrap();
+        zip.finish().unwrap();
+    }
+    (buf.into_inner(), base, update)
+}
+
+fn job_identity(dirs: &Dirs, id: i64) -> (Option<String>, Option<i64>, i64, i64) {
+    db(dirs)
+        .query_row(
+            "SELECT etag, representation_length, cached_zip, needs_recovery FROM download_jobs WHERE rom_id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap()
+}
+
+async fn wait_until_no_content_connection_is_open(romm: &FakeRomm) {
+    for _ in 0..500 {
+        if romm.open_content_connections() == 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the first backend's connection never closed");
+}
+
+#[tokio::test]
+async fn a_multipart_download_resumes_after_a_restart_into_a_byte_identical_archive() {
+    let romm = FakeRomm::start().await;
+    let dirs = Dirs::new();
+    prepare(&dirs, &romm);
+    let (zip, base, update) = archive(1);
+    romm.set_rom(multi_rom(9));
+    romm.set_cached(9, zip.clone(), ETAG_V1);
+    romm.stall_at(Some(CUT));
+    let mut first = Backend::spawn(&dirs).await;
+    seed_rom(&dirs, 9, "Mario Kart 8 Deluxe", Some(APP_ID));
+    assert_eq!(first.call("start_download", json!([9])).await["success"], true);
+    let tmp = roms(&dirs).join("switch/base.nsp.zip.tmp");
+    wait_for_size(&tmp, CUT as u64).await;
+
+    // The very first request asks for the cached archive.
+    let first_request = romm.content_requests()[0].clone();
+    assert_eq!(first_request.range.as_deref(), Some("bytes=0-"));
+    assert_eq!(first_request.accept_encoding.as_deref(), Some("identity"));
+    assert_eq!(first_request.if_range, None);
+    // Its identity is saved while the bytes arrive.
+    assert_eq!(
+        job_identity(&dirs, 9),
+        (Some(ETAG_V1.to_string()), Some(zip.len() as i64), 1, 0)
+    );
+    assert_eq!(std::fs::read(&tmp).unwrap(), zip[..CUT]);
+    first.shutdown().await;
+    assert_eq!(job_status(&dirs, 9).as_deref(), Some("downloading"), "the row survives the stop");
+
+    romm.stall_at(None);
+    romm.release.notify_waiters();
+    wait_until_no_content_connection_is_open(&romm).await;
+    let mut second = Backend::spawn(&dirs).await;
+    second.wait_event("download_complete", |p| p["rom_id"] == 9).await;
+
+    let requests = romm.content_requests();
+    assert_eq!(requests.len(), 2, "{requests:?}");
+    assert_eq!(requests[1].range.as_deref(), Some(format!("bytes={CUT}-").as_str()));
+    assert_eq!(requests[1].if_range.as_deref(), Some(ETAG_V1));
+    assert_eq!(requests[1].accept_encoding.as_deref(), Some("identity"));
+    // The archive was valid end to end (extraction checks every CRC) and byte-identical.
+    let dir = roms(&dirs).join("switch/Mario Kart 8 Deluxe");
+    assert_eq!(std::fs::read(dir.join("base.nsp")).unwrap(), base);
+    assert_eq!(std::fs::read(dir.join("update/u.nsp")).unwrap(), update);
+    assert!(!tmp.exists());
+    assert_eq!(job_status(&dirs, 9), None);
+    assert_eq!(romm.peak_content_connections(), 1, "never two writers for one job");
+    second.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_rebuilt_archive_after_an_interruption_replaces_the_partial_instead_of_extending_it() {
+    let romm = FakeRomm::start().await;
+    let dirs = Dirs::new();
+    prepare(&dirs, &romm);
+    let (zip_v1, _, _) = archive(1);
+    romm.set_rom(multi_rom(9));
+    romm.set_cached(9, zip_v1.clone(), ETAG_V1);
+    romm.stall_at(Some(CUT));
+    let mut first = Backend::spawn(&dirs).await;
+    seed_rom(&dirs, 9, "Mario Kart 8 Deluxe", None);
+    first.call("start_download", json!([9])).await;
+    let tmp = roms(&dirs).join("switch/base.nsp.zip.tmp");
+    wait_for_size(&tmp, CUT as u64).await;
+    first.shutdown().await;
+
+    // RomM restarted and rebuilt the archive: another tag, other bytes, other length.
+    let (zip_v2, base_v2, update_v2) = archive(9);
+    assert_ne!(zip_v1[..CUT], zip_v2[..CUT]);
+    romm.set_cached(9, zip_v2.clone(), "\"cached-v2\"");
+    romm.stall_at(None);
+    romm.release.notify_waiters();
+    wait_until_no_content_connection_is_open(&romm).await;
+
+    let mut second = Backend::spawn(&dirs).await;
+    second.wait_event("download_complete", |p| p["rom_id"] == 9).await;
+    let requests = romm.content_requests();
+    assert_eq!(requests[1].if_range.as_deref(), Some(ETAG_V1), "the old validator was offered");
+    let dir = roms(&dirs).join("switch/Mario Kart 8 Deluxe");
+    // Appending the 200 onto the old partial would not have been a valid archive of either.
+    assert_eq!(std::fs::read(dir.join("base.nsp")).unwrap(), base_v2);
+    assert_eq!(std::fs::read(dir.join("update/u.nsp")).unwrap(), update_v2);
+    assert_eq!(romm.peak_content_connections(), 1);
+    second.shutdown().await;
+}
+
 // ── In-process: internal entry points without a callable yet ─────────────
 
 async fn in_process(dirs: &Dirs, hub: Arc<EventHub>) -> InProcess {

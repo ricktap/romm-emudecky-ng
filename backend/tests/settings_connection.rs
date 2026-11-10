@@ -78,7 +78,7 @@ async fn fresh_install_defaults_and_settings_file() {
     assert_eq!(mode, 0o600);
     let conn = rusqlite::Connection::open(dirs.db()).unwrap();
     let v: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-    assert_eq!(v, 12);
+    assert_eq!(v, 13);
 }
 
 #[tokio::test]
@@ -531,7 +531,7 @@ async fn continues_a_python_created_v12_database_and_settings() {
     assert_eq!(dirs.kv("device_id").as_deref(), Some("dev-from-python"));
     let conn = rusqlite::Connection::open(dirs.db()).unwrap();
     let v: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-    assert_eq!(v, 12);
+    assert_eq!(v, 13);
     drop(conn);
 
     // Signing in to a different server forgets the Python-registered device id,

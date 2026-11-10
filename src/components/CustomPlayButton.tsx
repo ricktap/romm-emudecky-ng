@@ -49,6 +49,7 @@ import type { GateVerdict, LaunchGateOps, PreLaunchSyncOutcome } from "../utils/
 import { getActiveSessionRomId } from "../utils/sessionManager";
 import { isAppRunning } from "../utils/runningApps";
 import type { DownloadProgressEvent, DownloadCompleteEvent, DownloadFailedEvent } from "../types";
+import { phaseButtonLabel, useNowMs, type PhaseFields } from "../utils/downloadPhase";
 import { SAVEFILES_IN_CONTENT_DIR_REASON } from "../types";
 import { detach } from "../utils/detach";
 import { interruptedLabel, isStoppedStatus, isUnfinishedStatus } from "../utils/downloadStatus";
@@ -70,6 +71,8 @@ interface DownloadProgress {
   paused: boolean;
   /** Reason slug ("" when unknown) when the download was interrupted, not user-paused; null otherwise. */
   interruptReason: string | null;
+  /** Live phase while waiting for the server (no bytes yet); undefined while bytes flow. */
+  phaseInfo?: PhaseFields;
   /**
    * True once an `extracting` frame arrives — the byte transfer is done and the
    * multi-file ZIP is being unpacked. The transfer is not cancellable here, so
@@ -115,6 +118,8 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
   const [romName, setRomName] = useState<string>("");
   const [actionPending, setActionPending] = useState(false);
   const [dlProgress, setDlProgress] = useState<DownloadProgress | null>(null);
+  // Local clock for the "waiting for RomM" elapsed time; ticks only while a phase is shown.
+  const nowMs = useNowMs(Boolean(dlProgress?.phaseInfo));
   const [isOffline, setIsOffline] = useState(getRommConnectionState() === "offline");
   // Running overlay (#1313): when the game is already running, the button shows
   // Resume (top precedence over install/conflict/download) and brings the game to
@@ -162,6 +167,17 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
           paused: isStoppedStatus(entry.status),
           interruptReason: entry.status === "interrupted" ? (entry.reason ?? "") : null,
           extracting: entry.status === "extracting",
+          ...(entry.phase && entry.status === "downloading"
+            ? {
+                phaseInfo: {
+                  phase: entry.phase,
+                  phase_since: entry.phase_since,
+                  attempt: entry.attempt,
+                  max_attempts: entry.max_attempts,
+                  retry_delay_s: entry.retry_delay_s,
+                },
+              }
+            : {}),
         });
       }
     } catch (e) {
@@ -256,6 +272,17 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
             paused: extracting ? false : isStoppedStatus(evt.status),
             interruptReason: evt.status === "interrupted" ? (evt.reason ?? "") : null,
             extracting,
+            ...(evt.phase && evt.status === "downloading"
+              ? {
+                  phaseInfo: {
+                    phase: evt.phase,
+                    phase_since: evt.phase_since,
+                    attempt: evt.attempt,
+                    max_attempts: evt.max_attempts,
+                    retry_delay_s: evt.retry_delay_s,
+                  },
+                }
+              : {}),
           }));
         }
       },
@@ -975,6 +1002,9 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     const paused = downloading ? dlProgress.paused : false;
     const interruptReason = downloading ? dlProgress.interruptReason : null;
     const resumable = downloading ? dlProgress.resumable : false;
+    // Request out, no response headers yet (RomM may be preparing an archive): no byte progress, but
+    // Pause and Cancel stay available.
+    const waitingInfo = downloading && !paused && !dlProgress.extracting ? dlProgress.phaseInfo : undefined;
     // Post-transfer ZIP unpack for a multi-file ROM — bytes climb 0→100 again
     // over the uncompressed total. Not cancellable: the right-side action is a
     // disabled throbber rather than the cancel X / Pause-Resume chevron.
@@ -1011,6 +1041,8 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
       dlLabel = `Extracting… ${Math.round(t * 100)}%`;
     } else if (paused) {
       dlLabel = interruptReason === null ? "Paused" : interruptedLabel(interruptReason);
+    } else if (waitingInfo) {
+      dlLabel = phaseButtonLabel(waitingInfo, nowMs);
     } else if (downloading) {
       dlLabel = formatProgress(dlProgress.bytesDownloaded, dlProgress.totalBytes);
     } else if (actionPending) {
@@ -1151,7 +1183,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     let rightAction: ReactElement;
     if (extracting) {
       rightAction = extractThrobber;
-    } else if (resumable || paused) {
+    } else if (resumable || paused || waitingInfo) {
       rightAction = dropdown;
     } else {
       rightAction = cancelX;

@@ -154,6 +154,14 @@ the UI visible and shows a "not implemented" toast on use: `src/api/unportedCall
 by a test against `backend/callables.json` and `PORTED_CALLABLES`, so porting a callable fails the test until it is
 switched back to plain `callable()` in `src/api/backend.ts` and removed from the registry).
 
+## Multipart downloads (cached ZIP)
+
+Multipart ROMs are requested as RomM's cached ZIP from the first byte (`Range: bytes=0-`, `Accept-Encoding: identity`),
+resumed with `Range` + `If-Range` against a saved strong `ETag`, with separate connect / header / body-inactivity
+deadlines and a distinct "waiting for RomM" UI state. Design, tables and the proxy prerequisite:
+[`docs/architecture/multipart-downloads.md`](docs/architecture/multipart-downloads.md). Migration 013 adds the
+archive identity columns; legacy multipart partials are flagged `needs_recovery` and never auto-resumed.
+
 ## How the rewrite works
 
 - **Architecture:** `main.py` is a thin Decky shim. It spawns `bin/romm-emudecky-ng-backend` (Rust), talks NDJSON over a

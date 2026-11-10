@@ -6,11 +6,18 @@
 //! cancelled, failed) have no job. The partial transfer file at `tmp_path` is
 //! the progress record; the job only changes on status transitions.
 
+use crate::domain::archive_transfer::{ArchiveIdentity, is_strong_etag};
+
 /// Why a job is `interrupted`.
 pub const INTERRUPT_SERVER_UNREACHABLE: &str = "server_unreachable";
 pub const INTERRUPT_AUTH_FAILED: &str = "auth_failed";
 pub const INTERRUPT_DISK_FULL: &str = "disk_full";
 pub const INTERRUPT_RESTART: &str = "restart";
+/// A partial of unknown origin (made before archive validators were stored) is
+/// kept untouched until the user chooses to restart the download.
+/// The server accepted the connection but did not answer in time.
+pub const INTERRUPT_TIMEOUT: &str = "timeout";
+pub const INTERRUPT_NEEDS_RECOVERY: &str = "needs_recovery";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobStatus {
@@ -89,6 +96,15 @@ pub struct DownloadJob {
     pub total_bytes: Option<u64>,
     pub interrupt_reason: Option<String>,
     pub range_supported: Option<bool>,
+    /// Exact `ETag` of the cached archive the partial belongs to.
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
+    /// Complete length of the representation the validators describe.
+    pub representation_length: Option<u64>,
+    /// The partial came from the cached-ZIP (`Range: bytes=0-`) request path.
+    pub cached_zip: bool,
+    /// The partial predates archive validators: keep it, offer a restart.
+    pub needs_recovery: bool,
 }
 
 impl DownloadJob {
@@ -118,7 +134,55 @@ impl DownloadJob {
             total_bytes: new.total_bytes.filter(|t| *t > 0),
             interrupt_reason: None,
             range_supported: None,
+            etag: None,
+            last_modified: None,
+            representation_length: None,
+            cached_zip: false,
+            needs_recovery: false,
         })
+    }
+
+    /// The saved identity of the cached archive, when it is complete enough to
+    /// resume against (a strong tag and a length).
+    pub fn archive_identity(&self) -> Option<ArchiveIdentity> {
+        if !self.cached_zip {
+            return None;
+        }
+        let etag = self.etag.clone()?;
+        let length = self.representation_length.filter(|l| *l > 0)?;
+        is_strong_etag(&etag).then(|| ArchiveIdentity {
+            etag,
+            last_modified: self.last_modified.clone(),
+            length,
+        })
+    }
+
+    /// The partial can no longer be trusted to continue: keep it, offer a restart.
+    pub fn flag_needs_recovery(&mut self, now: &str) {
+        self.needs_recovery = true;
+        self.updated_at = now.into();
+    }
+
+    /// Save what the server revealed about the archive, or clear it (`None`)
+    /// when the transfer has no usable validator. Either way the partial's
+    /// origin is now known, so any recovery flag is lifted.
+    pub fn record_archive_identity(&mut self, identity: Option<&ArchiveIdentity>, now: &str) {
+        match identity {
+            Some(i) => {
+                self.etag = Some(i.etag.clone());
+                self.last_modified = i.last_modified.clone();
+                self.representation_length = Some(i.length);
+                self.cached_zip = true;
+            }
+            None => {
+                self.etag = None;
+                self.last_modified = None;
+                self.representation_length = None;
+                self.cached_zip = false;
+            }
+        }
+        self.needs_recovery = false;
+        self.updated_at = now.into();
     }
 
     fn require(&self, verb: &'static str, allowed: &[JobStatus]) -> Result<(), JobError> {
@@ -268,6 +332,49 @@ mod tests {
         assert_eq!(j.interrupt_reason, None);
         assert_eq!(j.range_supported, None);
         assert_eq!(j.total_bytes, Some(1024));
+    }
+
+    #[test]
+    fn a_new_job_has_no_archive_identity() {
+        let j = job();
+        assert_eq!((j.etag.as_deref(), j.last_modified.as_deref(), j.representation_length), (None, None, None));
+        assert!(!j.cached_zip && !j.needs_recovery);
+        assert_eq!(j.archive_identity(), None);
+    }
+
+    fn identity() -> ArchiveIdentity {
+        ArchiveIdentity {
+            etag: "\"abc\"".into(),
+            last_modified: Some("Mon, 01 Jan 2026 00:00:00 GMT".into()),
+            length: 4096,
+        }
+    }
+
+    #[test]
+    fn recording_an_identity_round_trips_and_lifts_the_recovery_flag() {
+        let mut j = job();
+        j.needs_recovery = true;
+        j.record_archive_identity(Some(&identity()), T1);
+        assert_eq!(j.archive_identity(), Some(identity()));
+        assert!(j.cached_zip && !j.needs_recovery);
+        assert_eq!(j.updated_at, T1);
+        j.record_archive_identity(None, T1);
+        assert_eq!(j.archive_identity(), None);
+        assert!(!j.cached_zip);
+    }
+
+    #[test]
+    fn identity_requires_the_cached_path_a_strong_tag_and_a_length() {
+        let mut j = job();
+        j.record_archive_identity(Some(&identity()), T1);
+        j.cached_zip = false;
+        assert_eq!(j.archive_identity(), None);
+        j.cached_zip = true;
+        j.etag = Some("W/\"abc\"".into());
+        assert_eq!(j.archive_identity(), None);
+        j.etag = Some("\"abc\"".into());
+        j.representation_length = Some(0);
+        assert_eq!(j.archive_identity(), None);
     }
 
     #[test]
