@@ -87,7 +87,7 @@ and no consistent version across them; RomM's slot/version model assumes one obj
 - Entry paths carry the **role**, not the IDs (`zero/…`, `user/…` for Eden/yuzu; `index/…` for Ryujinx), so an archive made on one
   machine restores into another machine's profile or index.
 - File name on RomM: `<TITLEID>.zip` within the user's slot (the slot, wizard and switch gates are unchanged).
-- The baseline hash is the MD5 of the archive bytes as uploaded (exact parity with what RomM stores).
+- The hash is **RomM's zip content hash**, not the hash of the archive bytes: entries sorted by name, `name:md5(entry)` lines joined by `\n`, MD5 of that text, directory entries skipped (ADR-0016; the Python reference `combine_zip_entry_hashes`). Exact parity is required, or sync would round-trip forever. Entry names are part of the hash, which is why they are role-based and identical on every device.
 - Restore (download) extracts into a temp directory next to the target, verifies, quarantines the current directory as
   `<TITLEID>.romm-backup`, then renames into place. A failed extraction never touches the live save.
 - **Safety gates:** no sync while the emulator is running (existing running-app check); an empty or shrunk-to-nothing local
@@ -133,7 +133,7 @@ The profile list shown to the user comes from the emulator's `profiles.dat` (nam
 - Games whose file name carries no title ID need a one-time *Choose save folder* click.
 - A save restore replaces a directory, so the quarantine backup can be large; it is kept until the next successful sync
   (retention follows the existing `.romm-backup` rule).
-- Hash parity with RomM's own zip-entry hash is **not** required; both sides compare the hash of the uploaded bytes.
+- The archive bytes do not decide the hash (only the entries do), so a re-zip with other timestamps never looks like a change; the deterministic build is for tidiness, the hash scheme is for correctness.
 - Ryujinx depends on reverse-engineered metadata; if its format changes, those games drop to "unsupported", never to wrong
   data.
 
@@ -171,7 +171,8 @@ come from the emulator config, the all-zero profile is part of a save, and Ryuji
    hold the user ID (`01 00 …`), byte 0x20 is `01` (account save). The numeric index is machine-specific and never generalised.
 3. **yuzu `nand_directory`** on the Deck: `/run/media/mmcblk0p1/Emulation/storage/yuzu/nand` (SD card), so saves are under
    `…/nand/user/save`, found through the config as designed.
-4. **Eden profile `7EBDCC30…`**: display name `Eden`, the only non-empty record in `profiles.dat` (slot 0), read from
+4. **Profile names** (`profiles.dat`, verified with a hex dump of the Deck's file): 16-byte header, 8 records of 200 bytes; a record holds the UUID twice, a timestamp and a 32-byte name; the save folder name is the UUID with **all 16 bytes reversed**, upper-case hex (`3cdbbca0…bd7e` → `7EBDCC305B4640571756A9D7A0BCDB3C`, name `Eden`). The plugin shows these names instead of the hex folders.
+   Eden profile `7EBDCC30…`: display name `Eden`, the only non-empty record in `profiles.dat` (slot 0), read from
    `<nand>/system/save/8000000000000010/su/avators/profiles.dat`. The single user profile is therefore chosen automatically; the all-zero
    folder keeps its role.
 5. Deck internal drive vs SD: the temp-directory-next-to-target rule keeps the rename atomic; no action needed.

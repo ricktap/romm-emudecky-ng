@@ -17,3 +17,4 @@ pub mod versions;
 pub mod playtime;
 pub mod releases;
 pub mod switch_save_safety;
+pub mod switch_save_files;
