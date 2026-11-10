@@ -160,14 +160,6 @@ export async function getExistingRomMShortcuts(): Promise<Map<number, number>> {
   return result;
 }
 
-/** The executable path of the first RomM shortcut Steam lists (the plugin's launcher), or null when there is none. */
-export async function findRomMLauncherExe(): Promise<string | null> {
-  const ids = await getLiveRomMShortcutAppIds();
-  const first = ids?.[0];
-  if (first === undefined) return null;
-  return (await getAppDetails(first))?.strShortcutExe ?? null;
-}
-
 /**
  * Add a single Steam shortcut. Returns the new steam app_id, or null on failure.
  */
