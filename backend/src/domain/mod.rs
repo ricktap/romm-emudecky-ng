@@ -23,6 +23,8 @@ pub mod sync_diff;
 pub mod shortcut_data;
 pub mod steam_input;
 pub mod switch_firmware;
+pub mod save_archive;
+pub mod switch_save;
 pub mod sgdb_artwork;
 
 pub mod iso_time;
