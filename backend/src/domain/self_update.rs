@@ -2,6 +2,7 @@
 use serde_json::{Value,json};
 pub const RELEASES:&str="https://github.com/ricktap/romm-emudecky-ng/releases";
 pub const LATEST:&str="https://api.github.com/repos/ricktap/romm-emudecky-ng/releases/latest";
+pub const LATEST_PAGE:&str="https://github.com/ricktap/romm-emudecky-ng/releases/latest";
 pub const DOWNLOAD:&str="https://github.com/ricktap/romm-emudecky-ng/releases/download/";
 pub fn version(s:&str)->Option<[u64;3]>{
     let s=s.trim().strip_prefix('v').unwrap_or(s.trim());let p:Vec<_>=s.split('.').collect();
