@@ -1,14 +1,7 @@
 import { useState, useEffect, useRef, FC, ReactNode } from "react";
-import {
-  PanelSection,
-  PanelSectionRow,
-  ButtonItem,
-  Field,
-  ProgressBar,
-  Spinner,
-} from "@decky/ui";
+import { Focusable } from "@decky/ui";
+import { AttRow, Icon, NavRow, RmButton, RmStyles } from "./rm";
 import { openLibraryRoute } from "../utils/libraryRoute";
-import { FaCheckCircle, FaTimesCircle, FaExclamationTriangle } from "react-icons/fa";
 import { getSkipPreview, onSyncPreferencesChange } from "../utils/syncPreferences";
 import { missingRequiredKeys } from "../utils/missingKeys";
 import { serverHost } from "../utils/serverUrl";
@@ -26,7 +19,6 @@ import {
   logError,
 } from "../api/backend";
 import { getSyncProgress, setSyncProgress as setStoredSyncProgress, onSyncProgressChange } from "../utils/syncProgress";
-import { scrollToTop } from "../utils/scrollHelpers";
 import { getDownloadState } from "../utils/downloadStore";
 import { isUnfinishedStatus } from "../utils/downloadStatus";
 import { getSettingsResetState, onSettingsResetChange } from "../utils/settingsResetStore";
@@ -80,31 +72,31 @@ const ConnectionIndicator: FC<{ connected: boolean | null | BackendFailed }> = (
   if (connected === "backend_failed") {
     return (
       <>
-        <FaExclamationTriangle style={{ color: "#d4a72c", fontSize: "14px" }} />
-        <span style={{ fontSize: "12px" }}>Backend error</span>
+        <span className="rm-dot rm-amber" />
+        <span>Backend error</span>
       </>
     );
   }
   if (connected === null) {
     return (
       <>
-        <Spinner width={14} height={14} />
-        <span style={{ fontSize: "12px", opacity: 0.7 }}>Checking...</span>
+        <span className="rm-dot rm-grey" />
+        <span>Checking...</span>
       </>
     );
   }
   if (connected) {
     return (
       <>
-        <FaCheckCircle style={{ color: "#59bf40", fontSize: "14px" }} />
-        <span style={{ fontSize: "12px" }}>Connected</span>
+        <span className="rm-dot" />
+        <span>Connected</span>
       </>
     );
   }
   return (
     <>
-      <FaTimesCircle style={{ color: "#d4343c", fontSize: "14px" }} />
-      <span style={{ fontSize: "12px" }}>Not connected</span>
+      <span className="rm-dot rm-red" />
+      <span>Not connected</span>
     </>
   );
 };
@@ -508,47 +500,21 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
       preview.summary.platform_collection_diff?.has_changes;
     syncBody = (
       <>
-        <PanelSectionRow>
-          <Field label="Preview" description={formatPreviewDescription(preview.summary)} focusable />
-        </PanelSectionRow>
+        <h3>{hasChanges ? "Changes on RomM" : "Library is up to date"}</h3>
+        <div className="rm-muted" style={{ marginBottom: 8 }} data-testid="preview-summary">
+          {formatPreviewDescription(preview.summary)}
+        </div>
         {hasChanges ? (
-          <>
-            <PanelSectionRow>
-              <ButtonItem
-                layout="below"
-                onClick={() => {
-                  detach(handleApply());
-                }}
-                // @ts-expect-error onFocus works at runtime; not in Decky's ButtonItem types
-                onFocus={scrollToTop}
-              >
-                Apply Sync
-              </ButtonItem>
-            </PanelSectionRow>
-            <PanelSectionRow>
-              <ButtonItem
-                layout="below"
-                onClick={() => {
-                  detach(handleDismiss());
-                }}
-              >
-                Cancel
-              </ButtonItem>
-            </PanelSectionRow>
-          </>
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <RmButton variant="primary" className="rm-grow" onActivate={() => detach(handleApply())}>
+              Apply
+            </RmButton>
+            <RmButton onActivate={() => detach(handleDismiss())}>Cancel</RmButton>
+          </div>
         ) : (
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              onClick={() => {
-                detach(handleDismiss());
-              }}
-              // @ts-expect-error onFocus works at runtime; not in Decky's ButtonItem types
-              onFocus={scrollToTop}
-            >
-              Dismiss
-            </ButtonItem>
-          </PanelSectionRow>
+          <RmButton variant="block" onActivate={() => detach(handleDismiss())}>
+            Dismiss
+          </RmButton>
         )}
       </>
     );
@@ -556,166 +522,113 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
     const stepText = syncProgress?.totalSteps ? `${syncProgress.step ?? 0}/${syncProgress.totalSteps}` : "";
     syncBody = (
       <>
-        <PanelSectionRow>
-          {/* Own the caption in a full-width row and use the bare ProgressBar.
-              ProgressBarWithInfo is a Steam Field (label column | bar column);
-              with no label text the empty column shoves the bar into the right
-              half and clips it (#751). The bare ProgressBar is just the bar and
-              spans the full panel width. */}
-          <div style={{ width: "100%" }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: "12px",
-                marginBottom: "4px",
-              }}
-            >
-              <span data-testid="sync-stage">{stageLabel(syncProgress?.stage)}</span>
-              {stepText && <span data-testid="sync-step">{stepText}</span>}
-            </div>
-            <ProgressBar
-              indeterminate={coarseFraction === undefined}
-              {...(coarseFraction !== undefined ? { nProgress: coarseFraction } : {})}
-            />
-          </div>
-        </PanelSectionRow>
+        <h3>Syncing…</h3>
+        <div className="rm-muted" style={{ marginBottom: 10, display: "flex", justifyContent: "space-between" }}>
+          <span data-testid="sync-stage">{stageLabel(syncProgress?.stage)}</span>
+          {stepText && <span data-testid="sync-step">{stepText}</span>}
+        </div>
+        <span className="rm-bar">
+          <span
+            style={{ width: coarseFraction === undefined ? "30%" : `${Math.min(100, coarseFraction)}%` }}
+            data-testid="sync-bar"
+          />
+        </span>
         {hasFineDetail && (
-          <PanelSectionRow>
-            <Field
-              label={
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <Spinner width={14} height={14} />
-                  <span style={{ fontSize: "12px" }}>{formatProgressText(syncProgress)}</span>
-                </div>
-              } focusable />
-          </PanelSectionRow>
+          <div className="rm-muted rm-small" style={{ marginTop: 8 }}>
+            {formatProgressText(syncProgress)}
+          </div>
         )}
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            disabled={cancelling}
-            onClick={() => {
-              detach(handleCancel());
-            }}
-            // @ts-expect-error onFocus works at runtime; not in Decky's ButtonItem types
-            onFocus={scrollToTop}
-          >
-            {cancelling ? "Cancelling…" : "Cancel Sync"}
-          </ButtonItem>
-        </PanelSectionRow>
+        <div style={{ marginTop: 10 }}>
+          <RmButton variant="sm ghost" disabled={cancelling} onActivate={() => detach(handleCancel())}>
+            {cancelling ? "Cancelling…" : "Cancel"}
+          </RmButton>
+        </div>
       </>
     );
   } else {
     const syncedBefore = Boolean(status) && !syncing;
     syncBody = (
       <>
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            onClick={() => {
-              detach(handleSync());
-            }}
-            disabled={loading || connectionUnavailable}
-            // @ts-expect-error onFocus works at runtime; not in Decky's ButtonItem types
-            onFocus={scrollToTop}
-          >
-            {syncedBefore ? "Sync Again" : "Sync Library"}
-          </ButtonItem>
-        </PanelSectionRow>
+        {status ? (
+          <h3 data-testid="sync-status">{status}</h3>
+        ) : (
+          stats && (
+            <h3>
+              {stats.roms > 0
+                ? `${stats.roms} games${stats.platforms > 0 ? ` · ${stats.platforms} platforms` : ""}`
+                : "No games synced yet"}
+            </h3>
+          )
+        )}
+        {stats && (
+          <div className="rm-muted" style={{ marginBottom: 12 }}>
+            Last sync {formatLastSync(stats.last_sync)}
+          </div>
+        )}
+        <RmButton
+          variant={syncedBefore ? "block" : "primary block"}
+          disabled={loading || connectionUnavailable}
+          onActivate={() => detach(handleSync())}
+        >
+          {syncedBefore ? "Sync again" : "Sync library"}
+        </RmButton>
         {connectionUnavailable && (
-          <PanelSectionRow>
-            <Field label="Sync needs a connection to the RomM server" focusable />
-          </PanelSectionRow>
+          <div className="rm-muted rm-small" style={{ marginTop: 8 }}>
+            Sync needs a connection to the RomM server
+          </div>
         )}
       </>
     );
   }
 
-  const attentionCount =
-    (settingsReset.pending ? 1 : 0) +
-    (playtimeScope.pending ? 1 : 0) +
-    (updateState.info?.update_available ? 1 : 0) +
-    (missingKeys.length > 0 ? 1 : 0);
+  const attention: ReactNode[] = [];
+  if (settingsReset.pending) attention.push(<SettingsResetBanner key="reset" backedUpTo={settingsReset.backedUpTo} />);
+  if (playtimeScope.pending) attention.push(<PlaytimeScopeBanner key="playtime" />);
+  if (updateState.info?.update_available) attention.push(<UpdateBanner key="update" info={updateState.info} />);
+  if (missingKeys.length > 0) {
+    attention.push(
+      <AttRow
+        key="keys"
+        title="Switch keys missing"
+        sub={missingKeys.join(", ")}
+        onActivate={() => openLibraryRoute("systems")}
+      />,
+    );
+  }
 
   return (
-    <>
-      <PanelSection>
-        <PanelSectionRow>
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }} data-testid="status-line">
-            <ConnectionIndicator connected={connected} />
-            {connected === true && hostName && (
-              <span style={{ fontSize: "12px", opacity: 0.7 }} data-testid="status-host">
-                · {hostName}
-              </span>
-            )}
-          </div>
-          {connected === "backend_failed" && (
-            <div style={{ fontSize: "12px", opacity: 0.7 }}>Plugin backend failed to start — check Decky logs.</div>
-          )}
-        </PanelSectionRow>
-      </PanelSection>
-
-      <PanelSection title="Library">
-        {stats && (
-          <PanelSectionRow>
-            <Field
-              label={
-                stats.roms > 0
-                  ? `${stats.roms} games${stats.platforms > 0 ? ` · ${stats.platforms} platforms` : ""}`
-                  : "No games synced yet"
-              }
-              description={`Last sync: ${formatLastSync(stats.last_sync)}`} focusable />
-          </PanelSectionRow>
+    <div className="rm-root" style={{ background: "transparent" }}>
+      <RmStyles />
+      <Focusable className="rm-status" style={{ margin: "10px 0 4px" }} data-testid="status-line">
+        <ConnectionIndicator connected={connected} />
+        {connected === true && hostName && (
+          <span data-testid="status-host">· {hostName}</span>
         )}
-        {syncBody}
-        {status && !syncing && !preview && (
-          <PanelSectionRow>
-            <Field label={status} focusable />
-          </PanelSectionRow>
-        )}
-      </PanelSection>
-
-      {attentionCount > 0 && (
-        <PanelSection title="Needs attention">
-          {settingsReset.pending && <SettingsResetBanner backedUpTo={settingsReset.backedUpTo} />}
-          {playtimeScope.pending && <PlaytimeScopeBanner />}
-          {updateState.info?.update_available && <UpdateBanner info={updateState.info} />}
-          {missingKeys.length > 0 && (
-            <PanelSectionRow>
-              <ButtonItem
-                layout="below"
-                onClick={() => openLibraryRoute("systems")}
-              >
-                Switch keys missing: {missingKeys.join(", ")}
-              </ButtonItem>
-            </PanelSectionRow>
-          )}
-        </PanelSection>
+      </Focusable>
+      {connected === "backend_failed" && (
+        <div className="rm-muted rm-small">Plugin backend failed to start — check Decky logs.</div>
       )}
 
-      <PanelSection title="Manage">
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => onNavigate("downloads")}>
-            Downloads{activeDownloads.length > 0 ? ` (${activeDownloads.length})` : ""}
-          </ButtonItem>
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => onNavigate("platforms")}>
-            Platforms &amp; collections
-          </ButtonItem>
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => onNavigate("settings")}>
-            Settings
-          </ButtonItem>
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => openLibraryRoute()}>
-            Open RomM Library
-          </ButtonItem>
-        </PanelSectionRow>
-      </PanelSection>
-    </>
+      <div className="rm-qsec">Library</div>
+      <div className="rm-card">{syncBody}</div>
+
+      {attention.length > 0 && (
+        <>
+          <div className="rm-qsec">Needs attention</div>
+          {attention}
+        </>
+      )}
+
+      <div className="rm-qsec">Manage</div>
+      <NavRow label="Downloads" badge={activeDownloads.length} onActivate={() => onNavigate("downloads")} />
+      <NavRow label="Platforms & collections" onActivate={() => onNavigate("platforms")} />
+      <NavRow label="Settings" onActivate={() => onNavigate("settings")} />
+      <div style={{ marginTop: 18 }}>
+        <RmButton variant="block" className="rm-openlib" onActivate={() => openLibraryRoute()}>
+          <Icon name="grid" size={18} />
+          Open RomM Library
+        </RmButton>
+      </div>
+    </div>
   );
 };

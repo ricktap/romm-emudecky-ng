@@ -76,6 +76,19 @@ vi.mock("@decky/ui", async () => {
   const passthrough = (tag: string) => (p: AnyProps) => ce(tag, {}, p.children as never);
   return {
     Navigation: { Navigate: vi.fn(), CloseSideMenus: vi.fn() },
+    // RomM-styled controls are Focusables; each renders as a button (or div) that answers a click.
+    Focusable: ({ children, onClick, className, ...rest }: AnyProps & { onClick?: () => void; className?: string }) =>
+      ce(
+        className?.includes("rm-btn") || className?.includes("rm-navrow") || className?.includes("rm-att") ? "button" : "div",
+        {
+          onClick,
+          className,
+          disabled: rest["aria-disabled"] === true ? true : undefined,
+          "data-testid": rest["data-testid"] as string | undefined,
+          "aria-label": rest["aria-label"] as string | undefined,
+        },
+        children as never,
+      ),
     PanelSection: (p: AnyProps & { title?: unknown }) =>
       ce(
         "section",
@@ -190,7 +203,9 @@ function buttonByExactText(container: HTMLElement, text: string): HTMLButtonElem
 }
 
 function fieldLabels(container: HTMLElement): string[] {
-  return Array.from(container.querySelectorAll('[data-testid="field-label"]')).map((n) => n.textContent);
+  return Array.from(container.querySelectorAll('[data-testid="sync-status"], [data-testid="field-label"], .rm-muted')).map(
+    (n) => n.textContent,
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -285,7 +300,7 @@ describe("MainPage", () => {
     it("renders the full panel with Library / Manage sections by default", async () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
-      const titles = Array.from(container.querySelectorAll('[data-testid="panel-title"]')).map((n) => n.textContent);
+      const titles = Array.from(container.querySelectorAll('.rm-qsec')).map((n) => n.textContent);
       expect(titles).toEqual(expect.arrayContaining(["Library", "Manage"]));
     });
   });
@@ -313,7 +328,7 @@ describe("MainPage", () => {
     it("is not rendered when nothing needs attention", async () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
-      const titles = Array.from(container.querySelectorAll('[data-testid="panel-title"]')).map((n) => n.textContent);
+      const titles = Array.from(container.querySelectorAll('.rm-qsec')).map((n) => n.textContent);
       expect(titles).not.toContain("Needs attention");
     });
 
@@ -327,11 +342,12 @@ describe("MainPage", () => {
       });
       const { container, getByText } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
-      const titles = Array.from(container.querySelectorAll('[data-testid="panel-title"]')).map((n) => n.textContent);
+      const titles = Array.from(container.querySelectorAll('.rm-qsec')).map((n) => n.textContent);
       expect(titles).toContain("Needs attention");
-      expect(container.textContent).toContain("Switch keys missing: prod.keys");
+      expect(container.textContent).toContain("Switch keys missing");
+      expect(container.textContent).toContain("prod.keys");
       expect(container.textContent).not.toContain("title.keys");
-      fireEvent.click(getByText("Switch keys missing: prod.keys"));
+      fireEvent.click(getByText("Switch keys missing"));
       expect(Navigation.Navigate).toHaveBeenCalledWith("/romm-library");
     });
 
@@ -367,7 +383,7 @@ describe("MainPage", () => {
         await act(async () => {
           await vi.advanceTimersByTimeAsync(1100);
         });
-        expect(buttonByExactText(container, "Downloads (2)")).not.toBeNull();
+        expect(container.querySelector('[data-testid="nav-Downloads"] .rm-badge')?.textContent).toBe("2");
       } finally {
         vi.useRealTimers();
       }
@@ -387,7 +403,7 @@ describe("MainPage", () => {
       vi.mocked(backend.testConnection).mockResolvedValue({ success: false, message: "down" });
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
-      expect(buttonByExactText(container, "Sync Library")?.disabled).toBe(true);
+      expect(buttonByExactText(container, "Sync library")?.disabled).toBe(true);
       expect(fieldLabels(container)).toContain("Sync needs a connection to the RomM server");
     });
   });
@@ -475,8 +491,8 @@ describe("MainPage", () => {
       await flushAsync();
       // In-flight: Cancel Sync button is rendered (replaces the Sync Library
       // button) and the determinate bar shows the recovered stage label.
-      expect(buttonByExactText(container, "Cancel Sync")).not.toBeNull();
-      expect(buttonByExactText(container, "Sync Library")).toBeNull();
+      expect(buttonByExactText(container, "Cancel")).not.toBeNull();
+      expect(buttonByExactText(container, "Sync library")).toBeNull();
       expect(container.querySelector('[data-testid="sync-stage"]')?.textContent).toContain("Fetching library");
     });
 
@@ -487,7 +503,7 @@ describe("MainPage", () => {
       await flushAsync();
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to query sync status"));
       // Falls back to the idle UI — the Sync Library button stays available.
-      expect(buttonByExactText(container, "Sync Library")).not.toBeNull();
+      expect(buttonByExactText(container, "Sync library")).not.toBeNull();
       logSpy.mockRestore();
     });
 
@@ -536,7 +552,9 @@ describe("MainPage", () => {
       await flushAsync();
       expect(backend.checkForUpdate).toHaveBeenCalledWith(false);
       expect(container.textContent).toContain("Update available: v0.33.0");
-      expect(buttonByExactText(container, "Update")).not.toBeNull();
+      // The attention row opens Settings, where the Plugin card has the Update button.
+      fireEvent.click(container.querySelector('[data-testid="attention-row"]')!);
+      expect(Navigation.Navigate).toHaveBeenCalledWith("/romm-library");
     });
 
     it("hides the banner when already up to date", async () => {
@@ -565,7 +583,7 @@ describe("MainPage", () => {
   // D. ConnectionIndicator — 4 states (covered via top-level rendering)
   // ===========================================================================
   describe("ConnectionIndicator", () => {
-    it("connected=null (testConnection never resolves) renders 'Checking...' + Spinner", async () => {
+    it("connected=null (testConnection never resolves) renders 'Checking...'", async () => {
       vi.mocked(backend.testConnection).mockImplementation(
         () =>
           new Promise(() => {
@@ -575,7 +593,6 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       expect(container.textContent).toContain("Checking...");
-      expect(container.querySelector('[data-testid="spinner"]')).not.toBeNull();
     });
 
     it("connected=true renders 'Connected'", async () => {
@@ -618,7 +635,7 @@ describe("MainPage", () => {
         expect(container.textContent).not.toContain("Checking...");
         expect(container.textContent).not.toContain("Not connected");
         // Sync is gated off while the backend is down.
-        const sync = buttonByExactText(container, "Sync Library");
+        const sync = buttonByExactText(container, "Sync library");
         expect(sync).not.toBeNull();
         expect(sync!.disabled).toBe(true);
         // Non-vacuous catch coverage: the dead-backend branch logs the liveness
@@ -684,7 +701,7 @@ describe("MainPage", () => {
   describe("formatLastSync (via Last sync field)", () => {
     function lastSyncText(container: HTMLElement): string | null {
       // The Library card carries it as the description of its count line.
-      return /Last sync: .*/.exec(container.textContent ?? "")?.[0] ?? null;
+      return /Last sync .*/.exec(container.textContent ?? "")?.[0] ?? null;
     }
 
     it("renders 'Never' when stats.last_sync is null", async () => {
@@ -761,7 +778,7 @@ describe("MainPage", () => {
       vi.mocked(backend.syncPreview).mockResolvedValue(previewWithSummary(s));
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
-      const sync = buttonByExactText(container, "Sync Library");
+      const sync = buttonByExactText(container, "Sync library");
       await act(async () => {
         fireEvent.click(sync!);
         await Promise.resolve();
@@ -772,7 +789,7 @@ describe("MainPage", () => {
 
     it("renders 'Everything is up to date.' when no diffs", async () => {
       const c = await renderPreview({});
-      const descs = Array.from(c.querySelectorAll('[data-testid="field-desc"]')).map((n) => n.textContent);
+      const descs = Array.from(c.querySelectorAll('.rm-muted')).map((n) => n.textContent);
       expect(descs).toContain("Everything is up to date.");
     });
 
@@ -782,7 +799,7 @@ describe("MainPage", () => {
         changed_count: 1,
         remove_count: 2,
       });
-      const descs = Array.from(c.querySelectorAll('[data-testid="field-desc"]')).map((n) => n.textContent);
+      const descs = Array.from(c.querySelectorAll('.rm-muted')).map((n) => n.textContent);
       expect(descs.some((d) => d.includes("Games: 3 added, 1 updated, 2 removed"))).toBe(true);
     });
 
@@ -794,7 +811,7 @@ describe("MainPage", () => {
           removed_count: 1,
         },
       });
-      const descs = Array.from(c.querySelectorAll('[data-testid="field-desc"]')).map((n) => n.textContent);
+      const descs = Array.from(c.querySelectorAll('.rm-muted')).map((n) => n.textContent);
       expect(descs.some((d) => d.includes("Platforms: 2 added, 1 removed"))).toBe(true);
     });
 
@@ -806,7 +823,7 @@ describe("MainPage", () => {
           removed: ["C"],
         },
       });
-      const descs = Array.from(c.querySelectorAll('[data-testid="field-desc"]')).map((n) => n.textContent);
+      const descs = Array.from(c.querySelectorAll('.rm-muted')).map((n) => n.textContent);
       expect(descs.some((d) => d.includes("Collections: 2 added, 1 removed"))).toBe(true);
     });
 
@@ -816,7 +833,7 @@ describe("MainPage", () => {
         changed_count: 0,
         remove_count: 0,
       });
-      const descs = Array.from(c.querySelectorAll('[data-testid="field-desc"]')).map((n) => n.textContent);
+      const descs = Array.from(c.querySelectorAll('.rm-muted')).map((n) => n.textContent);
       // Should render "Games: 1 added" — no "updated" or "removed" tokens.
       const romsLine = descs.find((d) => d.startsWith("Games:"));
       expect(romsLine).toBe("Games: 1 added");
@@ -841,8 +858,7 @@ describe("MainPage", () => {
       // The caption's step span carries the coarse "step/totalSteps" counter.
       expect(container.querySelector('[data-testid="sync-step"]')?.textContent).toContain("2/5");
       // Determinate: 2/5 * 100 = 40.
-      expect(container.querySelector('[data-testid="progress-progress"]')?.textContent).toBe("40");
-      expect(container.querySelector('[data-testid="progress-indeterminate"]')?.textContent).toBe("false");
+      expect((container.querySelector('[data-testid="sync-bar"]') as HTMLElement).style.width).toBe("40%");
     });
 
     it("main bar goes indeterminate when totalSteps is 0", async () => {
@@ -855,7 +871,8 @@ describe("MainPage", () => {
       });
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
-      expect(container.querySelector('[data-testid="progress-indeterminate"]')?.textContent).toBe("true");
+      // No unit reached yet: the bar shows a fixed stub instead of a fraction.
+      expect((container.querySelector('[data-testid="sync-bar"]') as HTMLElement).style.width).toBe("30%");
     });
 
     it("detail line renders the fine current/total message with a step prefix", async () => {
@@ -915,13 +932,13 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
 
-      const sync = buttonByExactText(container, "Sync Library");
+      const sync = buttonByExactText(container, "Sync library");
       await act(async () => {
         fireEvent.click(sync!);
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(buttonByExactText(container, "Apply Sync")).not.toBeNull();
+      expect(buttonByExactText(container, "Apply")).not.toBeNull();
       expect(buttonByExactText(container, "Cancel")).not.toBeNull();
     });
 
@@ -930,12 +947,12 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
         await Promise.resolve();
       });
       expect(buttonByExactText(container, "Dismiss")).not.toBeNull();
-      expect(buttonByExactText(container, "Apply Sync")).toBeNull();
+      expect(buttonByExactText(container, "Apply")).toBeNull();
     });
 
     it("collection enabled but zero add/remove delta: Dismiss only, no Apply, 'up to date' (#1147)", async () => {
@@ -961,13 +978,13 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
         await Promise.resolve();
       });
       expect(buttonByExactText(container, "Dismiss")).not.toBeNull();
-      expect(buttonByExactText(container, "Apply Sync")).toBeNull();
-      const descs = Array.from(container.querySelectorAll('[data-testid="field-desc"]')).map((n) => n.textContent);
+      expect(buttonByExactText(container, "Apply")).toBeNull();
+      const descs = Array.from(container.querySelectorAll('.rm-muted')).map((n) => n.textContent);
       expect(descs).toContain("Everything is up to date.");
     });
 
@@ -989,7 +1006,7 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -1014,7 +1031,7 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -1026,15 +1043,15 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
         await Promise.resolve();
       });
       expect(fieldLabels(container)).toContain("Failed to start sync");
     });
 
-    it("aborts to idle (no phantom 'Apply Sync') when a cancel landed during syncPreview (#1202 RC-CANCEL-PREVIEW)", async () => {
-      // syncPreview resolves SUCCESS with changes (normally → Apply Sync), but a
+    it("aborts to idle (no phantom 'Apply') when a cancel landed during syncPreview (#1202 RC-CANCEL-PREVIEW)", async () => {
+      // syncPreview resolves SUCCESS with changes (normally → Apply), but a
       // Cancel landed in-flight so isCancelRequested() is true at the
       // post-resolve re-check. The preview must NOT show; the UI returns to idle
       // and the stale flag is cleared so the next sync isn't pre-cancelled.
@@ -1055,13 +1072,13 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
         await Promise.resolve();
       });
-      // No phantom preview — Apply Sync absent, back to idle (Sync Library back).
-      expect(buttonByExactText(container, "Apply Sync")).toBeNull();
-      expect(buttonByExactText(container, "Sync Again")).not.toBeNull();
+      // No phantom preview — Apply absent, back to idle (Sync Library back).
+      expect(buttonByExactText(container, "Apply")).toBeNull();
+      expect(buttonByExactText(container, "Sync again")).not.toBeNull();
       // Non-vacuous: the abort surfaced the "Sync cancelled" status — only the
       // RC-CANCEL-PREVIEW branch produces idle + that status after a SUCCESS
       // preview, and the stale cancel flag was cleared for the next run.
@@ -1081,14 +1098,14 @@ describe("MainPage", () => {
       await flushAsync();
 
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
         await Promise.resolve();
       });
       expect(vi.mocked(backend.startSync)).toHaveBeenCalled();
       expect(vi.mocked(backend.syncPreview)).not.toHaveBeenCalled();
       // Preview did not appear — Cancel Sync (in-flight) replaces Sync Library.
-      expect(buttonByExactText(container, "Apply Sync")).toBeNull();
+      expect(buttonByExactText(container, "Apply")).toBeNull();
     });
 
     it("reconciles stale shortcuts BEFORE startSync (skipPreview path) (#1046)", async () => {
@@ -1107,7 +1124,7 @@ describe("MainPage", () => {
       });
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -1134,7 +1151,7 @@ describe("MainPage", () => {
       });
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -1167,7 +1184,7 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -1186,7 +1203,7 @@ describe("MainPage", () => {
       });
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -1195,7 +1212,7 @@ describe("MainPage", () => {
   });
 
   // ===========================================================================
-  // G. Sync flow — handleApply (Apply Sync click)
+  // G. Sync flow — handleApply (Apply click)
   // ===========================================================================
   describe("handleApply", () => {
     async function openPreviewWithChanges(): Promise<HTMLElement> {
@@ -1215,18 +1232,18 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
         await Promise.resolve();
       });
       return container;
     }
 
-    it("clicking Apply Sync calls syncApplyDelta(preview_id)", async () => {
+    it("clicking Apply calls syncApplyDelta(preview_id)", async () => {
       vi.mocked(backend.syncApplyDelta).mockResolvedValue({ success: true, message: "" });
       const container = await openPreviewWithChanges();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Apply Sync")!);
+        fireEvent.click(buttonByExactText(container, "Apply")!);
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -1240,7 +1257,7 @@ describe("MainPage", () => {
       });
       const container = await openPreviewWithChanges();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Apply Sync")!);
+        fireEvent.click(buttonByExactText(container, "Apply")!);
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -1251,7 +1268,7 @@ describe("MainPage", () => {
       vi.mocked(backend.syncApplyDelta).mockRejectedValue(new Error("nope"));
       const container = await openPreviewWithChanges();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Apply Sync")!);
+        fireEvent.click(buttonByExactText(container, "Apply")!);
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -1267,7 +1284,7 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -1280,7 +1297,7 @@ describe("MainPage", () => {
       });
       expect(vi.mocked(backend.syncCancelPreview)).toHaveBeenCalled();
       // Back to default — Sync Library button visible again
-      expect(buttonByExactText(container, "Sync Library")).not.toBeNull();
+      expect(buttonByExactText(container, "Sync library")).not.toBeNull();
     });
 
     it("syncCancelPreview rejection is silently swallowed (no crash, returns to default UI)", async () => {
@@ -1288,7 +1305,7 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -1298,7 +1315,7 @@ describe("MainPage", () => {
         await Promise.resolve();
       });
       // Component still rendered normally + back to default UI.
-      expect(buttonByExactText(container, "Sync Library")).not.toBeNull();
+      expect(buttonByExactText(container, "Sync library")).not.toBeNull();
     });
   });
 
@@ -1306,7 +1323,7 @@ describe("MainPage", () => {
   // I. Sync flow — handleCancel (in-flight Cancel Sync click)
   // ===========================================================================
   describe("handleCancel", () => {
-    it("clicking 'Cancel Sync' requests cancel, cancels the active run, and disarms to 'Cancelling…' (#1202)", async () => {
+    it("clicking 'Cancel' requests cancel, cancels the active run, and disarms to 'Cancelling…' (#1202)", async () => {
       // Pre-arm an in-flight sync via the backend-authoritative mount query. The
       // run id rides on the sync_progress store (runId), which handleCancel
       // reads to scope the cancel — no separate frontend run-id mirror (#1202).
@@ -1322,7 +1339,7 @@ describe("MainPage", () => {
       });
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
-      const cancel = buttonByExactText(container, "Cancel Sync");
+      const cancel = buttonByExactText(container, "Cancel");
       expect(cancel).not.toBeNull();
       await act(async () => {
         fireEvent.click(cancel!);
@@ -1336,7 +1353,7 @@ describe("MainPage", () => {
       const cancelling = buttonByExactText(container, "Cancelling…");
       expect(cancelling).not.toBeNull();
       expect(cancelling!.disabled).toBe(true);
-      expect(buttonByExactText(container, "Sync Library")).toBeNull();
+      expect(buttonByExactText(container, "Sync library")).toBeNull();
     });
 
     it("cancel in the pre-progress window (no run id yet) cancels unconditionally (#1202)", async () => {
@@ -1355,7 +1372,7 @@ describe("MainPage", () => {
       });
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
-      const cancel = buttonByExactText(container, "Cancel Sync");
+      const cancel = buttonByExactText(container, "Cancel");
       expect(cancel).not.toBeNull();
       await act(async () => {
         fireEvent.click(cancel!);
@@ -1381,14 +1398,14 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Cancel Sync")!);
+        fireEvent.click(buttonByExactText(container, "Cancel")!);
         await Promise.resolve();
         await Promise.resolve();
       });
       // Drain: disarmed to "Cancelling…", Sync Library NOT back, and the
       // cancelSync result message is NOT surfaced — no instant-finish flash.
       expect(buttonByExactText(container, "Cancelling…")).not.toBeNull();
-      expect(buttonByExactText(container, "Sync Library")).toBeNull();
+      expect(buttonByExactText(container, "Sync library")).toBeNull();
       expect(fieldLabels(container)).not.toContain("cancelled-msg");
 
       // Terminal CANCELLED sync_progress lands via the module store → re-arm.
@@ -1397,7 +1414,7 @@ describe("MainPage", () => {
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(buttonByExactText(container, "Sync Again")).not.toBeNull();
+      expect(buttonByExactText(container, "Sync again")).not.toBeNull();
       expect(buttonByExactText(container, "Cancelling…")).toBeNull();
       // The terminal stage's message is surfaced (not the cancelSync result's).
       expect(fieldLabels(container)).toContain("Sync cancelled");
@@ -1424,7 +1441,7 @@ describe("MainPage", () => {
           await Promise.resolve();
         });
         await act(async () => {
-          fireEvent.click(buttonByExactText(container, "Cancel Sync")!);
+          fireEvent.click(buttonByExactText(container, "Cancel")!);
           await Promise.resolve();
           await Promise.resolve();
         });
@@ -1457,14 +1474,14 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Cancel Sync")!);
+        fireEvent.click(buttonByExactText(container, "Cancel")!);
         await Promise.resolve();
         await Promise.resolve();
       });
       expect(vi.mocked(backend.cancelSync)).toHaveBeenCalled();
       // Status field un-gated and shows the failure message; re-armed to idle.
       expect(fieldLabels(container)).toContain("Failed to cancel sync");
-      expect(buttonByExactText(container, "Cancel Sync")).toBeNull();
+      expect(buttonByExactText(container, "Cancel")).toBeNull();
       expect(buttonByExactText(container, "Cancelling…")).toBeNull();
     });
 
@@ -1485,18 +1502,18 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
         await Promise.resolve();
       });
-      // Now click the Cancel button (under Apply Sync).
+      // Now click the Cancel button (under Apply).
       await act(async () => {
         fireEvent.click(buttonByExactText(container, "Cancel")!);
         await Promise.resolve();
         await Promise.resolve();
       });
       expect(vi.mocked(backend.syncCancelPreview)).toHaveBeenCalled();
-      expect(buttonByExactText(container, "Sync Library")).not.toBeNull();
+      expect(buttonByExactText(container, "Sync library")).not.toBeNull();
     });
   });
 
@@ -1536,14 +1553,14 @@ describe("MainPage", () => {
       const { container, unmount } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       // In-flight UI is up — the subscription is live.
-      expect(buttonByExactText(container, "Cancel Sync")).not.toBeNull();
+      expect(buttonByExactText(container, "Cancel")).not.toBeNull();
       unmount();
       // After unmount, a store update must not throw (listener was removed)
       // and must not resurrect the unmounted tree.
       act(() => {
         setSyncProgress({ running: false, stage: "done", message: "Sync complete" });
       });
-      expect(buttonByExactText(container, "Sync Library")).toBeNull();
+      expect(buttonByExactText(container, "Sync library")).toBeNull();
     });
   });
 
@@ -1568,7 +1585,7 @@ describe("MainPage", () => {
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
       // In-flight initially.
-      expect(buttonByExactText(container, "Cancel Sync")).not.toBeNull();
+      expect(buttonByExactText(container, "Cancel")).not.toBeNull();
 
       // A terminal sync_progress lands via the module store.
       await act(async () => {
@@ -1578,8 +1595,8 @@ describe("MainPage", () => {
       });
 
       // Torn down: Sync Library button back, final message surfaced, stats refreshed.
-      expect(buttonByExactText(container, "Sync Again")).not.toBeNull();
-      expect(buttonByExactText(container, "Cancel Sync")).toBeNull();
+      expect(buttonByExactText(container, "Sync again")).not.toBeNull();
+      expect(buttonByExactText(container, "Cancel")).toBeNull();
       expect(fieldLabels(container)).toContain("Sync complete: 7 games");
       expect(vi.mocked(backend.getSyncStats)).toHaveBeenCalledTimes(2);
     });
@@ -1595,7 +1612,7 @@ describe("MainPage", () => {
       });
       const { container } = render(<MainPage onNavigate={vi.fn()} />);
       await flushAsync();
-      expect(buttonByExactText(container, "Cancel Sync")).not.toBeNull();
+      expect(buttonByExactText(container, "Cancel")).not.toBeNull();
 
       await act(async () => {
         setSyncProgress({ running: false, stage: "", message: "" });
@@ -1603,8 +1620,8 @@ describe("MainPage", () => {
       });
 
       // Still in-flight — only a terminal stage tears down.
-      expect(buttonByExactText(container, "Cancel Sync")).not.toBeNull();
-      expect(buttonByExactText(container, "Sync Library")).toBeNull();
+      expect(buttonByExactText(container, "Cancel")).not.toBeNull();
+      expect(buttonByExactText(container, "Sync library")).toBeNull();
     });
 
     it("Sync Library button is disabled optimistically on click before the first event", async () => {
@@ -1625,19 +1642,19 @@ describe("MainPage", () => {
       await flushAsync();
 
       await act(async () => {
-        fireEvent.click(buttonByExactText(container, "Sync Library")!);
+        fireEvent.click(buttonByExactText(container, "Sync library")!);
         await Promise.resolve();
       });
       // Optimistic: in-flight UI shown before startSync even resolves.
-      expect(buttonByExactText(container, "Sync Library")).toBeNull();
-      expect(buttonByExactText(container, "Cancel Sync")).not.toBeNull();
+      expect(buttonByExactText(container, "Sync library")).toBeNull();
+      expect(buttonByExactText(container, "Cancel")).not.toBeNull();
 
       await act(async () => {
         resolveStart({ success: true, message: "" });
         await Promise.resolve();
       });
       // Still in-flight after the resolve — store subscription owns teardown.
-      expect(buttonByExactText(container, "Cancel Sync")).not.toBeNull();
+      expect(buttonByExactText(container, "Cancel")).not.toBeNull();
     });
   });
 

@@ -152,4 +152,9 @@ export const ROMM_CSS = `
 .rm-tag.rm-blue{background:#173a5a;color:#8cc8ff}
 .rm-tag.rm-green{background:#1f3a1a;color:#9be08a}
 .rm-cmpcol{flex:1;background:#141920;border:1px solid #2a3039;border-radius:6px;padding:12px}
+.rm-grow{flex:1}
+.rm-qhead h2{margin:0;font-size:19px;font-weight:700;color:#fff}
+.rm-btn.rm-openlib{height:48px;background:#23303f}
+.rm-btn.rm-openlib:hover,.rm-btn.rm-openlib.gpfocus{background:#dcdedf;color:#0e141b}
+.rm-notes{white-space:pre-wrap;max-height:220px;overflow-y:auto;font-size:12px;line-height:1.4;color:#c3c8ce}
 `;

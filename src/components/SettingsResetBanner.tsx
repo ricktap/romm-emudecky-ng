@@ -1,5 +1,5 @@
 import { FC } from "react";
-import { PanelSection, PanelSectionRow, ButtonItem } from "@decky/ui";
+import { AttRow } from "./rm";
 import { dismissSettingsResetNotice, logError } from "../api/backend";
 import { setSettingsResetState } from "../utils/settingsResetStore";
 import { detach } from "../utils/detach";
@@ -34,7 +34,7 @@ interface SettingsResetBannerProps {
   backedUpTo: string | null;
 }
 
-/** QAM PanelSection shown while a corrupt-settings reset is pending. */
+/** QAM attention row shown while a corrupt-settings reset is pending; pressing it dismisses the notice. */
 export const SettingsResetBanner: FC<SettingsResetBannerProps> = ({ backedUpTo }) => {
   const handleDismiss = () => {
     detach(
@@ -49,36 +49,10 @@ export const SettingsResetBanner: FC<SettingsResetBannerProps> = ({ backedUpTo }
   };
 
   return (
-    <PanelSection title={SETTINGS_RESET_TITLE}>
-      <PanelSectionRow>
-        <div
-          style={{
-            padding: "8px 12px",
-            backgroundColor: "rgba(212, 167, 44, 0.15)",
-            borderLeft: "3px solid #d4a72c",
-            borderRadius: "4px",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "13px",
-              fontWeight: "bold",
-              color: "#d4a72c",
-              marginBottom: "6px",
-            }}
-          >
-            {"⚠️"} {SETTINGS_RESET_TITLE}
-          </div>
-          <div style={{ fontSize: "12px", color: "rgba(255, 255, 255, 0.85)", lineHeight: 1.5 }}>
-            {settingsResetMessage(backedUpTo)}
-          </div>
-        </div>
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ButtonItem layout="below" onClick={handleDismiss}>
-          Dismiss
-        </ButtonItem>
-      </PanelSectionRow>
-    </PanelSection>
+    <AttRow
+      title={SETTINGS_RESET_TITLE}
+      sub={`${settingsResetMessage(backedUpTo)} Press to dismiss.`}
+      onActivate={handleDismiss}
+    />
   );
 };

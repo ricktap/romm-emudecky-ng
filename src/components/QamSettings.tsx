@@ -1,10 +1,9 @@
 import { FC, useEffect, useState } from "react";
-import { PanelSection, PanelSectionRow, ButtonItem, Field, ToggleField } from "@decky/ui";
+import { QamHeader, RmButton, RmRow, RmStyles, RmToggle, RmValueRow } from "./rm";
 import { getSaveSyncSettings, updateSaveSyncSettings, getSettings } from "../api/backend";
 import type { SaveSyncSettings } from "../types";
 import { getSkipPreview, setSkipPreview, onSyncPreferencesChange } from "../utils/syncPreferences";
 import { serverHost } from "../utils/serverUrl";
-import { scrollToTop } from "../utils/scrollHelpers";
 import { detach } from "../utils/detach";
 import { openLibraryRoute } from "../utils/libraryRoute";
 
@@ -58,78 +57,44 @@ export const QamSettings: FC<QamSettingsProps> = ({ onBack }) => {
   };
 
   return (
-    <>
-      <PanelSection>
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            onClick={onBack}
-            // @ts-expect-error onFocus works at runtime; not in Decky's ButtonItem types
-            onFocus={scrollToTop}
-          >
-            Back
-          </ButtonItem>
-        </PanelSectionRow>
-      </PanelSection>
-
-      <PanelSection title="Save sync">
+    <div className="rm-root" style={{ background: "transparent" }}>
+      <RmStyles />
+      <QamHeader title="Settings" onBack={onBack} />
+      <div className="rm-scard">
+        <h3>Save sync</h3>
         {saveSyncUnavailable && (
-          <PanelSectionRow>
-            <Field label="Save sync settings unavailable" description="The plugin backend did not answer" focusable />
-          </PanelSectionRow>
+          <RmValueRow label="Save sync settings unavailable" sub="The plugin backend did not answer" />
         )}
         {saveSync && (
           <>
-            <PanelSectionRow>
-              <ToggleField
-                label="Enable save sync"
-                checked={saveSync.save_sync_enabled}
-                onChange={(v) => detach(changeSaveSync({ save_sync_enabled: v }))}
-              />
-            </PanelSectionRow>
+            <RmRow label="Save sync">
+              <RmToggle label="Save sync" checked={saveSync.save_sync_enabled} onChange={(v) => detach(changeSaveSync({ save_sync_enabled: v }))} />
+            </RmRow>
             {saveSync.save_sync_enabled && (
               <>
-                <PanelSectionRow>
-                  <ToggleField
-                    label="Sync before launch"
-                    checked={saveSync.sync_before_launch}
-                    onChange={(v) => detach(changeSaveSync({ sync_before_launch: v }))}
-                  />
-                </PanelSectionRow>
-                <PanelSectionRow>
-                  <ToggleField
-                    label="Sync after exit"
-                    checked={saveSync.sync_after_exit}
-                    onChange={(v) => detach(changeSaveSync({ sync_after_exit: v }))}
-                  />
-                </PanelSectionRow>
+                <RmRow label="Sync before launch">
+                  <RmToggle label="Sync before launch" checked={saveSync.sync_before_launch} onChange={(v) => detach(changeSaveSync({ sync_before_launch: v }))} />
+                </RmRow>
+                <RmRow label="Sync after exit">
+                  <RmToggle label="Sync after exit" checked={saveSync.sync_after_exit} onChange={(v) => detach(changeSaveSync({ sync_after_exit: v }))} />
+                </RmRow>
               </>
             )}
           </>
         )}
-      </PanelSection>
-
-      <PanelSection title="Library sync">
-        <PanelSectionRow>
-          <ToggleField
-            label="Skip sync preview"
-            description="Apply changes without showing the preview first"
-            checked={skipPreview}
-            onChange={setSkipPreview}
-          />
-        </PanelSectionRow>
-      </PanelSection>
-
-      <PanelSection title="Server">
-        <PanelSectionRow>
-          <Field label="Host" description={host || "Not set"} focusable />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => openLibraryRoute("settings")}>
-            All settings
-          </ButtonItem>
-        </PanelSectionRow>
-      </PanelSection>
-    </>
+      </div>
+      <div className="rm-scard" style={{ marginTop: 12 }}>
+        <h3>Library sync</h3>
+        <RmRow label="Skip sync preview" sub="Apply changes without review">
+          <RmToggle label="Skip sync preview" checked={skipPreview} onChange={setSkipPreview} />
+        </RmRow>
+        <RmValueRow label="Server" value={host || "Not set"} />
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <RmButton variant="block" onActivate={() => openLibraryRoute("settings")}>
+          All settings
+        </RmButton>
+      </div>
+    </div>
   );
 };

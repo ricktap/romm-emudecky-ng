@@ -58,7 +58,25 @@ vi.mock("@decky/ui", async () => {
         ce("span", { "data-testid": "field-label" }, p.label as never),
         ce("span", { "data-testid": "field-desc" }, p.description as never),
       ),
-    Focusable: passthrough("div"),
+    // RomM-styled controls: a switch renders as the old checkbox stub (so tests read `checked`), buttons and chips as buttons.
+    Focusable: ({ children, onClick, className, ...rest }: AnyProps & { onClick?: () => void; className?: string }) => {
+      if (className?.includes("rm-sw")) {
+        return ce(
+          "div",
+          { "data-testid": "toggle", "data-label": rest["aria-label"] as string | undefined },
+          ce("input", {
+            type: "checkbox",
+            "data-testid": "toggle-input",
+            checked: className.includes("rm-on"),
+            onChange: () => onClick?.(),
+            "aria-label": rest["aria-label"] as string | undefined,
+          }),
+          rest["aria-label"] as string | undefined,
+        );
+      }
+      const asButton = className?.includes("rm-btn") || className?.includes("rm-fchip");
+      return ce(asButton ? "button" : "div", { onClick, className, "aria-label": rest["aria-label"] as string | undefined }, children as never);
+    },
     DialogButton: ({ children, onClick }: AnyProps & { onClick?: () => void }) =>
       ce("button", { onClick }, children as never),
     ToggleField: (
@@ -253,9 +271,9 @@ describe("LibraryPage", () => {
     it("removes the Spinner once getPlatforms resolves (finally setSyncLoading(false))", async () => {
       const { queryByTestId } = render(<LibraryPage onBack={vi.fn()} />);
       // Initial render — getPlatforms not yet resolved
-      expect(queryByTestId("spinner")).not.toBeNull();
+      expect(queryByTestId("loading")).not.toBeNull();
       await flushAsync();
-      expect(queryByTestId("spinner")).toBeNull();
+      expect(queryByTestId("loading")).toBeNull();
     });
   });
 
@@ -873,7 +891,7 @@ describe("LibraryPage", () => {
       });
       const favToggle = container.querySelector<HTMLElement>('[data-label="Sync RomM favorites"]');
       expect(favToggle).not.toBeNull();
-      expect(favToggle?.getAttribute("data-description")).toBe("Includes 1 favorited ROM");
+      expect(favToggle?.closest(".rm-row")?.textContent).toContain("Includes 1 favorited ROM");
     });
 
     it("renders the plural description for N>1 favorited games", async () => {
@@ -889,7 +907,7 @@ describe("LibraryPage", () => {
         await Promise.resolve();
       });
       const favToggle = container.querySelector<HTMLElement>('[data-label="Sync RomM favorites"]');
-      expect(favToggle?.getAttribute("data-description")).toBe("Includes 7 favorited ROMs");
+      expect(favToggle?.closest(".rm-row")?.textContent).toContain("Includes 7 favorited ROMs");
     });
 
     it("renders the plural description for 0 favorited games", async () => {
@@ -905,7 +923,7 @@ describe("LibraryPage", () => {
         await Promise.resolve();
       });
       const favToggle = container.querySelector<HTMLElement>('[data-label="Sync RomM favorites"]');
-      expect(favToggle?.getAttribute("data-description")).toBe("Includes 0 favorited ROMs");
+      expect(favToggle?.closest(".rm-row")?.textContent).toContain("Includes 0 favorited ROMs");
     });
 
     it("clicking the favorites toggle calls saveCollectionSync with the favorites id and kind=user", async () => {
@@ -1023,9 +1041,9 @@ describe("LibraryPage", () => {
   describe("back button", () => {
     it("invokes onBack when the Back button is clicked", async () => {
       const onBack = vi.fn();
-      const { getByText } = render(<LibraryPage onBack={onBack} />);
+      const { getByLabelText } = render(<LibraryPage onBack={onBack} />);
       await flushAsync();
-      fireEvent.click(getByText("Back"));
+      fireEvent.click(getByLabelText("Back"));
       expect(onBack).toHaveBeenCalledTimes(1);
     });
   });
