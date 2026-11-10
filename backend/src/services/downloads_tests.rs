@@ -492,11 +492,14 @@ async fn one_transfer_at_a_time_in_position_order_with_move_to_front() {
     assert_eq!(positions, [1, 2, 3]);
 
     // 3 jumps the line; the running transfer is not pre-empted.
-    assert_eq!(env.svc.move_to_front(3).await["message"], "Moved to front");
+    assert_eq!(env.svc.move_to_front(JobKey::rom(3)).await["message"], "Moved to front");
     assert_eq!(job_row(&env, 3).await.unwrap().position, 0);
-    assert_eq!(env.svc.move_to_front(3).await["success"], true, "already first is a no-op");
+    assert_eq!(env.svc.move_to_front(JobKey::rom(3)).await["success"], true, "already first is a no-op");
     assert_eq!(job_row(&env, 3).await.unwrap().position, 0);
-    assert_eq!(env.svc.move_to_front(77).await["reason"], "not_queued");
+    assert_eq!(env.svc.move_to_front(JobKey::rom(77)).await["reason"], "not_queued");
+    let queue = env.svc.get_download_queue();
+    let order: Vec<i64> = queue["downloads"].as_array().unwrap().iter().map(|r| r["rom_id"].as_i64().unwrap()).collect();
+    assert_eq!(order, [3, 1, 2], "the queue is listed in position order");
 
     *env.romm.stall_at.lock().unwrap() = None;
     env.romm.release.notify_one();
@@ -644,6 +647,39 @@ async fn unreachable_server_stops_auto_resume_without_retry() {
             job_row(&env, id).await.unwrap().interrupt_reason.as_deref(),
             Some("server_unreachable")
         );
+    }
+}
+
+#[tokio::test]
+async fn interrupted_downloads_resume_once_the_server_is_reachable_again() {
+    let env = DownloadEnv::new().await;
+    three_roms(&env).await;
+    let sw = format!("{}/switch", env.roms_s());
+    std::fs::create_dir_all(&sw).unwrap();
+    for (id, pos) in [(1, 1), (2, 2)] {
+        let t = format!("{sw}/{id}.tmp");
+        std::fs::write(&t, b"x").unwrap();
+        env.jobs.save(&job(id, &t, JobStatus::Downloading, pos, Some(100))).await.unwrap();
+        env.romm.fail_rom(id, RommError::Connection("down".into()));
+    }
+    env.svc.reconcile_persisted_downloads().await;
+    env.wait_until("both marked", || {
+        [1, 2].iter().all(|id| env.entry(*id).unwrap()["reason"] == "server_unreachable")
+    })
+    .await;
+    // Still down: another round changes nothing but the attempt.
+    env.svc.resume_unreachable_interrupted().await;
+    env.wait_until("retry ended", || env.svc.st().auto_resume.as_ref().is_none_or(|h| h.is_finished())).await;
+    assert_eq!(env.entry(1).unwrap()["status"], "interrupted");
+
+    // The server is back.
+    for id in [1, 2] {
+        env.romm.set_rom(switch_rom(id, "x.nsp", 100));
+        env.romm.set_content(id, payload(100));
+    }
+    env.svc.resume_unreachable_interrupted().await;
+    for id in [1, 2] {
+        env.wait_status(id, "completed").await;
     }
 }
 

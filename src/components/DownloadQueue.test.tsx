@@ -118,6 +118,7 @@ describe("DownloadQueue", () => {
     vi.mocked(backend.cancelDownload).mockResolvedValue({ success: true, message: "" });
     vi.mocked(backend.pauseDownload).mockResolvedValue({ success: true, message: "" });
     vi.mocked(backend.resumeDownload).mockResolvedValue({ success: true, message: "" });
+    vi.mocked(backend.moveToFront).mockResolvedValue({ success: true, message: "" });
   });
 
   afterEach(() => {
@@ -1029,6 +1030,63 @@ describe("DownloadQueue", () => {
       const compact = render(<DownloadQueue compact onBack={() => {}} />);
       await flushMount();
       expect(buttonByText(compact.container, "Open Metroid")).toBeNull();
+    });
+  });
+
+  describe("Start now", () => {
+    beforeEach(() => {
+      vi.mocked(backend.pauseDownload).mockClear();
+      vi.mocked(backend.resumeDownload).mockClear();
+      vi.mocked(backend.moveToFront).mockClear();
+    });
+
+    it("moves a waiting download to the front, pauses the running one and re-reads the order", async () => {
+      const running = makeItem({ rom_id: 1, rom_name: "Zelda", status: "downloading", resumable: true });
+      const waiting = makeItem({ rom_id: 2, rom_name: "Mario", status: "queued" });
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({ downloads: [running, waiting] });
+      const { container } = await renderQueue();
+      const fetches = vi.mocked(backend.getDownloadQueue).mock.calls.length;
+      await act(async () => {
+        fireEvent.click(buttonByText(container, "Start now: Mario")!);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(backend.moveToFront).toHaveBeenCalledWith(2);
+      expect(backend.pauseDownload).toHaveBeenCalledWith(1);
+      expect(backend.resumeDownload).not.toHaveBeenCalled();
+      expect(vi.mocked(backend.getDownloadQueue).mock.calls.length).toBe(fetches + 1);
+    });
+
+    it("also resumes a paused download, and is not offered when nothing is transferring", async () => {
+      const running = makeItem({ rom_id: 1, rom_name: "Zelda", status: "downloading", resumable: true });
+      const paused = makeItem({ rom_id: 2, rom_name: "Mario", status: "paused" });
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({ downloads: [running, paused] });
+      const { container } = await renderQueue();
+      await act(async () => {
+        fireEvent.click(buttonByText(container, "Start now: Mario")!);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(backend.resumeDownload).toHaveBeenCalledWith(2);
+
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({ downloads: [paused] });
+      expect(buttonByText((await renderQueue()).container, "Start now: Mario")).toBeNull();
+    });
+
+    it("a refused reorder shows a toast and leaves the running download alone", async () => {
+      vi.mocked(backend.moveToFront).mockResolvedValue({ success: false, message: "No queued download" });
+      const running = makeItem({ rom_id: 1, rom_name: "Zelda", status: "downloading", resumable: true });
+      const waiting = makeItem({ rom_id: 2, rom_name: "Mario", status: "queued" });
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({ downloads: [running, waiting] });
+      const { container } = await renderQueue();
+      await act(async () => {
+        fireEvent.click(buttonByText(container, "Start now: Mario")!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(backend.pauseDownload).not.toHaveBeenCalled();
     });
   });
 });

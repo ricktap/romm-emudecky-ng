@@ -1,7 +1,15 @@
 import { useState, useEffect, useRef, FC, Fragment } from "react";
 import { toaster } from "@decky/api";
 import { PanelSection, PanelSectionRow, ButtonItem, Field, Navigation, ProgressBar } from "@decky/ui";
-import { getDownloadQueue, cancelDownload, pauseDownload, resumeDownload, getAppIdRomIdMap } from "../api/backend";
+import {
+  getDownloadQueue,
+  cancelDownload,
+  pauseDownload,
+  resumeDownload,
+  moveToFront,
+  getAppIdRomIdMap,
+} from "../api/backend";
+import { recordBytes, formatSpeed, formatEta } from "../utils/downloadSpeed";
 import { getDownloadState, setDownloads } from "../utils/downloadStore";
 import { formatBytes } from "../utils/formatters";
 import { scrollToTop } from "../utils/scrollHelpers";
@@ -132,6 +140,27 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack, compact }) => {
     }
   };
 
+  // "Start now": first in line, and whatever else is transferring steps aside (it stays paused, not lost).
+  const handleStartNow = async (item: DownloadItem, others: DownloadItem[]) => {
+    try {
+      const moved = await moveToFront(...callArgs(item));
+      if (moved && !moved.success) {
+        toaster.toast({ title: "EmuDecky RomM Manager", body: moved.message || "Could not reorder the queue" });
+        return;
+      }
+      await Promise.all(
+        others.filter((d) => d.status === "downloading" && downloadKey(d) !== downloadKey(item)).map(handlePause),
+      );
+      if (isStoppedStatus(item.status)) await handleResume(item);
+      // The backend owns the order: re-read it so the list matches the new queue.
+      const fresh = await getDownloadQueue();
+      setDownloads(fresh.downloads);
+      setLocalDownloads([...fresh.downloads]);
+    } catch {
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Could not start the download now" });
+    }
+  };
+
   const handleClearCompleted = () => {
     const finishedIds = downloads
       .filter((d) => d.status === "completed" || d.status === "failed" || d.status === "cancelled")
@@ -141,6 +170,14 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack, compact }) => {
       finishedIds.forEach((id) => next.add(id));
       return next;
     });
+  };
+
+  // Speed and time left of the running transfer, from the byte counts seen on each refresh.
+  const transferNote = (item: DownloadItem): string => {
+    if (item.status !== "downloading") return "";
+    const speed = recordBytes(downloadKey(item), item.bytes_downloaded, Date.now());
+    const parts = [formatSpeed(speed), formatEta(item.total_bytes - item.bytes_downloaded, speed)].filter(Boolean);
+    return parts.length ? ` · ${parts.join(" · ")}` : "";
   };
 
   const visible = downloads.filter((d) => !cleared.has(downloadKey(d)));
@@ -214,6 +251,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack, compact }) => {
                         {item.total_bytes > 0
                           ? `${formatBytes(item.bytes_downloaded)} / ${formatBytes(item.total_bytes)}`
                           : formatBytes(item.bytes_downloaded)}
+                        {transferNote(item)}
                       </span>
                     )}
                   </div>
@@ -264,6 +302,18 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack, compact }) => {
                         }}
                       >
                         {resumeActionLabel(item.reason)} {item.rom_name}
+                      </ButtonItem>
+                    </PanelSectionRow>
+                  )}
+                  {(item.status === "queued" || isStoppedStatus(item.status)) && active.some((d) => d.status === "downloading") && (
+                    <PanelSectionRow>
+                      <ButtonItem
+                        layout="below"
+                        onClick={() => {
+                          detach(handleStartNow(item, active));
+                        }}
+                      >
+                        Start now: {item.rom_name}
                       </ButtonItem>
                     </PanelSectionRow>
                   )}

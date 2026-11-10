@@ -60,6 +60,7 @@
   "get_whitelist_settings",
   "is_save_tracking_configured",
   "list_devices",
+  "move_to_front",
   "pause_download",
   "pre_launch_sync",
   "probe_reachability",
