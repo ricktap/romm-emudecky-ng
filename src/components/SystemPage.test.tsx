@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
 import { SystemPage, keyStateSummary } from "./SystemPage";
 import * as backend from "../api/backend";
+import { showModal } from "@decky/ui";
 import type { FirmwareStatus, SwitchKeyFile } from "../types";
 
 vi.mock("../utils/scrollHelpers", () => ({ scrollToTop: vi.fn() }));
@@ -42,6 +43,8 @@ vi.mock("@decky/ui", async () => {
         },
         (p.rgOptions ?? []).map((o) => ce("option", { key: o.data, value: o.data }, o.label)),
       ),
+    ConfirmModal: passthrough("div"),
+    showModal: vi.fn(),
     Field: (p: AnyProps & { label?: unknown; description?: unknown }) =>
       ce(
         "div",
@@ -273,6 +276,90 @@ describe("SystemPage — Switch firmware and keys", () => {
       await Promise.resolve();
     });
     expect(vi.mocked(backend.getFirmwareStatus).mock.calls.length).toBe(before + 1);
+  });
+});
+
+describe("SystemPage — replacing a key that differs from RomM's", () => {
+  beforeEach(() => {
+    vi.mocked(backend.replaceFirmwareKey).mockReset();
+    vi.mocked(showModal).mockReset();
+  });
+
+  it("offers an explicit Replace button only for a key that differs, per emulator", async () => {
+    const { container } = await renderPage(status());
+    expect(buttonByText(container, "Replace Ryujinx's prod.keys with RomM's")).toBeDefined();
+    expect(buttonByText(container, "Replace Eden's prod.keys")).toBeUndefined(); // Eden matches
+    expect(buttonByText(container, "title.keys with RomM's")).toBeUndefined(); // missing is a download, not a replace
+  });
+
+  it("offers nothing for a key RomM does not have, and nothing while RomM is offline", async () => {
+    const notOnRomm = await renderPage(status({ keys: [key({ on_romm: false, firmware_id: null })] }));
+    expect(buttonByText(notOnRomm.container, "Replace")).toBeUndefined();
+    const offline = await renderPage(status({ server_offline: true }));
+    expect(buttonByText(offline.container, "Replace")).toBeUndefined();
+  });
+
+  it("asks first, naming the backup, and does nothing until the user confirms", async () => {
+    const { container } = await renderPage(status());
+    await act(async () => {
+      fireEvent.click(buttonByText(container, "Replace Ryujinx's prod.keys with RomM's")!);
+      await Promise.resolve();
+    });
+    expect(showModal).toHaveBeenCalledTimes(1);
+    const modal = vi.mocked(showModal).mock.calls[0]![0] as { props: Record<string, unknown> };
+    expect(modal.props.strTitle).toBe("Replace Ryujinx's prod.keys?");
+    expect(modal.props.strDescription).toContain("prod.keys.romm-backup");
+    expect(modal.props.strCancelButtonText).toBe("Keep mine");
+    expect(backend.replaceFirmwareKey).not.toHaveBeenCalled();
+  });
+
+  it("confirming replaces the key for that emulator, shows the result and refreshes", async () => {
+    vi.mocked(backend.replaceFirmwareKey).mockResolvedValue({
+      success: true,
+      message: "Replaced Ryujinx's prod.keys with RomM's. Your old file is kept as prod.keys.romm-backup.",
+    });
+    const { container } = await renderPage(status());
+    await act(async () => {
+      fireEvent.click(buttonByText(container, "Replace Ryujinx's prod.keys with RomM's")!);
+      await Promise.resolve();
+    });
+    const before = vi.mocked(backend.getFirmwareStatus).mock.calls.length;
+    const modal = vi.mocked(showModal).mock.calls[0]![0] as { props: { onOK: () => void } };
+    await act(async () => {
+      modal.props.onOK();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(backend.replaceFirmwareKey).toHaveBeenCalledWith(3, "ryujinx");
+    expect(texts(container, "field-label")).toContain(
+      "Replaced Ryujinx's prod.keys with RomM's. Your old file is kept as prod.keys.romm-backup.",
+    );
+    expect(vi.mocked(backend.getFirmwareStatus).mock.calls.length).toBe(before + 1);
+  });
+
+  it("shows a refused replacement and a thrown one as notes without refreshing", async () => {
+    vi.mocked(backend.replaceFirmwareKey).mockResolvedValueOnce({ success: false, message: "did not match the checksum RomM reports; your file was not changed" });
+    const { container } = await renderPage(status());
+    const confirm = async () => {
+      await act(async () => {
+        fireEvent.click(buttonByText(container, "Replace Ryujinx's prod.keys with RomM's")!);
+        await Promise.resolve();
+      });
+      const calls = vi.mocked(showModal).mock.calls;
+      const modal = calls[calls.length - 1]![0] as { props: { onOK: () => void } };
+      await act(async () => {
+        modal.props.onOK();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    };
+    await confirm();
+    expect(texts(container, "field-label").some((l) => l?.includes("your file was not changed"))).toBe(true);
+    vi.mocked(backend.replaceFirmwareKey).mockRejectedValueOnce(new Error("socket"));
+    await confirm();
+    expect(texts(container, "field-label")).toContain("Could not replace the key: Error: socket");
   });
 });
 

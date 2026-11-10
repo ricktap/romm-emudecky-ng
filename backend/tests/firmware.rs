@@ -266,3 +266,24 @@ fn db(dirs: &Dirs) -> rusqlite::Connection {
     c.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
     c
 }
+
+#[tokio::test]
+async fn replace_firmware_key_swaps_a_differing_key_keeps_a_backup_and_refuses_what_is_not_a_replacement() {
+    let t = setup().await;
+    let mut b = Backend::spawn(&t.dirs).await;
+    // Ryujinx's own prod.keys differs from RomM's: an explicit replace installs RomM's and keeps the user's file.
+    let r = b.call("replace_firmware_key", json!([3, "ryujinx"])).await;
+    assert_eq!(r["success"], true, "{r}");
+    assert_eq!(std::fs::read(t.ryu_keys.join("prod.keys")).unwrap(), b"romm prod keys");
+    assert_eq!(std::fs::read(t.ryu_keys.join("prod.keys.romm-backup")).unwrap(), b"the user's own prod keys");
+    assert!(!t.ryu_keys.join("prod.keys.tmp").exists());
+    let status = b.call("get_firmware_status", json!([])).await;
+    let prod = status["keys"].as_array().unwrap().iter().find(|k| k["file_name"] == "prod.keys").unwrap();
+    assert!(prod["emulators"].as_array().unwrap().iter().all(|e| e["state"] == "matches"), "{prod}");
+    // a second call has nothing to replace, a missing key is a download, bad arguments are an answer, not a crash
+    assert_eq!(b.call("replace_firmware_key", json!([3, "ryujinx"])).await["reason"], "already_matches");
+    assert_eq!(b.call("replace_firmware_key", json!([4, "ryujinx"])).await["reason"], "not_present");
+    assert_eq!(b.call("replace_firmware_key", json!(["x", 5])).await["reason"], "invalid_arguments");
+    assert_eq!(b.call("replace_firmware_key", json!([5, "eden"])).await["reason"], "not_a_key");
+    b.shutdown().await;
+}

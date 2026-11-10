@@ -69,6 +69,7 @@
   "remove_all_shortcuts",
   "remove_platform_shortcuts",
   "remove_rom",
+  "replace_firmware_key",
   "report_removal_results",
   "report_unit_results",
   "resolve_sync_conflict",

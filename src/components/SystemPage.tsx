@@ -1,12 +1,13 @@
-import { useState, useEffect, FC } from "react";
-import { PanelSection, PanelSectionRow, ButtonItem, Field, DropdownItem } from "@decky/ui";
+import { useState, useEffect, FC, Fragment, createElement } from "react";
+import { PanelSection, PanelSectionRow, ButtonItem, Field, DropdownItem, ConfirmModal, showModal } from "@decky/ui";
 import {
   getFirmwareStatus,
   downloadAllFirmware,
   downloadRequiredFirmware,
   saveFirmwareVersion,
+  replaceFirmwareKey,
 } from "../api/backend";
-import type { FirmwareStatus, KeyState, SwitchKeyFile } from "../types";
+import type { FirmwareStatus, KeyEmulatorState, KeyState, SwitchKeyFile } from "../types";
 import { formatBytes } from "../utils/formatters";
 import { scrollToTop } from "../utils/scrollHelpers";
 import { detach } from "../utils/detach";
@@ -95,6 +96,34 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
     setDownloading(false);
   };
 
+  // Replacing is explicit, per file and emulator, and asks first: the user's own file is kept as <name>.romm-backup.
+  const askReplace = (key: SwitchKeyFile, emulator: KeyEmulatorState) => {
+    if (key.firmware_id == null) return;
+    const firmwareId = key.firmware_id;
+    showModal(
+      createElement(ConfirmModal, {
+        strTitle: `Replace ${emulator.label}'s ${key.file_name}?`,
+        strDescription: `${emulator.label}'s ${key.file_name} differs from the one on RomM. RomM's file is downloaded and verified first, and your current file is kept next to it as ${key.file_name}.romm-backup.`,
+        strOKButtonText: "Replace",
+        strCancelButtonText: "Keep mine",
+        onOK: () => {
+          detach(
+            (async () => {
+              setNote("");
+              try {
+                const result = await replaceFirmwareKey(firmwareId, emulator.id);
+                setNote(result.message || (result.success ? "Replaced" : "Could not replace the key"));
+                if (result.success) await refresh();
+              } catch (e) {
+                setNote(`Could not replace the key: ${e}`);
+              }
+            })(),
+          );
+        },
+      }),
+    );
+  };
+
   const keys = status?.keys ?? [];
   const firmware = status?.firmware ?? [];
   const requiredMissing = keys.filter((k) => k.required && k.emulators.some((e) => e.state === "missing")).length;
@@ -165,12 +194,25 @@ export const SystemPage: FC<SystemPageProps> = ({ onBack }) => {
       {status && keys.length > 0 && (
         <PanelSection title={requiredMissing > 0 ? "Keys — required keys missing" : "Keys"}>
           {keys.map((key) => (
-            <PanelSectionRow key={key.file_name}>
-              <Field
-                label={`${key.file_name}${key.required ? "" : " (optional)"}${key.on_romm ? "" : " — not on RomM"}`}
-                description={keyStateSummary(key)}
-              />
-            </PanelSectionRow>
+            <Fragment key={key.file_name}>
+              <PanelSectionRow>
+                <Field
+                  label={`${key.file_name}${key.required ? "" : " (optional)"}${key.on_romm ? "" : " — not on RomM"}`}
+                  description={keyStateSummary(key)}
+                />
+              </PanelSectionRow>
+              {key.on_romm &&
+                !status.server_offline &&
+                key.emulators
+                  .filter((e) => e.state === "differs")
+                  .map((e) => (
+                    <PanelSectionRow key={`${key.file_name}-${e.id}`}>
+                      <ButtonItem layout="below" onClick={() => askReplace(key, e)}>
+                        Replace {e.label}&apos;s {key.file_name} with RomM&apos;s
+                      </ButtonItem>
+                    </PanelSectionRow>
+                  ))}
+            </Fragment>
           ))}
         </PanelSection>
       )}

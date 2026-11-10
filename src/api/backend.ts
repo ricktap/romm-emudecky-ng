@@ -229,6 +229,14 @@ export const applySteamInputSetting = callable<[], { success: boolean; message: 
 export const getFirmwareStatus = callable<[], FirmwareStatus>("get_firmware_status");
 export const downloadAllFirmware = callable<[string], FirmwareDownloadResult>("download_all_firmware");
 export const downloadRequiredFirmware = callable<[string], FirmwareDownloadResult>("download_required_firmware");
+/**
+ * Replace one emulator's key file that differs from RomM's with RomM's verified copy (the user's file is kept as
+ * `<name>.romm-backup`). Arguments: the key's firmware id and the emulator id.
+ */
+export const replaceFirmwareKey = callable<
+  [number, string],
+  { success: boolean; message?: string; reason?: string; backup_path?: string }
+>("replace_firmware_key");
 /** Save the firmware version to download (`""` = the newest RomM has). */
 export const saveFirmwareVersion = callable<[string], { success: boolean; message?: string; reason?: string }>(
   "save_firmware_version",

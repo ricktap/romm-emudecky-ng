@@ -39,7 +39,7 @@ const CALLABLE_NAMES_JSON: &str = include_str!("../callables.json");
 /// (a result, not a protocol error: Decky turns an error frame into an opaque
 /// "Python Exception", so the frontend could not tell it from a crash).
 pub const PORTED_CALLABLES: &[&str] = &[
-    "get_firmware_status", "save_firmware_version", "download_required_firmware", "download_all_firmware",
+    "get_firmware_status", "save_firmware_version", "replace_firmware_key", "download_required_firmware", "download_all_firmware",
     "get_version_list", "switch_version", "evaluate_launch", "check_local_drift", "check_core_change",
     "remove_rom", "uninstall_all_roms", "apply_steam_input_setting", "check_for_update",
     "record_session_start", "finalize_game_session", "get_all_playtime", "get_playtime_scope_notice", "reconcile_playtime",
@@ -370,6 +370,12 @@ impl Backend {
             "save_firmware_version" => bind(name,1,1,firmware.clone(),|s,a|async move{
                 match a[0].as_str() {Some(v)=>Ok(s.set_firmware_version(v).await),None=>Ok(crate::domain::errors::failure("invalid_version","Not a firmware version"))}
             }),
+            "replace_firmware_key" => bind(name,2,2,firmware.clone(),|s,a|async move{
+                match (a[0].as_i64(), a[1].as_str()) {
+                    (Some(id),Some(emu)) => Ok(s.replace_key(id,emu).await),
+                    _ => Ok(crate::domain::errors::failure("invalid_arguments","replace_firmware_key takes a firmware id and an emulator id")),
+                }
+            }),
             "download_required_firmware" => { let d2=d.clone(); bind(name,1,1,firmware.clone(),move|s,a|{let d=d2.clone();async move{firmware_download(&s,&d,&a[0],false).await}}) }
             "download_all_firmware" => { let d2=d.clone(); bind(name,1,1,firmware,move|s,a|{let d=d2.clone();async move{firmware_download(&s,&d,&a[0],true).await}}) }
             "get_version_list" => bind(name,1,1,versions,|s,a|async move{s.list(rom_id_arg(&a[0])?).await.map_err(err)}),
@@ -675,7 +681,7 @@ mod tests {
     #[test]
     fn surface_matches_python_backend_size_and_includes_ported() {
         let names = callable_names();
-        assert_eq!(names.len(), 107);
+        assert_eq!(names.len(), 108);
         let mut dedup = names.clone();
         dedup.dedup();
         assert_eq!(dedup.len(), names.len());
