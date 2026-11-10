@@ -10,7 +10,6 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "esModuleInterop": true,
-    "resolveJsonModule": true,
     "noImplicitReturns": true,
     "noImplicitThis": true,
     "noImplicitAny": true,

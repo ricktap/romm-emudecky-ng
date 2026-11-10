@@ -1,5 +1,4 @@
-import callablesJson from "../../backend/callables.json";
-import appRs from "../../backend/src/app.rs?raw";
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { call, toast } = vi.hoisted(() => ({ call: vi.fn(), toast: vi.fn() }));
@@ -94,8 +93,10 @@ describe("unportedCallable", () => {
 
 describe("the registered names", () => {
   it("are exactly the callables the Rust backend has not ported", () => {
-    const all: string[] = callablesJson;
-    const block = appRs.slice(appRs.indexOf("PORTED_CALLABLES"));
+    const root = `${process.cwd()}/`; // vitest runs from the repo root
+    const all: string[] = JSON.parse(readFileSync(`${root}backend/callables.json`, "utf8"));
+    const app = readFileSync(`${root}backend/src/app.rs`, "utf8");
+    const block = app.slice(app.indexOf("PORTED_CALLABLES"));
     const ported = new Set([...block.slice(0, block.indexOf("];")).matchAll(/"([a-z_0-9]+)"/g)].map((m) => m[1]));
     const unported = all.filter((name) => !ported.has(name)).sort();
     // When a callable is ported, switch it from unportedCallable() back to callable()
