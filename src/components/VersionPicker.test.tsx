@@ -145,16 +145,15 @@ describe("VersionPicker — render gate", () => {
     expect(container.textContent).not.toContain("Version");
   });
 
-  it("renders a compact icon trigger (no verbose label) for a multi-version group", async () => {
+  it("renders a compact chip that shows the active version's label", async () => {
     vi.mocked(backend.getVersionList).mockResolvedValue(multiVersionList());
 
     const { findByTestId } = render(<VersionPicker appId={APP_ID} />);
 
     const btn = await findByTestId("version-btn");
-    // Icon-only trigger — the active version's verbose label is NOT on the trigger
-    // itself (it lives in the anchored menu + the GAME INFO tab), so the play row
-    // stays compact next to the disc picker.
-    expect(btn.textContent).not.toContain("Game (USA)");
+    // The chip names the version currently in use; the full per-version detail stays in the anchored menu.
+    expect((await findByTestId("version-value")).textContent).toBe("Game (USA)");
+    expect(btn.textContent).toContain("Game (USA)");
   });
 });
 

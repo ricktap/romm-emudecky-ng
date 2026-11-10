@@ -210,6 +210,9 @@ export const DiscSelector: FC<DiscSelectorProps> = ({ appId }) => {
       ) : (
         <DiscWithNumber size={22} color={isPinned ? DISC_ACCENT : DISC_GREY} num={activeNum} />
       )}
+      <span data-testid="disc-value" style={{ fontSize: "12px", whiteSpace: "nowrap" }}>
+        {showPlaylistFace ? "All discs" : `${isFilePick ? "File" : "Disc"} ${activeNum}`.trim()}
+      </span>
       <FaChevronDown size={10} color="#cfd3d8" />
     </DialogButton>
   );

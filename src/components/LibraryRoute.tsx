@@ -1,6 +1,6 @@
 import { FC, useEffect, useState } from "react";
-import { Navigation, Tabs } from "@decky/ui";
-import { getLibraryTab, setLibraryTab, type LibraryTab } from "../utils/libraryRoute";
+import { DialogButton, Navigation, Tabs } from "@decky/ui";
+import { getLibraryPlatformFilter, setLibraryPlatformFilter, getLibraryTab, setLibraryTab, type LibraryTab } from "../utils/libraryRoute";
 import { getLibraryOverview } from "../api/backend";
 import type { LibraryOverview } from "../types";
 import { SettingsPage } from "./SettingsPage";
@@ -26,17 +26,35 @@ const LibraryTabContent: FC = () => {
     };
   }, []);
 
+  const [filter, setFilter] = useState<string | null>(getLibraryPlatformFilter());
+
   if (!overview) return <div style={{ padding: "16px" }}>Loading library...</div>;
   if (!overview.success) {
     return <div style={{ padding: "16px" }}>{overview.message ?? "Could not load the library"}</div>;
   }
-  const installed = overview.roms.filter((r) => r.installed).length;
+  const roms = filter ? overview.roms.filter((r) => r.platform_slug === filter) : overview.roms;
+  const platforms = filter ? overview.platforms.filter((p) => p.platform_slug === filter) : overview.platforms;
+  const installed = roms.filter((r) => r.installed).length;
   return (
     <div style={{ padding: "16px" }}>
+      {filter && (
+        <div style={{ marginBottom: "8px" }}>
+          <span data-testid="library-filter">Showing {filter} only</span>{" "}
+          <DialogButton
+            style={{ display: "inline-flex", minWidth: "auto", width: "auto", padding: "2px 10px" }}
+            onClick={() => {
+              setLibraryPlatformFilter(null);
+              setFilter(null);
+            }}
+          >
+            Show all
+          </DialogButton>
+        </div>
+      )}
       <div>
-        {overview.roms.length} games, {installed} installed
+        {roms.length} games, {installed} installed
       </div>
-      {overview.platforms.map((p) => (
+      {platforms.map((p) => (
         <div key={p.platform_slug} style={{ opacity: 0.7 }}>
           {p.platform_slug}: {p.count} games, {p.installed} installed
         </div>

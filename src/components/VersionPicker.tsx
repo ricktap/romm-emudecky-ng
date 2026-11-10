@@ -421,6 +421,11 @@ export const VersionPicker: FC<VersionPickerProps> = ({ appId }) => {
       style={switching ? { opacity: 0.55 } : {}}
     >
       <FaLayerGroup size={20} color={activeIsDefault ? NEUTRAL_GREY : ACTIVE_ACCENT} />
+      {active && (
+        <span data-testid="version-value" style={{ fontSize: "12px", whiteSpace: "nowrap" }}>
+          {active.label || active.name || String(active.rom_id)}
+        </span>
+      )}
       {switching ? (
         <span className="romm-throbber" style={{ width: "14px", height: "14px" }} />
       ) : (

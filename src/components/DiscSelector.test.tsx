@@ -147,8 +147,9 @@ describe("DiscSelector — multi-disc rendering", () => {
 
     const { r, menu } = await renderAndOpen();
 
-    // Playlist default face is the 3-disc stack — icon-only, carries no number.
-    expect(r.getByTestId("disc-btn").textContent).toBe("");
+    // Playlist default face is the 3-disc stack with its value written out: "All discs".
+    expect(r.getByTestId("disc-btn").textContent).toBe("All discs");
+    expect(r.getByTestId("disc-value").textContent).toBe("All discs");
     // The menu lists the m3u default followed by each disc.
     const items = within(menu.container).getAllByRole("menuitem");
     expect(items.map((i) => i.textContent.replace("✓", ""))).toEqual(["All discs (m3u)", "Disc 1", "Disc 2", "Disc 3"]);
@@ -160,8 +161,8 @@ describe("DiscSelector — multi-disc rendering", () => {
 
     const { r, menu } = await renderAndOpen();
 
-    // Active face = pinned disc 2 → the icon-only face shows just the number "2".
-    expect(r.getByTestId("disc-btn").textContent).toBe("2");
+    // Active face = pinned disc 2 → the icon shows the number and the chip says "Disc 2".
+    expect(r.getByTestId("disc-value").textContent).toBe("Disc 2");
     // No "All discs" entry — the discs ARE the options.
     const items = within(menu.container).getAllByRole("menuitem");
     expect(items.map((i) => i.textContent.replace("✓", ""))).toEqual(["Disc 1", "Disc 2"]);
@@ -190,7 +191,7 @@ describe("DiscSelector — launch-file pick (Switch folder)", () => {
 
     const { r, menu } = await renderAndOpen();
 
-    expect(r.getByTestId("disc-btn").textContent).toBe("1");
+    expect(r.getByTestId("disc-value").textContent).toBe("File 1");
     expect(within(menu.container).getAllByRole("menuitem")).toHaveLength(2);
     expect(captured.menu).not.toBeNull();
     expect((captured.menu as { props: { label: string } }).props.label).toBe("Launch file");
@@ -268,7 +269,7 @@ describe("DiscSelector — selecting a disc", () => {
     });
 
     // The face now reflects the pinned disc — its number is "3".
-    expect((await r.findByTestId("disc-btn")).textContent).toBe("3");
+    expect((await r.findByTestId("disc-value")).textContent).toBe("Disc 3");
   });
 
   it("toasts the failure message and does NOT confirm-set launch options when selectDisc fails", async () => {

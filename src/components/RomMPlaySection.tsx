@@ -12,7 +12,7 @@
  */
 
 import { useState, useEffect, useRef, FC, createElement } from "react";
-import { toaster } from "@decky/api";
+import { toaster, addEventListener, removeEventListener } from "@decky/api";
 import {
   ConfirmModal,
   DialogButton,
@@ -24,11 +24,12 @@ import {
   showModal,
 } from "@decky/ui";
 import { basicAppDetailsSectionStylerClasses } from "../utils/deckyUiInternals";
-import { FaGamepad, FaCog, FaMicrochip, FaExclamationTriangle } from "react-icons/fa";
+import { FaGamepad, FaCog, FaMicrochip, FaExclamationTriangle, FaThLarge } from "react-icons/fa";
 import { CustomPlayButton } from "./CustomPlayButton";
 import { DiscSelector } from "./DiscSelector";
 import { VersionPicker } from "./VersionPicker";
 import { WarningCard } from "./WarningCard";
+import { ReadinessStrip } from "./ReadinessStrip";
 import { SgdbGamePickerModalContent } from "./SgdbGamePickerModal";
 import { applyArtwork } from "../utils/artwork";
 import { hasAnySaveConflict } from "../utils/saveStatus";
@@ -36,6 +37,7 @@ import { scrollToTop } from "../utils/scrollHelpers";
 import { getEventTarget } from "../utils/events";
 import {
   getCachedGameDetail,
+  getInstalledRom,
   invalidateCachedGameDetail,
   testConnection,
   probeReachability,
@@ -54,6 +56,7 @@ import {
   logError,
 } from "../api/backend";
 import { setLaunchOptionsConfirmed } from "../utils/steamShortcuts";
+import { openLibraryRoute } from "../utils/libraryRoute";
 import { updatePlaytimeDisplay } from "../patches/metadataPatches";
 import { buildEmulatorMenu } from "../utils/emulatorMenu";
 import type { EmulatorOption, SaveStatus } from "../types";
@@ -232,6 +235,8 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
   // recovery probe), not just at this mount's check (#1345).
   const connectionState = useRommConnectionState();
   const [actionPending, setActionPending] = useState<string | null>(null);
+  // Whether the ROM is on this device: the Remove group of the RomM menu only exists for an installed ROM.
+  const [installed, setInstalled] = useState(false);
   const romIdRef = useRef<number | null>(null);
 
   // Drive the offline recovery probe while this game page is mounted (#1345).
@@ -531,6 +536,32 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
     };
   }, [info.romId, info.saveSyncEnabled]);
 
+  // Installed state for the Remove group of the RomM menu. Re-read when this ROM's download completes;
+  // cleared when it is uninstalled.
+  useEffect(() => {
+    const romId = info.romId;
+    if (!romId) return;
+    let cancelled = false;
+    const refresh = () => {
+      Promise.resolve(getInstalledRom(romId))
+        .then((rom) => !cancelled && setInstalled(rom != null))
+        .catch(() => undefined);
+    };
+    refresh();
+    const onComplete = addEventListener<[{ rom_id?: number }]>("download_complete", (evt) => {
+      if (evt?.rom_id === romId) refresh();
+    });
+    const onUninstall = (e: Event) => {
+      if ((e as CustomEvent<{ rom_id?: number }>).detail?.rom_id === romId) setInstalled(false);
+    };
+    globalThis.addEventListener("romm_rom_uninstalled", onUninstall);
+    return () => {
+      cancelled = true;
+      removeEventListener("download_complete", onComplete);
+      globalThis.removeEventListener("romm_rom_uninstalled", onUninstall);
+    };
+  }, [info.romId]);
+
   // Reactive PLAYTIME display (#869) — re-read Steam's overview whenever the
   // playtime write-chokepoint (updatePlaytimeDisplay) fires romm_playtime_changed
   // for this appId. Drives the displayed PLAYTIME / LAST PLAYED from the source
@@ -717,7 +748,7 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
       createElement(ConfirmModal, {
         strTitle: "Delete Local Saves",
         strDescription:
-          "This will delete local save files for this game. Make sure saves are synced to RomM first — the next sync will re-download them from the server.",
+          "This will delete local save files for this game. Make sure saves are synced to RomM first — the next sync will re-download them from the server. The game itself, its Steam shortcut and the saves on RomM are kept.",
         strOKButtonText: "Delete",
         strCancelButtonText: "Cancel",
         onOK: () => {
@@ -743,6 +774,22 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
               }
             })(),
           );
+        },
+      }),
+    );
+  };
+
+  const confirmUninstall = () => {
+    if (actionPending || !info.romId) return;
+    showModal(
+      createElement(ConfirmModal, {
+        strTitle: "Uninstall ROM",
+        strDescription:
+          "This removes the downloaded game files from this device. Kept: the Steam shortcut (with its artwork and collections), your playtime, and your saves on RomM. You can download the game again at any time.",
+        strOKButtonText: "Uninstall",
+        strCancelButtonText: "Cancel",
+        onOK: () => {
+          detach(handleUninstall());
         },
       }),
     );
@@ -851,61 +898,44 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
   };
 
 
+  // Grouped like the design: Game, Saves, then Remove (only for an installed ROM). Separators between groups.
   const showRomMMenu = (e: Event) => {
-    showContextMenu(
+    const items = [
       createElement(
-        Menu,
-        { label: "RomM Actions" },
-        createElement(
-          MenuItem,
-          {
-            key: "refresh-artwork",
-            onClick: () => {
-              detach(handleRefreshArtwork());
-            },
+        MenuItem,
+        { key: "refresh-artwork", onClick: () => detach(handleRefreshArtwork()) },
+        "Refresh Artwork",
+      ),
+      createElement(
+        MenuItem,
+        { key: "refresh-metadata", onClick: () => detach(handleRefreshMetadata()) },
+        "Refresh Metadata",
+      ),
+      createElement(MenuSeparator, { key: "sep-saves" }),
+      createElement(MenuItem, { key: "sync-saves", onClick: () => detach(handleSyncSaves()) }, "Sync Save Files"),
+      createElement(
+        MenuItem,
+        {
+          key: "save-history",
+          onClick: () => {
+            globalThis.dispatchEvent(new CustomEvent("romm_tab_switch", { detail: { tab: "saves" } }));
           },
-          "Refresh Artwork",
-        ),
-        createElement(
-          MenuItem,
-          {
-            key: "refresh-metadata",
-            onClick: () => {
-              detach(handleRefreshMetadata());
-            },
-          },
-          "Refresh Metadata",
-        ),
-        createElement(
-          MenuItem,
-          {
-            key: "sync-saves",
-            onClick: () => {
-              detach(handleSyncSaves());
-            },
-          },
-          "Sync Save Files",
-        ),
-        createElement(MenuSeparator, { key: "sep" }),
+        },
+        "Save History",
+      ),
+    ];
+    if (installed) {
+      items.push(
+        createElement(MenuSeparator, { key: "sep-remove" }),
         createElement(
           MenuItem,
           { key: "delete-saves", tone: "destructive", onClick: handleDeleteSaves },
-          "Delete Local Saves",
+          "Delete Local Saves…",
         ),
-        createElement(
-          MenuItem,
-          {
-            key: "uninstall",
-            tone: "destructive",
-            onClick: () => {
-              detach(handleUninstall());
-            },
-          },
-          "Uninstall",
-        ),
-      ),
-      getEventTarget(e),
-    );
+        createElement(MenuItem, { key: "uninstall", tone: "destructive", onClick: confirmUninstall }, "Uninstall ROM…"),
+      );
+    }
+    showContextMenu(createElement(Menu, { label: "RomM Actions" }, ...items), getEventTarget(e));
   };
 
   const showSteamMenu = (e: Event) => {
@@ -1068,6 +1098,22 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
             ),
           ]
         : []),
+      // Opens the full-screen library narrowed to this game's platform
+      ...(info.platformSlug
+        ? [
+            createElement(
+              DialogButton,
+              {
+                key: "library-btn",
+                className: "romm-gear-btn",
+                onClick: () => openLibraryRoute("library", { platform: info.platformSlug }),
+                onFocus: scrollToTop,
+                title: "Show in RomM Library",
+              },
+              createElement(FaThLarge, { size: 18, color: "#8f98a0" }),
+            ),
+          ]
+        : []),
       // Steam properties button
       createElement(
         DialogButton,
@@ -1081,6 +1127,20 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
       ),
     ),
   );
+
+  // Readiness strip: what the game needs besides the ROM itself (BIOS, saves), with one-tap fixes. It needs the
+  // rom id, so it appears once the cached detail has loaded.
+  const readinessStrip = info.romId
+    ? createElement(ReadinessStrip, {
+        key: "readiness-strip",
+        romId: info.romId,
+        platformSlug: info.platformSlug,
+        saveSyncEnabled: info.saveSyncEnabled,
+        saveSyncStatus: info.saveSyncStatus,
+        saveSyncLabel: info.saveSyncLabel,
+        activeCoreLabel: info.activeCoreLabel,
+      })
+    : null;
 
   // Content-dir warning (#239) — prominent banner above the play row when
   // RetroArch writes saves to the content directory. The play row still renders
@@ -1096,8 +1156,10 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
           "RetroArch's 'Write Saves to Content Directory' is enabled, so saves go next to the ROM and can't be synced. Turn it off in RetroArch → Settings → Saving to re-enable save sync.",
       }),
       playSectionRow,
+      readinessStrip,
     );
   }
 
-  return playSectionRow;
+  if (!readinessStrip) return playSectionRow;
+  return createElement("div", { style: { display: "flex", flexDirection: "column" } }, playSectionRow, readinessStrip);
 };
