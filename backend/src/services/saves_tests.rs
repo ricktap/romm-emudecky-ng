@@ -1071,3 +1071,11 @@ async fn refreshing_the_status_pushes_it_to_the_frontend_as_an_event() {
     assert_eq!(events[0].0, "save_status_updated");
     assert_eq!((events[0].1["rom_id"].clone(), events[0].1["files"][0]["status"].clone()), (json!(ROM), json!("upload")));
 }
+
+#[tokio::test]
+async fn a_game_whose_save_cannot_be_located_never_shows_the_slot_wizard() {
+    let e = env_with("Metroid Dread NSW-VENOM.xci", true).await;
+    e.api.seed(ROM, "Mine", FILE, &zelda_save("x"), OTHER);
+    let info = e.svc.get_save_setup_info(ROM).await;
+    assert_eq!((info["recommended_action"].clone(), info["unsupported_reason"].clone()), (json!("auto_confirm_default"), json!("needs_title_id")), "{info}");
+}

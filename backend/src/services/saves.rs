@@ -1164,10 +1164,13 @@ impl SaveService {
                 })
             })
             .collect();
-        let recommended = if local.is_some() && server_slots.is_empty() { "auto_confirm_default" } else { "show_wizard" };
+        // A game whose save cannot be located yet has nothing to choose a slot for: no wizard, the default slot is confirmed
+        // quietly (it is only a label until the save is known), so the launch is not interrupted.
+        let recommended = if subject.is_err() || (local.is_some() && server_slots.is_empty()) { "auto_confirm_default" } else { "show_wizard" };
         json!({
             "has_local_saves": local.is_some(), "local_files": local_files, "server_slots": server_slots, "default_slot": default,
             "slot_confirmed": confirmed, "active_slot": active, "recommended_action": recommended, "server_query_failed": false,
+            "unsupported_reason": subject.as_ref().err().map(Unsupported::reason),
         })
     }
 
