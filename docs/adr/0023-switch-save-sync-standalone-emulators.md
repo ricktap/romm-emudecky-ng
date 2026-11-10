@@ -2,7 +2,7 @@
 
 ## Status
 
-**Proposed** (2026-11-10). Needs Patrick's approval and the device facts in §7 before any code. Issue #33; blocks #34
+**Proposed** (2026-11-10), revised the same day with the device facts of §7 (Steam Deck and a Bazzite PC). Patrick agrees with the direction; open points are listed at the end. Issue #33; blocks #34
 (provider port + Eden/yuzu), #35 (Ryujinx), #36 (hardware acceptance). Builds on
 [ADR-0016](0016-save-sync-hands-detection-to-romm-negotiate.md) and
 [ADR-0017](0017-client-baseline-detection-authoritative-negotiate-is-transport.md); it changes neither: client-side
@@ -34,31 +34,47 @@ baseline is the hash of the bytes we upload).
 
 A game's title ID comes from, in this order, and is **never guessed**:
 
-1. **A `[0100XXXXXXXXXXXX]` tag in the file name** (the convention of NSP/XCI dumps; our own test data uses it, e.g.
-   `Game [010018E011D92000][v0].nsp`). Exactly one 16-hex tag with the `01` prefix is accepted.
-2. **RomM metadata**, if the server ever exposes it (today it does not reliably; not relied on).
-3. **A user-confirmed mapping**: the game page offers *Choose save folder* with the title folders that exist in the
-   emulator's save directory; the choice is stored per ROM (new table `rom_title_ids`, migration 015) and survives
-   re-syncs.
+1. **A `[0100XXXXXXXXXXXX]` tag in the file name.** Exactly one 16-hex tag with the `01` prefix. *Device finding:* on the Deck
+   only one of about ten Switch ROMs carries it (the others are folders or untagged `.xci` names), so this is the
+   exception, not the rule.
+2. **RomM data**, if the server's game JSON carries a Switch title ID (to be checked on a real Switch game, §7). Not relied on.
+3. **Learned from play.** Around a play session the plugin notes which title folders in the emulator's save directory
+   changed (new or modified files). The one folder that changed is **proposed** on the game page ("This game saved to
+   `<TITLEID>`: use it?") and bound only after the user confirms. Several changed folders (a game that touches two titles) or none:
+   no proposal.
+4. **A manual pick**: *Choose save folder* lists the title folders that exist locally.
 
-Without a title ID the game is **unsupported** and the SAVES chip says so ("Choose save folder"). Update and DLC IDs are
-normalised to the **base title ID** (an update is `base | 0x800`; DLC is `(base & ~0xFFF) + 0x1000 + n` and owns no
-saves). Parsing the NSP/XCI header is **out**: it needs the user's `prod.keys` to read the CNMT and would couple save
-sync to key handling.
+The confirmed ID is stored per ROM (new table `rom_title_ids`, migration 015) and survives re-syncs. Without an ID the game
+is **unsupported** and the SAVES chip says so. Update and DLC IDs are normalised to the **base title ID** (an update is
+`base | 0x800`; DLC owns no saves). Parsing NSP/XCI headers stays **out** (it needs `prod.keys`).
 
 ### 2. Layouts, one provider per resolved emulator
 
 `SaveLocationProvider::locations_for(emulator, title_id) -> Vec<SaveLocation>` is selected by the **resolved emulator**
-(including the per-game override), never by system. A location is a directory plus a way to enumerate and restore it.
+(including the per-game override), never by system. The roots come from the emulator's **own configuration**, because the
+default and the configured location differ in practice (§7):
 
-| Emulator | Save directory | Notes |
-| -------- | -------------- | ----- |
-| Eden | `<data>/nand/user/save/0000000000000000/<profile>/<TITLEID>/` | `<data>` from EmuDeck's config; to be verified (§7) |
-| yuzu | the same layout under yuzu's data dir | same provider, different root |
-| Ryujinx | `<config>/bis/user/save/<index>/`, found through the index in `bis/user/saveMeta` | its own reader (#35): the title-ID→index mapping is read from Ryujinx's own metadata; unreadable index = **unsupported**, never a guess |
+| Emulator | Where the saves are | How the provider finds them |
+| -------- | ------------------- | --------------------------- |
+| Eden | `<nand_directory>/user/save/0000000000000000/<profile>/<TITLEID>/` | `nand_directory` from `~/.config/eden/qt-config.ini`; the Deck's is `~/.local/share/eden/nand` (internal), the Bazzite PC's is `~/Emulation/storage/eden/nand` |
+| yuzu | the same layout | `nand_directory` from `~/.config/yuzu/qt-config.ini`; on the Deck it ends up on the SD card (`Emulation/storage/yuzu/nand`, reachable as `Emulation/saves/yuzu/saves`) while `~/.local/share/yuzu/nand/user/save` is absent |
+| Ryujinx | `<config>/bis/user/save/<index>/`, `<index>` e.g. `0000000000000001` | no title ID in the path: see Ryujinx below |
 
-Roots are derived from `$HOME` and EmuDeck's `settings.json` (CLAUDE.md), including EmuDeck's symlinked
-`Emulation/saves/<emulator>` layout; the provider resolves symlinks and works on the real directory.
+EmuDeck's `Emulation/saves/<emulator>` entries are symlinks or mirrors of those directories (and absent for some
+emulators); the provider never relies on them, it resolves the configured directory and canonicalises it. A missing
+config, a missing directory or an unreadable file means **unsupported**, never a fallback path. EmuDeck's `storagePath` can
+be the literal text `$HOME` on a Bazzite PC (the existing `expand` handles it).
+
+**Ryujinx.** An index directory holds `ExtraData0` and `ExtraData1` (512 bytes each), the two commit directories `0` and
+`1` (each with `save.meta` and the data), and a `.lock`. The title is identified from the index's `ExtraData0` header (the
+save attribute: program ID, then user ID; to be verified with a hex dump, §7), cross-checked with `saveMeta`. The index
+number differs per machine. Consequences:
+
+- The **whole index directory** is the unit (both commit directories and the extra data), except `.lock`; a partial copy
+  would corrupt Ryujinx's double buffering.
+- A restore **only replaces the contents of an index that already exists locally** for that title. Creating a new save index
+  would mean writing Ryujinx's own index (`imkvdb` / `saveMeta`), which we do not do. A machine that never saved the game
+  shows "start the game once on this machine, then sync" instead of restoring.
 
 ### 3. Directory saves: one deterministic archive per `(rom, slot)`
 
@@ -68,8 +84,8 @@ and no consistent version across them; RomM's slot/version model assumes one obj
 - The archive is **deterministic**: entries sorted by path, fixed timestamps (1980-01-01), no extra fields, fixed
   compression level. The same content always yields the same bytes and therefore the same hash, so
   `compute_sync_action` sees "unchanged" instead of false conflicts.
-- Entry paths are **relative to the profile folder** (`<TITLEID>/...`), so an archive made on one machine restores
-  into another machine's profile.
+- Entry paths carry the **role**, not the IDs (`zero/…`, `user/…` for Eden/yuzu; `index/…` for Ryujinx), so an archive made on one
+  machine restores into another machine's profile or index.
 - File name on RomM: `<TITLEID>.zip` within the user's slot (the slot, wizard and switch gates are unchanged).
 - The baseline hash is the MD5 of the archive bytes as uploaded (exact parity with what RomM stores).
 - Restore (download) extracts into a temp directory next to the target, verifies, quarantines the current directory as
@@ -77,14 +93,19 @@ and no consistent version across them; RomM's slot/version model assumes one obj
 - **Safety gates:** no sync while the emulator is running (existing running-app check); an empty or shrunk-to-nothing local
   save never overwrites a non-empty server save (the #1062 guard, applied to the archive's file count and size).
 
-### 4. Profiles
+### 4. Profiles (Eden, yuzu)
 
-The profile folder is **not part of the identity** of a save. Local rules:
+*Device finding (Deck, Eden):* two folders under `save/0000000000000000/`: a user profile (`7EBDCC30…`) and the
+**all-zero profile** `00000000000000000000000000000000`, and one title (`0100152000022000`) has a save in **both**. The
+all-zero folder holds saves not bound to a user; a user profile folder holds the per-user ones. Profile IDs differ per
+installation. So a title's save is the pair, and the archive keeps the roles, not the IDs:
 
-- Exactly one profile folder holds the title: use it.
-- Several do: the user picks once (setting `switch_save_profile`, per emulator), shown on the game page; until then the
-  game is unsupported ("Choose profile"). No guess, no "first one".
-- None: the game has no local save yet (first run). Uploading waits; a download restores into the chosen profile.
+- `zero/<TITLEID>/…` from the all-zero folder, restored to the all-zero folder;
+- `user/<TITLEID>/…` from the chosen user profile folder, restored into the chosen profile of the target machine.
+
+Which user profile: exactly one non-zero profile holds the title (or exists at all) = that one; several = the user picks once
+(setting `switch_save_profile` per emulator); until then the game is unsupported ("Choose profile"). No guess, no "first".
+The profile list shown to the user comes from the emulator's `profiles.dat` (names), not from folder names.
 
 ### 5. Architecture
 
@@ -116,21 +137,44 @@ The profile folder is **not part of the identity** of a save. Local rules:
 - Ryujinx depends on reverse-engineered metadata; if its format changes, those games drop to "unsupported", never to wrong
   data.
 
-## 7. Facts still to verify on a device (as for the firmware, #69)
+## 7. Facts recorded from devices (2026-11-10)
 
-Needed from the Steam Deck and one Bazzite PC; none of this may be assumed:
+**Steam Deck** (`/home/deck`, internal `ext4` on `nvme0n1p8`, `Emulation` on the SD card `ext4`, EmuDeck `storagePath`
+`/run/media/mmcblk0p1`):
 
-1. Where Eden, yuzu and Ryujinx keep their data and whether EmuDeck symlinks them under `Emulation/saves/<emulator>`.
-2. The exact layout under `nand/user/save/0000000000000000/`: profile folders (names), title folders, what is inside a
-   title folder (file count, sizes, extra metadata files).
-3. For Ryujinx: the layout of `bis/user/save/` and `bis/user/saveMeta/` for a game that has a save, and how a title ID
-   maps to the index (sample files, sizes).
-4. Whether the file-name tag is present in your ROM names (`ls` of the Switch ROMs folder) and whether RomM exposes a
-   title ID anywhere in its game JSON.
-5. Whether `Emulation` and the emulator data directories are on the same filesystem (affects the atomic rename).
+- Eden: `nand_directory=/home/deck/.local/share/eden/nand` (default). Saves under `nand/user/save/0000000000000000/` with two
+  profile folders (a user profile and the all-zero profile), three title folders in total, one of them in both. `Emulation/saves/eden` does not exist.
+- yuzu: data in `~/.local/share/yuzu` but `nand/user/save` is absent there; `Emulation/saves/yuzu/saves` is a symlink to
+  `Emulation/storage/yuzu/nand/user/save/` on the SD card with one user profile folder (`A2302A18…`) and no title folder yet.
+  yuzu's config path for `nand_directory` was not captured (see open points).
+- Ryujinx: `~/.config/Ryujinx/bis/user/save/0000000000000001/` with `ExtraData0/1` (512 B), `0/` and `1/` (each `save.meta` 2,656 B
+  plus a data directory) and `.lock`; `bis/user/saveMeta/0000000000000001/00000001.meta` (262,240 B). `Emulation/saves/ryujinx/saves`
+  shows the same tree (EmuDeck's mirror/symlink).
+- ROM names: mostly folders or untagged `.xci` names; one `.nsp` with a `[TITLEID][v0]` tag.
+
+**Bazzite PC** (`/home/patrick`, `btrfs` on `/home`, `storagePath` the literal `$HOME`):
+
+- Eden: configured `nand_directory=/home/patrick/Emulation/storage/eden/nand`, **not** the default `~/.local/share/eden/nand`
+  (that one only holds `system`). The configured `…/nand/user/save` exists and is empty; `Emulation/saves/eden/{saves,profiles}` exist.
+- yuzu is not installed; Ryujinx exists with empty save directories; no Flatpak data directories.
+- `Emulation` and the emulator data are on the same filesystem (so a temp directory next to the target is on the same device).
+
+**What this changed in the ADR:** title ID from file-name tag is rare (so "learned from play" and a manual pick matter), roots must
+come from the emulator config, the all-zero profile is part of a save, and Ryujinx can only restore into an existing local index.
+
+## Open points before #34 starts
+
+1. **A Switch game's RomM JSON** (any one, like the firmware JSON in #69): does it carry a title ID anywhere?
+2. **Ryujinx `ExtraData0` header:** a hex dump of the first 64 bytes (it holds ids, no save content), e.g.
+   `xxd -l 64 ~/.config/Ryujinx/bis/user/save/0000000000000001/ExtraData0`, plus which title that index belongs to.
+3. **yuzu's `nand_directory`** on the Deck: `grep nand_directory ~/.config/yuzu/qt-config.ini`.
+4. **Eden profile names:** which user profile `7EBDCC30…` is and what the all-zero folder is for (`profiles.dat` at
+   `<nand>/system/save/8000000000000010/su/avators/profiles.dat` is the source; the plugin will read it).
+5. Deck internal drive vs SD: saves of Eden are on the internal drive, `Emulation` on the SD card; the temp-directory rule (same
+   filesystem as the target) keeps the rename atomic, no action needed.
 
 ## Acceptance of the decision
 
-Patrick approves the five choices above (title-ID order, deterministic archive per `(rom, slot)`, base-title
-normalisation, no automatic profile choice, `rom_title_ids` table) and the device facts are recorded in
-`docs/plans/0.55.0-switch-save-sync.md`; then #34 starts.
+Patrick approves the choices (title-ID order incl. learning from play, deterministic archive per `(rom, slot)` with role-based entry
+paths, base-title normalisation, the zero profile plus one chosen user profile, Ryujinx restore only into an existing index,
+`rom_title_ids` table). Patrick agreed with the direction on 2026-11-10; the open points above are answered, then #34 starts.
