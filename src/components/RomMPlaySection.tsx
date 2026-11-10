@@ -2,12 +2,13 @@
  * RomMPlaySection — wraps CustomPlayButton and adds info items to its right,
  * mimicking Steam's native PlaySection layout:
  *
- *   [▶ Play ▾]   LAST PLAYED    PLAYTIME    ACHIEVEMENTS    SAVE SYNC    BIOS
- *                24. Jan.       14 Hours    To be impl.     ✅ 2h ago    🟢 OK
+ *   [▶ Play ▾]   LAST PLAYED    PLAYTIME    ACHIEVEMENTS    SAVE SYNC
+ *                24. Jan.       14 Hours    To be impl.     ✅ 2h ago
  *
  * Uses our own romm-play-section-row CSS class on the root.
  * Individual info items use our own romm-info-* CSS classes.
- * Save Sync and BIOS items only appear when relevant.
+ * The Save Sync item only appears when relevant. There is no per-game BIOS download (Switch needs
+ * firmware + keys, managed from the System page; per-platform BIOS is out until 0.90).
  */
 
 import { useState, useEffect, useRef, FC, createElement } from "react";
@@ -44,7 +45,6 @@ import {
   getRomMetadata,
   refreshCoverArtwork,
   removeRom,
-  downloadAllFirmware,
   syncRomSaves,
   deleteLocalSaves,
   setGameCore,
@@ -692,23 +692,6 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
     }
   };
 
-  const handleDownloadBios = async () => {
-    if (actionPending || !info.platformSlug) return;
-    setActionPending("bios");
-    try {
-      const result = await downloadAllFirmware(info.platformSlug);
-      if (result.success) {
-        toaster.toast({ title: "EmuDecky RomM Manager", body: `BIOS downloaded (${result.downloaded ?? 0} files)` });
-      } else {
-        toaster.toast({ title: "EmuDecky RomM Manager", body: result.message || "BIOS download failed" });
-      }
-    } catch {
-      toaster.toast({ title: "EmuDecky RomM Manager", body: "BIOS download failed" });
-    } finally {
-      setActionPending(null);
-    }
-  };
-
   const handleUninstall = async () => {
     if (actionPending || !info.romId) return;
     setActionPending("uninstall");
@@ -902,16 +885,6 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
             },
           },
           "Sync Save Files",
-        ),
-        createElement(
-          MenuItem,
-          {
-            key: "download-bios",
-            onClick: () => {
-              detach(handleDownloadBios());
-            },
-          },
-          "Download BIOS",
         ),
         createElement(MenuSeparator, { key: "sep" }),
         createElement(

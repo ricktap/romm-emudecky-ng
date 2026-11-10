@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import os
 import stat
@@ -208,7 +209,7 @@ async def test_shim_against_the_real_rust_backend(tmp_path):
 
     binary = _built_rust_backend()
     names = main.static_callable_names(binary)
-    assert len(names) == 121
+    assert names == sorted(json.loads((_REPO / "backend" / "callables.json").read_text()))
     with (
         patch.object(main, "BACKEND_BINARY", binary),
         patch.object(main, "socket_path_for", lambda _rt: protocol.socket_path_for(None)),
@@ -219,11 +220,11 @@ async def test_shim_against_the_real_rust_backend(tmp_path):
     assert settings["romm_url"] == ""
     assert settings["has_token"] is False
     assert await plugin.get_settings_reset_notice() == {"pending": False, "backed_up_to": None}  # type: ignore[attr-defined]
-    from rpc.client import BackendCallError
 
     assert await plugin.get_download_queue() == {"downloads": []}  # type: ignore[attr-defined]
-    with pytest.raises(BackendCallError, match="not implemented in the Rust backend yet: sync_preview"):
-        await plugin.sync_preview()  # type: ignore[attr-defined]
+    unported = await plugin.get_firmware_status()  # type: ignore[attr-defined]
+    assert unported["success"] is False
+    assert unported["reason"] == "not_implemented"
     process = plugin._backend.process
     await plugin._unload()
     assert process.returncode == 0

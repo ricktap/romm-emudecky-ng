@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, FC, Fragment } from "react";
+import { toaster } from "@decky/api";
 import { PanelSection, PanelSectionRow, ButtonItem, Field, ProgressBar } from "@decky/ui";
 import { getDownloadQueue, cancelDownload, pauseDownload, resumeDownload } from "../api/backend";
 import { getDownloadState, setDownloads } from "../utils/downloadStore";
@@ -88,9 +89,13 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack }) => {
 
   const handleResume = async (romId: number) => {
     try {
-      await resumeDownload(romId);
+      const result = await resumeDownload(romId);
+      // A refused resume (server unreachable, sign-in rejected, superseded, ...) used to vanish silently.
+      if (result && !result.success) {
+        toaster.toast({ title: "EmuDecky RomM Manager", body: result.message || "Could not resume the download" });
+      }
     } catch {
-      // ignore
+      toaster.toast({ title: "EmuDecky RomM Manager", body: "Could not resume the download" });
     }
   };
 

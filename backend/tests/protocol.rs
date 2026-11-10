@@ -54,9 +54,14 @@ async fn list_unknown_unported_arity_and_malformed() {
 
     let unported = names.iter().find(|name| !romm_backend::app::PORTED_CALLABLES.contains(&name.as_str())).expect("an unported callable");
     let r = b.request(unported, json!([])).await;
+    assert_eq!(r.get("error"), None);
     assert_eq!(
-        r["error"],
-        json!({"message": format!("not implemented in the Rust backend yet: {unported}")})
+        r["result"],
+        json!({
+            "success": false,
+            "reason": "not_implemented",
+            "message": format!("not implemented in the Rust backend yet: {unported}"),
+        })
     );
 
     let r = b.request("get_settings", json!([1])).await;

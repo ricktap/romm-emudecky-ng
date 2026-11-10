@@ -34,7 +34,9 @@ use crate::services::settings::{SettingsService, SettingsServiceConfig};
 const CALLABLE_NAMES_JSON: &str = include_str!("../callables.json");
 
 /// Callables this backend implements; every other listed name answers
-/// "not implemented in the Rust backend yet".
+/// the failure result `{success: false, reason: "not_implemented", message}`
+/// (a result, not a protocol error: Decky turns an error frame into an opaque
+/// "Python Exception", so the frontend could not tell it from a crash).
 pub const PORTED_CALLABLES: &[&str] = &[
     "get_version_list", "switch_version", "evaluate_launch", "check_local_drift", "check_core_change",
     "remove_rom", "uninstall_all_roms", "apply_steam_input_setting", "check_for_update",
@@ -550,8 +552,8 @@ fn err(e: anyhow::Error) -> String {
 fn not_implemented(name: &str) -> Handler {
     let message = format!("not implemented in the Rust backend yet: {name}");
     Arc::new(move |_| {
-        let message = message.clone();
-        Box::pin(async move { Err(message) })
+        let result = crate::domain::errors::failure("not_implemented", &message);
+        Box::pin(async move { Ok(result) })
     })
 }
 

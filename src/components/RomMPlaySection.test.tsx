@@ -1888,102 +1888,6 @@ describe("RomMPlaySection", () => {
   });
 
   // ------------------------------------------------------------------
-  // J. handleDownloadBios
-  // ------------------------------------------------------------------
-
-  describe("handleDownloadBios", () => {
-    async function setupBiosAction() {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 42,
-        platform_slug: "ps1",
-      });
-      render(<RomMPlaySection appId={testAppId} />);
-      await flushAsync();
-      return openRomMMenuAndGetItems(testAppId);
-    }
-
-    it("happy path: downloads BIOS and toasts the count", async () => {
-      const items = await setupBiosAction();
-      vi.mocked(backend.downloadAllFirmware).mockResolvedValue({
-        success: true,
-        message: "",
-        downloaded: 3,
-        errors: [],
-      } as never);
-      vi.mocked(toaster.toast).mockClear();
-      const listener = vi.fn();
-      globalThis.addEventListener("romm_data_changed", listener);
-      try {
-        await act(async () => {
-          await items[3]!.props.onClick?.();
-        });
-        expect(vi.mocked(backend.downloadAllFirmware)).toHaveBeenCalledWith("ps1");
-        expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(
-          expect.objectContaining({ body: "BIOS downloaded (3 files)" }),
-        );
-        // No BIOS status to refresh any more — no bios data-changed event.
-        const biosEv = listener.mock.calls.map((c) => c[0] as CustomEvent).find((e) => e.detail.type === "bios");
-        expect(biosEv).toBeUndefined();
-      } finally {
-        globalThis.removeEventListener("romm_data_changed", listener);
-      }
-    });
-
-    it("failure with message → toasts the message", async () => {
-      const items = await setupBiosAction();
-      vi.mocked(backend.downloadAllFirmware).mockResolvedValue({
-        success: false,
-        message: "no internet",
-      } as never);
-      vi.mocked(toaster.toast).mockClear();
-      await act(async () => {
-        await items[3]!.props.onClick?.();
-      });
-      expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(expect.objectContaining({ body: "no internet" }));
-    });
-
-    it("failure with empty message → falls back to 'BIOS download failed'", async () => {
-      const items = await setupBiosAction();
-      vi.mocked(backend.downloadAllFirmware).mockResolvedValue({
-        success: false,
-        message: "",
-      } as never);
-      vi.mocked(toaster.toast).mockClear();
-      await act(async () => {
-        await items[3]!.props.onClick?.();
-      });
-      expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(expect.objectContaining({ body: "BIOS download failed" }));
-    });
-
-    it("throw → toasts 'BIOS download failed'", async () => {
-      const items = await setupBiosAction();
-      vi.mocked(backend.downloadAllFirmware).mockRejectedValue(new Error("io"));
-      vi.mocked(toaster.toast).mockClear();
-      await act(async () => {
-        await items[3]!.props.onClick?.();
-      });
-      expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(expect.objectContaining({ body: "BIOS download failed" }));
-    });
-
-    it("no platformSlug → early return, no fetch", async () => {
-      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
-        found: true,
-        rom_id: 42,
-        platform_slug: "",
-      });
-      render(<RomMPlaySection appId={testAppId} />);
-      await flushAsync();
-      const items = await openRomMMenuAndGetItems(testAppId);
-      vi.mocked(backend.downloadAllFirmware).mockClear();
-      await act(async () => {
-        await items[3]!.props.onClick?.();
-      });
-      expect(vi.mocked(backend.downloadAllFirmware)).not.toHaveBeenCalled();
-    });
-  });
-
-  // ------------------------------------------------------------------
   // K. handleUninstall (separator is at index 4, so uninstall is at index 6)
   // ------------------------------------------------------------------
 
@@ -2011,7 +1915,7 @@ describe("RomMPlaySection", () => {
       try {
         await act(async () => {
           // Last MenuItem (uninstall) — find via tone or position. The order
-          // is [refresh-artwork, refresh-metadata, sync-saves, download-bios,
+          // is [refresh-artwork, refresh-metadata, sync-saves,
           // separator, delete-saves, uninstall] but we filtered to MenuItems
           // only, so it's index 5 (after delete-saves at 4).
           // Actually after dropping the separator from filtered MenuItems,
@@ -2601,7 +2505,7 @@ describe("RomMPlaySection", () => {
   // ------------------------------------------------------------------
 
   describe("context menus", () => {
-    it("showRomMMenu yields 6 MenuItems + 1 separator (Refresh artwork/metadata/saves/bios + delete-saves + uninstall)", async () => {
+    it("showRomMMenu yields 5 MenuItems + 1 separator (Refresh artwork/metadata, sync saves + delete-saves + uninstall; no BIOS item)", async () => {
       vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
         found: true,
         rom_id: 42,
@@ -2609,7 +2513,7 @@ describe("RomMPlaySection", () => {
       render(<RomMPlaySection appId={testAppId} />);
       await flushAsync();
       const items = await openRomMMenuAndGetItems(testAppId);
-      expect(items).toHaveLength(6);
+      expect(items).toHaveLength(5);
       // tone="destructive" on the delete-saves + uninstall ones.
       const destructive = items.filter((i) => i.props.tone === "destructive");
       expect(destructive).toHaveLength(2);

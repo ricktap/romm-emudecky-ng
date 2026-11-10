@@ -21,6 +21,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
+import { toaster } from "@decky/api";
 import { DownloadQueue } from "./DownloadQueue";
 import * as backend from "../api/backend";
 import { setDownloads, getDownloadState } from "../utils/downloadStore";
@@ -396,6 +397,27 @@ describe("DownloadQueue", () => {
         await Promise.resolve();
       });
       expect(backend.resumeDownload).toHaveBeenCalledWith(90);
+    });
+
+    it("a refused resume is shown as a toast with the backend's reason instead of vanishing", async () => {
+      vi.mocked(backend.getDownloadQueue).mockResolvedValue({
+        downloads: [makeItem({ rom_id: 90, rom_name: "Kirby", status: "interrupted", resumable: true })],
+      });
+      vi.mocked(backend.resumeDownload).mockResolvedValue({
+        success: false,
+        reason: "server_unreachable",
+        message: "Could not reach the RomM server",
+      });
+      const { container } = render(<DownloadQueue onBack={() => {}} />);
+      await flushMount();
+      vi.mocked(toaster.toast).mockClear();
+      await act(async () => {
+        fireEvent.click(buttonByText(container, "Resume Kirby")!);
+        await Promise.resolve();
+      });
+      expect(toaster.toast).toHaveBeenCalledWith(
+        expect.objectContaining({ body: "Could not reach the RomM server" }),
+      );
     });
   });
 
