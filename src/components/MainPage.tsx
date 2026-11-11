@@ -619,7 +619,7 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
   }
 
   return (
-    <div className="rm-root" style={{ background: "transparent" }}>
+    <div className="rm-root rm-qam" style={{ background: "transparent" }}>
       <RmStyles />
       <Focusable noFocusRing className="rm-status" style={{ margin: "10px 0 4px" }} data-testid="status-line">
         <ConnectionIndicator connected={connected} />
