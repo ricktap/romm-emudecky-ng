@@ -1,4 +1,8 @@
-# Decky store submission: what is known and what is open (#59, #60, #61)
+# Decky store submission: decided against (#59, #60, #61)
+
+**Decision (Patrick, 2026-11-11): the plugin is not submitted to the Decky store.** The store's rule on generative-AI
+code rules out an honest submission, so releases stay on GitHub (install from the release zip, in-plugin update check for
+the GitHub channel). The notes below are kept in case that changes.
 
 Sources: the plugin-addition PR template of `SteamDeckHomebrew/decky-plugin-database` (read 2026-11-11) and the Decky
 CLI / template conventions this repo already follows. The wiki pages ("Submitting plugins", "Review and testing") did not
