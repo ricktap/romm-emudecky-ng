@@ -6,8 +6,8 @@
 export const ROMM_CSS = `
 .rm-root{background:#10151c;color:#dcdedf}
 /* Steam's footer bar covers the bottom ~40 px: whatever takes the focus scrolls to leave room below it. */
-.rm-root *{box-sizing:border-box;scroll-margin-top:24px;scroll-margin-bottom:64px}
-.rm-lmain,.rm-prail{scroll-padding-top:24px;scroll-padding-bottom:64px}
+.rm-root *{box-sizing:border-box;scroll-margin-top:64px;scroll-margin-bottom:64px}
+.rm-lmain,.rm-prail{scroll-padding-top:64px;scroll-padding-bottom:64px}
 .rm-root button{font-family:inherit}
 .rm-glyph{min-width:22px;height:22px;border-radius:11px;background:#dcdedf;color:#0a0c0f;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;padding:0 6px}
 .rm-btn{border:0;font-size:14px;font-weight:500;background:#2b313a;color:#dcdedf;border-radius:3px;padding:0 14px;height:40px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap}

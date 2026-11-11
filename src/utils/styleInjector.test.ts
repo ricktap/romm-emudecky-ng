@@ -10,10 +10,10 @@ describe("hideNativePlaySection styles", () => {
     doc.head.innerHTML = "";
   });
 
-  it("leaves room below whatever takes the focus on the game page, so the footer bar never covers it", () => {
+  it("leaves room above and below whatever takes the focus on the game page, so neither the top bar nor the footer bar covers it", () => {
     hideNativePlaySection("PlaySection");
     const css = doc.getElementById("romm-focus-styles")?.textContent ?? "";
-    expect(css).toMatch(/\[data-romm\], \[data-romm\] \* \{[^}]*scroll-margin-bottom: 64px/);
+    expect(css).toMatch(/\[data-romm\], \[data-romm\] \* \{[^}]*scroll-margin-top: 64px;\s*scroll-margin-bottom: 64px/);
   });
 
   it("hides the native play section but not ours, once", () => {
