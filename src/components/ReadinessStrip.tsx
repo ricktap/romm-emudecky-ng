@@ -125,7 +125,7 @@ export const ReadinessStrip: FC<ReadinessStripProps> = ({
     );
 
   return (
-    <Focusable data-romm="true" className="rm-root rm-ready romm-readiness-strip" flow-children="right" style={{ background: "transparent" }}>
+    <Focusable noFocusRing data-romm="true" className="rm-root rm-ready romm-readiness-strip" flow-children="right" style={{ background: "transparent" }}>
       <RmStyles />
       {chips.map((chip) => (
         <div key={chip.id} data-testid={`chip-${chip.id}`} className={`rm-rchip${chip.tone === "warn" ? " rm-warn" : ""}`}>

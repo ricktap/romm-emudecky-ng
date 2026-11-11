@@ -127,6 +127,8 @@ vi.mock("@decky/ui", () => {
           onClick: rest.onClick as never,
           "aria-label": rest["aria-label"] as string | undefined,
           title: rest.title as string | undefined,
+          "data-flow": rest["flow-children"] as string | undefined,
+          "data-no-ring": rest.noFocusRing ? "true" : undefined,
           ref: (el: HTMLDivElement | null) => {
             if (!el) return;
             // A (onActivate) and X (onSecondaryButton) arrive as "decky-activate" / "decky-secondary" DOM events.

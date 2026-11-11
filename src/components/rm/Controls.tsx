@@ -33,7 +33,7 @@ export const RmValueRow: FC<{ label: ReactNode; sub?: ReactNode; value?: ReactNo
   value,
   testId,
 }) => (
-  <Focusable className="rm-row" {...(testId ? { "data-testid": testId } : {})}>
+  <Focusable noFocusRing className="rm-row" {...(testId ? { "data-testid": testId } : {})}>
     <span>
       {label}
       {sub ? <div className="rm-muted rm-small">{sub}</div> : null}
@@ -62,13 +62,15 @@ export const RmToggle: FC<{ checked: boolean; onChange: (value: boolean) => void
 }) => {
   const flip = useOnce(() => !disabled && onChange(!checked));
   return (
-    <Focusable
+    <Focusable noFocusRing
       className={`rm-sw${checked ? " rm-on" : ""}`}
       aria-label={label}
       data-testid={`toggle-${label}`}
       onActivate={flip}
       onClick={flip}
-    />
+    >
+      <span className="rm-knob" />
+    </Focusable>
   );
 };
 
@@ -86,7 +88,7 @@ export const RmChoice: FC<{
   });
   const current = options.find((o) => o.data === value)?.label ?? value;
   return (
-    <Focusable className="rm-corebtn" aria-label={label} data-testid={`choice-${label}`} onActivate={next} onClick={next}>
+    <Focusable noFocusRing className="rm-corebtn" aria-label={label} data-testid={`choice-${label}`} onActivate={next} onClick={next}>
       {current}
     </Focusable>
   );
@@ -96,7 +98,7 @@ export const RmChoice: FC<{
 export const NavRow: FC<{ label: string; badge?: number; onActivate: () => void }> = ({ label, badge, onActivate }) => {
   const go = useOnce(onActivate);
   return (
-    <Focusable className="rm-navrow" data-testid={`nav-${label}`} onActivate={go} onClick={go}>
+    <Focusable noFocusRing className="rm-navrow" data-testid={`nav-${label}`} onActivate={go} onClick={go}>
       <span className="rm-sp">{label}</span>
       {badge ? <span className="rm-badge">{badge}</span> : null}
       <Icon name="chev" />
@@ -108,7 +110,7 @@ export const NavRow: FC<{ label: string; badge?: number; onActivate: () => void 
 export const AttRow: FC<{ title: string; sub?: string; onActivate: () => void }> = ({ title, sub, onActivate }) => {
   const go = useOnce(onActivate);
   return (
-    <Focusable className="rm-att" data-testid="attention-row" onActivate={go} onClick={go}>
+    <Focusable noFocusRing className="rm-att" data-testid="attention-row" onActivate={go} onClick={go}>
       <Icon name="warn" size={18} className="rm-amberc" />
       <span style={{ flex: 1 }}>
         <span className="rm-t">{title}</span>
@@ -124,7 +126,7 @@ export const QamHeader: FC<{ title: string; onBack: () => void }> = ({ title, on
   const back = useOnce(onBack);
   return (
     <div className="rm-qhead">
-      <Focusable className="rm-btn rm-sm rm-icon" aria-label="Back" data-testid="qam-back" onActivate={back} onClick={back}>
+      <Focusable noFocusRing className="rm-btn rm-sm rm-icon" aria-label="Back" data-testid="qam-back" onActivate={back} onClick={back}>
         <Icon name="back" size={16} />
       </Focusable>
       <h2>{title}</h2>
@@ -139,9 +141,9 @@ export const RmSegments: FC<{
   onChange: (id: string) => void;
   testPrefix: string;
 }> = ({ items, value, onChange, testPrefix }) => (
-  <Focusable flow-children="right" className="rm-chips" style={{ marginBottom: 12 }}>
+  <Focusable noFocusRing flow-children="right" className="rm-chips" style={{ marginBottom: 12 }}>
     {items.map((item) => (
-      <Focusable
+      <Focusable noFocusRing
         key={item.id}
         data-testid={`${testPrefix}-${item.id}`}
         className={`rm-fchip${value === item.id ? " rm-on" : ""}`}

@@ -51,11 +51,11 @@ export const ROMM_CSS = `
 .rm-bar span{display:block;height:100%;background:#1a9fff}
 .rm-dlrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #222831}
 .rm-sw{width:44px;height:24px;border-radius:12px;background:#3a414c;border:0;position:relative;cursor:pointer;flex:none}
-.rm-sw::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:9px;background:#dcdedf;transition:left .15s}
+.rm-sw .rm-knob{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:9px;background:#dcdedf;transition:left .15s}
 .rm-sw.rm-on{background:#1a9fff}
-.rm-sw.rm-on::after{left:23px}
+.rm-sw.rm-on .rm-knob{left:23px}
 .rm-thumb{width:36px;height:48px;border-radius:3px;flex:none;display:flex;align-items:flex-end;font-size:9px;font-weight:800;color:rgba(255,255,255,.75);padding:3px}
-.rm-lib{height:100%;padding-top:40px;display:flex;flex-direction:column;background:#10151c;box-sizing:border-box}
+.rm-lib{height:100%;padding-top:40px;padding-bottom:40px;display:flex;flex-direction:column;background:#10151c;box-sizing:border-box}
 .rm-lhead{display:flex;align-items:center;gap:16px;padding:8px 28px 0;height:56px}
 .rm-lhead h1{margin:0;font-size:22px;font-weight:800;color:#fff}
 .rm-ltabs{display:flex;align-items:center;gap:4px;padding:0 28px;border-bottom:1px solid #222831}

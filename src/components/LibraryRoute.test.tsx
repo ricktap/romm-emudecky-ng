@@ -69,6 +69,15 @@ describe("LibraryRoute", () => {
     expect(getLibraryPlatformFilter()).toBe("switch");
   });
 
+  describe("gamepad navigation", () => {
+    it("the tab bar moves left and right (not up and down) and draws no native focus ring", () => {
+      const { container } = render(<LibraryRoute />);
+      const bar = container.querySelector(".rm-ltabs") as HTMLElement;
+      expect(bar.getAttribute("data-flow")).toBe("right");
+      expect(bar.getAttribute("data-no-ring")).toBe("true");
+    });
+  });
+
   describe("header", () => {
     beforeEach(() => {
       vi.mocked(getSettings).mockResolvedValue({ romm_url: "https://romm.home.lan:8443/x" } as never);

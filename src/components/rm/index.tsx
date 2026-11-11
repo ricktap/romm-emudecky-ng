@@ -37,7 +37,7 @@ export const RmButton: FC<RmButtonProps> = ({ children, variant = "", onActivate
     .map((m) => `rm-${m}`)
     .join(" ");
   return (
-    <Focusable
+    <Focusable noFocusRing
       className={`rm-btn ${mods} ${className}`.trim()}
       onActivate={fire}
       onClick={fire}
