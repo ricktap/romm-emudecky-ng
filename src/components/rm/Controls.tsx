@@ -167,3 +167,27 @@ export const RmButtonGroup: FC<{ children: ReactNode; style?: React.CSSPropertie
     {children}
   </Focusable>
 );
+
+/** A row of the Quick Access Menu that does something when pressed and reports its result on the right (like `navrow`, no chevron). */
+export const ActionRow: FC<{ label: string; value?: string; onActivate: () => void; disabled?: boolean; testId?: string }> = ({
+  label,
+  value,
+  onActivate,
+  disabled,
+  testId,
+}) => {
+  const go = useOnce(() => !disabled && onActivate());
+  return (
+    <Focusable
+      noFocusRing
+      className="rm-navrow"
+      data-testid={testId ?? `action-${label}`}
+      onActivate={go}
+      onClick={go}
+      {...(disabled ? { style: { opacity: 0.6 }, "aria-disabled": true } : {})}
+    >
+      <span className="rm-sp">{label}</span>
+      {value ? <span className="rm-muted rm-small">{value}</span> : null}
+    </Focusable>
+  );
+};
