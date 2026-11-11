@@ -97,6 +97,7 @@
   "set_all_collections_sync",
   "set_all_platforms_sync",
   "set_game_core",
+  "set_platform_core",
   "set_save_profile",
   "set_save_title_id",
   "sign_out",

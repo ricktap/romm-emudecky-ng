@@ -62,7 +62,7 @@ async fn fresh_install_defaults_and_settings_file() {
         json!({
             "romm_url": "", "romm_url_external": "", "has_token": false, "steam_input_mode": "default", "sgdb_api_key_masked": "",
             "log_level": "warn", "romm_allow_insecure_ssl": false,
-            "collection_create_platform_groups": false, "preferred_region": "auto"
+            "collection_create_platform_groups": false, "preferred_region": "auto", "platform_cores": {}
         })
     );
     assert_eq!(

@@ -9,16 +9,20 @@ use crate::domain::disc_selection::resolve_size_ranked_path;
 use crate::domain::emulator_table::{label_to_invocation, options_to_payload};
 use crate::domain::errors::failure;
 use crate::services::launch::LaunchService;
-use crate::services::ports::{LaunchPreferencesRepo, LaunchSnapshot};
+use crate::services::ports::{LaunchPreferencesRepo, LaunchSnapshot, SettingsPersister, SettingsStore};
 
 pub struct LaunchChoicesServiceConfig {
     pub preferences: Arc<dyn LaunchPreferencesRepo>,
     pub launch: Arc<LaunchService>,
+    pub settings: SettingsStore,
+    pub persister: Arc<dyn SettingsPersister>,
 }
 
 pub struct LaunchChoicesService {
     preferences: Arc<dyn LaunchPreferencesRepo>,
     launch: Arc<LaunchService>,
+    settings: SettingsStore,
+    persister: Arc<dyn SettingsPersister>,
 }
 
 fn not_found(rom_id: i64) -> Value {
@@ -31,7 +35,7 @@ fn state_changed() -> Value {
 
 impl LaunchChoicesService {
     pub fn new(config: LaunchChoicesServiceConfig) -> Self {
-        Self { preferences: config.preferences, launch: config.launch }
+        Self { preferences: config.preferences, launch: config.launch, settings: config.settings, persister: config.persister }
     }
 
     pub async fn get_platform_core_info(&self, rom_id: i64) -> anyhow::Result<Value> {
@@ -58,6 +62,48 @@ impl LaunchChoicesService {
         if !self.preferences.change_emulator_override(&snapshot, Some(label)).await? { return Ok(state_changed()); }
         snapshot.rom.emulator_override = Some(label.to_string());
         self.core_change_response(&snapshot).await
+    }
+
+    /// Choose (or, with `None`, clear) the emulator every game of `platform_slug` uses unless it has its own
+    /// override. Only an emulator detected as installed can be chosen, by the same detection as the per-game
+    /// choice. The caller re-bakes the shortcuts afterwards (`get_installed_relaunch_options`).
+    pub async fn set_platform_core(&self, platform_slug: &str, label: Option<&str>) -> anyhow::Result<Value> {
+        if let Some(label) = label {
+            let options = self.launch.emulator_options(platform_slug);
+            if label_to_invocation(&options, label).is_none() {
+                return Ok(failure("core_unavailable", &format!("Emulator '{label}' is not available for {platform_slug}")));
+            }
+        }
+        let previous = self.settings.get("platform_cores");
+        self.settings.with(|m| {
+            let entry = m.entry("platform_cores").or_insert_with(|| json!({}));
+            if !entry.is_object() {
+                *entry = json!({});
+            }
+            if let Some(map) = entry.as_object_mut() {
+                match label {
+                    Some(label) => {
+                        map.insert(platform_slug.to_string(), json!(label));
+                    }
+                    None => {
+                        map.shift_remove(platform_slug);
+                    }
+                }
+            }
+        });
+        if let Err(e) = self.persister.save_settings().await {
+            // Put the in-memory choice back: what is shown must be what is saved.
+            self.settings.with(|m| match &previous {
+                Some(old) => {
+                    m.insert("platform_cores".into(), old.clone());
+                }
+                None => {
+                    m.shift_remove("platform_cores");
+                }
+            });
+            return Err(e);
+        }
+        Ok(json!({"success": true, "platform_core_label": label}))
     }
 
     pub async fn clear_game_core(&self, rom_id: i64) -> anyhow::Result<Value> {

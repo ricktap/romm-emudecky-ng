@@ -3,6 +3,9 @@ import { ConfirmModal, showModal } from "@decky/ui";
 import {
   getFirmwareStatus,
   getEmudeckHealth,
+  getInstalledRelaunchOptions,
+  getSettings,
+  setPlatformCore,
   acceptEmudeckStoragePath,
   getPlatforms,
   savePlatformSync,
@@ -12,6 +15,7 @@ import {
   replaceFirmwareKey,
 } from "../api/backend";
 import { movedSummary } from "../utils/emudeckHealth";
+import { batchConfirmLaunchOptions } from "../utils/launchOptionsReconcile";
 import type { EmuDeckHealthInfo, FirmwareStatus, KeyEmulatorState, KeyState, PlatformSyncSetting, SwitchKeyFile } from "../types";
 import { RmButton, RmCard, RmChoice, RmRow, RmStyles, RmToggle, RmValueRow } from "./rm";
 import { formatBytes } from "../utils/formatters";
@@ -51,6 +55,8 @@ export const SystemPage: FC<SystemPageProps> = () => {
   const [downloading, setDownloading] = useState(false);
   const [note, setNote] = useState("");
   const [location, setLocation] = useState<EmuDeckHealthInfo | null>(null);
+  // The emulator chosen for all Switch games ("" = the first installed one).
+  const [platformEmulator, setPlatformEmulator] = useState("");
 
   async function refresh() {
     getEmudeckHealth()
@@ -77,6 +83,9 @@ export const SystemPage: FC<SystemPageProps> = () => {
     getPlatforms()
       .then((r) => r?.success && setPlatforms(r.platforms))
       .catch(() => undefined);
+    getSettings()
+      .then((st) => setPlatformEmulator(st?.platform_cores?.switch ?? ""))
+      .catch(() => undefined);
     // A finished firmware download (announced by the global listener) changes what is on disk.
     const onChanged = (e: Event) => {
       if ((e as CustomEvent<{ type?: string }>).detail?.type === "firmware") detach(refresh());
@@ -94,6 +103,26 @@ export const SystemPage: FC<SystemPageProps> = () => {
     } catch {
       setPlatforms((all) => all.map((p) => (p.id === platform.id ? { ...p, sync_enabled: !enabled } : p)));
       setNote("Could not save the platform setting");
+    }
+  };
+
+  // The default emulator of all Switch games: save it, then bake the new command into every installed shortcut.
+  const choosePlatformEmulator = async (label: string) => {
+    setNote("");
+    const previous = platformEmulator;
+    setPlatformEmulator(label);
+    try {
+      const result = await setPlatformCore("switch", label || null);
+      if (!result?.success) {
+        setPlatformEmulator(previous);
+        setNote(result?.message || "Could not choose the emulator");
+        return;
+      }
+      await batchConfirmLaunchOptions(await getInstalledRelaunchOptions(), "platform emulator");
+      setNote(label ? `Switch games now start in ${label}` : "Switch games start in the first installed emulator");
+    } catch {
+      setPlatformEmulator(previous);
+      setNote("Could not choose the emulator");
     }
   };
 
@@ -265,7 +294,17 @@ export const SystemPage: FC<SystemPageProps> = () => {
               <td className="rm-muted">
                 {r.isSwitchRow
                   ? emulators.length > 0
-                    ? emulators.map((e) => e.label).join(", ")
+                    ? (
+                        <RmChoice
+                          label="Switch emulator"
+                          value={platformEmulator}
+                          options={[
+                            { data: "", label: `${emulators[0]!.label} (default)` },
+                            ...emulators.map((e) => ({ data: e.label, label: e.label })),
+                          ]}
+                          onChange={(label) => detach(choosePlatformEmulator(label))}
+                        />
+                      )
                     : status
                       ? "Install Eden, yuzu or Ryujinx with EmuDeck first"
                       : ""

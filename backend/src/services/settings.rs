@@ -106,6 +106,7 @@ impl SettingsService {
             "romm_allow_insecure_ssl": get("romm_allow_insecure_ssl", json!(false)),
             "collection_create_platform_groups": get("collection_create_platform_groups", json!(false)),
             "preferred_region": get("preferred_region", json!(AUTO_REGION)),
+            "platform_cores": get("platform_cores", json!({})),
         })
     }
 
@@ -354,6 +355,7 @@ mod tests {
                 "romm_allow_insecure_ssl": true,
                 "collection_create_platform_groups": true,
                 "preferred_region": "USA",
+                "platform_cores": {},
             })
         );
         let text = r.to_string();
