@@ -1,5 +1,5 @@
 import { FC, useState } from "react";
-import { AttRow, RmButton } from "./rm";
+import { AttRow, RmButton, RmButtonGroup } from "./rm";
 import { openLibraryRoute } from "../utils/libraryRoute";
 import type { UpdateCheckSuccess } from "../types";
 import { startSelfUpdate, openReleasePage } from "../utils/selfUpdate";
@@ -51,7 +51,7 @@ export const UpdateNotice: FC<UpdateNoticeProps> = ({ info }) => {
       {failed && (
         <div style={{ marginTop: 6, fontSize: 12, color: "#d4a72c" }}>{updateFallbackMessage(info)}</div>
       )}
-      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+      <RmButtonGroup style={{ marginTop: 10, flexWrap: "wrap" }}>
         {longNotes && (
           <RmButton variant="sm ghost" onActivate={() => setShowNotes(!showNotes)}>
             {showNotes ? "Hide release notes" : "Show release notes"}
@@ -71,7 +71,7 @@ export const UpdateNotice: FC<UpdateNoticeProps> = ({ info }) => {
             Download v{info.latest_version}
           </RmButton>
         )}
-      </div>
+      </RmButtonGroup>
     </div>
   );
 };

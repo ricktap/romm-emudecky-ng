@@ -8,4 +8,10 @@ describe("ROMM_CSS footer room", () => {
     expect(ROMM_CSS).toMatch(/\.rm-qam\{padding-bottom:48px\}/);
     expect(ROMM_CSS).toMatch(/\.rm-lib\{[^}]*padding-bottom:40px/);
   });
+
+  it("a focused switch gets a ring, and a focused selected chip or platform no longer disappears into its own white or blue", () => {
+    expect(ROMM_CSS).toMatch(/\.rm-sw:hover,\.rm-sw\.gpfocus\{outline:3px solid #fff/);
+    expect(ROMM_CSS).toMatch(/\.rm-fchip\.rm-on\.gpfocus\{background:#5cbaff/);
+    expect(ROMM_CSS).toMatch(/\.rm-pbtn\.rm-on\.gpfocus\{background:#5cbaff/);
+  });
 });

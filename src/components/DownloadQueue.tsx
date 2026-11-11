@@ -23,7 +23,7 @@ import { phaseLines, useNowMs } from "../utils/downloadPhase";
 import { callArgs, downloadKey } from "../utils/downloadKey";
 import type { DownloadItem } from "../types";
 import { openLibraryRoute } from "../utils/libraryRoute";
-import { Icon, QamHeader, RmButton, RmStyles } from "./rm";
+import { Icon, QamHeader, RmButton, RmButtonGroup, RmStyles } from "./rm";
 import { platformAbbrev, tintFor } from "../utils/libraryGrid";
 
 interface DownloadQueueProps {
@@ -304,16 +304,18 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack, compact }) => {
             </div>
           )}
         </div>
-        {action && (
-          <RmButton variant="sm" onActivate={action.run}>
-            {action.label}
-          </RmButton>
-        )}
-        {item.status !== "extracting" && (
-          <RmButton variant="sm icon ghost" label="Cancel download" onActivate={() => detach(handleCancel(item))}>
-            <Icon name="x" size={16} />
-          </RmButton>
-        )}
+        <RmButtonGroup>
+          {action && (
+            <RmButton variant="sm" onActivate={action.run}>
+              {action.label}
+            </RmButton>
+          )}
+          {item.status !== "extracting" && (
+            <RmButton variant="sm icon ghost" label="Cancel download" onActivate={() => detach(handleCancel(item))}>
+              <Icon name="x" size={16} />
+            </RmButton>
+          )}
+        </RmButtonGroup>
       </div>
     );
   });

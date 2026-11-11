@@ -107,6 +107,8 @@ type AnyProps = Record<string, unknown> & { children?: unknown };
 vi.mock("@decky/ui", () => ({
   PanelSection: (p: AnyProps) => createElement("section", null, p.children as never),
   PanelSectionRow: (p: AnyProps) => createElement("div", null, p.children as never),
+  Focusable: (p: AnyProps & { className?: string; "flow-children"?: string }) =>
+    createElement("div", { className: p.className, "data-flow": p["flow-children"] }, p.children as never),
   ButtonItem: (p: AnyProps & { onClick?: () => void }) =>
     createElement("button", { onClick: p.onClick }, p.children as never),
   ConfirmModal: (p: AnyProps) => createElement("div", { "data-testid": "confirm-modal" }, p.children as never),
@@ -1453,6 +1455,18 @@ describe("SettingsPage", () => {
       const { queryByTestId } = render(<SettingsPage onBack={vi.fn()} />);
       await flushAsync();
       expect(queryByTestId("devices-section")).not.toBeNull();
+    });
+  });
+
+  describe("gamepad navigation", () => {
+    it("the two columns sit side by side (Left/Right switch columns) and each one goes up and down", async () => {
+      const { container } = render(<SettingsPage onBack={vi.fn()} />);
+      await flushAsync();
+      const grid = container.querySelector(".rm-setgrid") as HTMLElement;
+      expect(grid.getAttribute("data-flow")).toBe("right");
+      const columns = Array.from(grid.querySelectorAll(":scope > .rm-col"));
+      expect(columns).toHaveLength(2);
+      expect(columns.map((c) => c.getAttribute("data-flow"))).toEqual(["down", "down"]);
     });
   });
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, FC, ReactNode } from "react";
 import { Focusable } from "@decky/ui";
-import { AttRow, Icon, NavRow, RmButton, RmStyles } from "./rm";
+import { AttRow, Icon, NavRow, RmButton, RmStyles, RmButtonGroup } from "./rm";
 import { emudeckTitle, movedSummary, useEmudeckHealth } from "../utils/emudeckHealth";
 import { openLibraryRoute } from "../utils/libraryRoute";
 import { getSkipPreview, onSyncPreferencesChange } from "../utils/syncPreferences";
@@ -507,12 +507,12 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
           {formatPreviewDescription(preview.summary)}
         </div>
         {hasChanges ? (
-          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <RmButtonGroup style={{ marginTop: 12 }}>
             <RmButton variant="primary" className="rm-grow" onActivate={() => detach(handleApply())}>
               Apply
             </RmButton>
             <RmButton onActivate={() => detach(handleDismiss())}>Cancel</RmButton>
-          </div>
+          </RmButtonGroup>
         ) : (
           <RmButton variant="block" onActivate={() => detach(handleDismiss())}>
             Dismiss

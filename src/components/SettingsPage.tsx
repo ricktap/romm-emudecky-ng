@@ -1,5 +1,5 @@
 import { useState, useEffect, FC } from "react";
-import { ConfirmModal, showModal } from "@decky/ui";
+import { ConfirmModal, Focusable, showModal } from "@decky/ui";
 import {
   getSettings,
   saveServerUrl,
@@ -434,8 +434,8 @@ export const SettingsPage: FC<SettingsPageProps> = () => {
 
   return (
     <>
-      <div className="rm-setgrid">
-        <div className="rm-col">
+      <Focusable noFocusRing flow-children="right" className="rm-setgrid">
+        <Focusable noFocusRing flow-children="down" className="rm-col">
       <ConnectionSection
         url={url}
         externalUrl={externalUrl}
@@ -489,8 +489,8 @@ export const SettingsPage: FC<SettingsPageProps> = () => {
           detach(handleApplySteamInput());
         }}
       />
-        </div>
-        <div className="rm-col">
+        </Focusable>
+        <Focusable noFocusRing flow-children="down" className="rm-col">
           <SaveSyncSection
             saveSyncSettings={saveSyncSettings}
             saveSyncToggleKey={saveSyncToggleKey}
@@ -520,8 +520,8 @@ export const SettingsPage: FC<SettingsPageProps> = () => {
             dangerOpen={dangerOpen}
             onToggleDanger={() => setDangerOpen((open) => !open)}
           />
-        </div>
-      </div>
+        </Focusable>
+      </Focusable>
       {dangerOpen && <DangerZone onBack={() => setDangerOpen(false)} />}
     </>
   );
