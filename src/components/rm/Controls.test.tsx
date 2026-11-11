@@ -30,6 +30,12 @@ describe("RmToggle", () => {
     rerender(<RmToggle label="T" checked onChange={onChange} />);
     expect(getByLabelText("T").className).toContain("rm-on");
   });
+  it("has a real knob element inside (an empty focusable is not a focus target) and no native focus ring", () => {
+    const { getByLabelText } = render(<RmToggle label="T" checked={false} onChange={() => undefined} />);
+    expect(getByLabelText("T").querySelector(".rm-knob")).not.toBeNull();
+    expect(getByLabelText("T").getAttribute("data-no-ring")).toBe("true");
+  });
+
   it("does nothing when disabled", () => {
     const onChange = vi.fn();
     const { getByLabelText } = render(<RmToggle label="T" checked disabled onChange={onChange} />);

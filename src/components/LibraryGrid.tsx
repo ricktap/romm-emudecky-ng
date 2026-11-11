@@ -92,7 +92,7 @@ const Cover: FC<{ rom: LibraryOverviewRom; status: CoverStatus; onAction: (a: Ex
   };
   const caption = coverCaption(rom, status);
   return (
-    <Focusable
+    <Focusable noFocusRing
       className="rm-gcard"
       data-testid={`cover-${rom.rom_id}`}
       onActivate={() => Navigation.Navigate(`/library/app/${rom.app_id}`)}
@@ -212,9 +212,9 @@ export const LibraryGrid: FC<{ search: string }> = ({ search }) => {
 
   const platformLabel = collection ? collection : platform === null ? "All platforms" : (names.get(platform)?.name ?? platform);
   return (
-    <div className="rm-lbody">
-      <Focusable data-testid="rail" className="rm-prail">
-        <Focusable
+    <Focusable noFocusRing flow-children="right" className="rm-lbody">
+      <Focusable noFocusRing flow-children="down" data-testid="rail" className="rm-prail">
+        <Focusable noFocusRing
           className={`rm-pbtn${platform === null && collection === null ? " rm-on" : ""}`}
           data-testid="rail-all"
           onActivate={() => choosePlatform(null)}
@@ -227,7 +227,7 @@ export const LibraryGrid: FC<{ search: string }> = ({ search }) => {
           const info = names.get(p.platform_slug);
           const off = info && !info.sync_enabled;
           return (
-            <Focusable
+            <Focusable noFocusRing
               key={p.platform_slug}
               data-testid={`rail-${p.platform_slug}`}
               className={`rm-pbtn${platform === p.platform_slug ? " rm-on" : ""}${off ? " rm-off" : ""}`}
@@ -242,7 +242,7 @@ export const LibraryGrid: FC<{ search: string }> = ({ search }) => {
         })}
         {collections.length > 0 && <div className="rm-qsec" style={{ paddingLeft: 12 }}>Collections</div>}
         {collections.map((c) => (
-          <Focusable
+          <Focusable noFocusRing
             key={c.name}
             data-testid={`rail-collection-${c.name}`}
             className={`rm-pbtn${collection === c.name ? " rm-on" : ""}`}
@@ -254,10 +254,10 @@ export const LibraryGrid: FC<{ search: string }> = ({ search }) => {
           </Focusable>
         ))}
       </Focusable>
-      <div className="rm-lmain">
-        <Focusable flow-children="right" className="rm-chips">
+      <Focusable noFocusRing flow-children="down" className="rm-lmain">
+        <Focusable noFocusRing flow-children="right" className="rm-chips">
           {GRID_FILTERS.map((f) => (
-            <Focusable
+            <Focusable noFocusRing
               key={f.id}
               data-testid={`filter-${f.id}`}
               className={`rm-fchip${filter === f.id ? " rm-on" : ""}`}
@@ -274,13 +274,13 @@ export const LibraryGrid: FC<{ search: string }> = ({ search }) => {
         {shown.length === 0 ? (
           <div className="rm-muted" style={{ padding: "40px 0" }}>No games match this filter.</div>
         ) : (
-          <Focusable flow-children="grid" className="rm-grid">
+          <Focusable noFocusRing flow-children="grid" className="rm-grid">
             {shown.map((rom) => (
               <Cover key={rom.rom_id} rom={rom} status={coverStatus(rom, live)} onAction={(a) => detach(act(rom, a))} />
             ))}
           </Focusable>
         )}
-      </div>
-    </div>
+      </Focusable>
+    </Focusable>
   );
 };

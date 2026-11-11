@@ -86,14 +86,14 @@ export const LibraryRoute: FC = () => {
   return (
     <div className="rm-root rm-lib" data-testid="library-route">
       <RmStyles />
-      <Focusable data-testid="library-root" onButtonDown={onButtonDown} style={{ display: "contents" }}>
+      <Focusable noFocusRing data-testid="library-root" onButtonDown={onButtonDown} style={{ display: "contents" }}>
         <div className="rm-lhead">
           <h1>RomM Library</h1>
           <span className="rm-status">
             <span className={`rm-dot${status.dot}`} />
             {status.text}
           </span>
-          <Focusable className="rm-searchwrap" onActivate={() => searchRef.current?.focus()}>
+          <Focusable noFocusRing className="rm-searchwrap" onActivate={() => searchRef.current?.focus()}>
             <Icon name="search" size={16} />
             <input
               ref={searchRef}
@@ -110,10 +110,10 @@ export const LibraryRoute: FC = () => {
             Sync
           </RmButton>
         </div>
-        <div className="rm-ltabs">
+        <Focusable noFocusRing flow-children="right" className="rm-ltabs">
           <Glyph side="left">L1</Glyph>
           {TABS.map((t) => (
-            <Focusable
+            <Focusable noFocusRing
               key={t.id}
               data-testid={`tab-${t.id}`}
               className={`rm-ltab${tab === t.id ? " rm-on" : ""}`}
@@ -125,7 +125,7 @@ export const LibraryRoute: FC = () => {
             </Focusable>
           ))}
           <Glyph side="right">R1</Glyph>
-        </div>
+        </Focusable>
         {emudeck && !emudeck.ok && (
           <div style={{ padding: "8px 28px 0" }} data-testid="emudeck-banner">
             <AttRow title={emudeckTitle(emudeck.health)} sub={emudeck.message} onActivate={() => setTab("systems")} />

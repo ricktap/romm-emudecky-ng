@@ -201,6 +201,21 @@ describe("LibraryGrid", () => {
     });
   });
 
+  describe("gamepad navigation", () => {
+    it("rail and list sit side by side so Right leaves the rail for the games; each column goes up and down", async () => {
+      const { getByTestId } = await renderGrid();
+      const body = getByTestId("rail").parentElement as HTMLElement;
+      expect(body.getAttribute("data-flow")).toBe("right");
+      expect(getByTestId("rail").getAttribute("data-flow")).toBe("down");
+      expect((getByTestId("cover-1").closest(".rm-lmain") as HTMLElement).getAttribute("data-flow")).toBe("down");
+    });
+
+    it("the focus is drawn around the cover only: the cards turn the native focus ring off", async () => {
+      const { getByTestId } = await renderGrid();
+      expect(getByTestId("cover-1").getAttribute("data-no-ring")).toBe("true");
+    });
+  });
+
   describe("collections rail", () => {
     const withCollections = () =>
       vi.mocked(loadRommCollections).mockResolvedValue([{ name: "Favourites", appIds: new Set([1001, 1002]) }]);
