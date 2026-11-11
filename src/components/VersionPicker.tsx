@@ -24,6 +24,7 @@
 import { useState, useEffect, useRef, FC, ReactNode } from "react";
 import { toaster, addEventListener, removeEventListener } from "@decky/api";
 import { Menu, MenuItem, showContextMenu, DialogButton } from "@decky/ui";
+import { scrollToTop } from "../utils/scrollHelpers";
 import { FaChevronDown, FaCompactDisc, FaLayerGroup } from "react-icons/fa";
 import {
   getVersionList,
@@ -413,6 +414,7 @@ export const VersionPicker: FC<VersionPickerProps> = ({ appId }) => {
   // Focusable row. The verbose per-version detail lives in the anchored menu.
   return (
     <DialogButton
+      onFocus={scrollToTop}
       className="romm-disc-btn"
       onClick={openMenu}
       disabled={switching}
