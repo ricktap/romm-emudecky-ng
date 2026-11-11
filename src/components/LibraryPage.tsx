@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, FC } from "react";
-import { QamHeader, RmButton, RmRow, RmSegments, RmStyles, RmToggle, RmValueRow } from "./rm";
+import { QamHeader, RmButton, RmRow, RmSegments, RmStyles, RmToggle, RmValueRow, RmButtonGroup } from "./rm";
 import {
   getPlatforms,
   savePlatformSync,
@@ -190,14 +190,14 @@ export const LibraryPage: FC<LibraryPageProps> = ({ onBack }) => {
     return (
       <>
         <div className="rm-muted rm-small" style={{ marginBottom: 8 }}>Changes apply on the next sync</div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <RmButtonGroup style={{ marginBottom: 8 }}>
           <RmButton variant="sm ghost" className="rm-grow" onActivate={() => detach(handleSetAll(true))}>
             Enable All
           </RmButton>
           <RmButton variant="sm ghost" className="rm-grow" onActivate={() => detach(handleSetAll(false))}>
             Disable All
           </RmButton>
-        </div>
+        </RmButtonGroup>
         <div className="rm-scard">
           {syncPlatforms.map((platform) => (
             <RmRow key={platform.id} label={platform.name} sub={`${platform.rom_count} ROMs`}>
@@ -268,14 +268,14 @@ export const LibraryPage: FC<LibraryPageProps> = ({ onBack }) => {
           onChange={(sub) => setActiveSubTab(sub as CollectionSubTab)}
         />
         <div className="rm-qsec" style={{ marginTop: 0 }}>{sectionTitle}</div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <RmButtonGroup style={{ marginBottom: 8 }}>
           <RmButton variant="sm ghost" className="rm-grow" onActivate={() => detach(handleSetAllCollections(true, activeSubTab))}>
             Enable All
           </RmButton>
           <RmButton variant="sm ghost" className="rm-grow" onActivate={() => detach(handleSetAllCollections(false, activeSubTab))}>
             Disable All
           </RmButton>
-        </div>
+        </RmButtonGroup>
         {visible.length === 0 ? (
           <RmValueRow label={`No ${activeLabel.toLowerCase()} collections`} />
         ) : (

@@ -155,3 +155,15 @@ export const RmSegments: FC<{
     ))}
   </Focusable>
 );
+
+/** Buttons that belong side by side: the D-pad moves between them left and right (not up and down). */
+export const RmButtonGroup: FC<{ children: ReactNode; style?: React.CSSProperties; testId?: string }> = ({ children, style, testId }) => (
+  <Focusable
+    noFocusRing
+    flow-children="right"
+    style={{ display: "flex", gap: 8, ...style }}
+    data-testid={testId ?? "button-group"}
+  >
+    {children}
+  </Focusable>
+);

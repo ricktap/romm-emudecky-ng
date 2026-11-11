@@ -66,6 +66,13 @@ describe("ConnectionSection", () => {
     expect(signed.getByTestId("sign-in").textContent).toBe("Sign in again");
   });
 
+  it("Sign in again and Sign out sit side by side: the D-pad moves between them left and right", () => {
+    const { getByTestId } = render(<ConnectionSection {...defaultProps({ hasToken: true })} />);
+    const group = getByTestId("sign-in").parentElement as HTMLElement;
+    expect(group.getAttribute("data-flow")).toBe("right");
+    expect(group.contains(getByTestId("sign-out"))).toBe(true);
+  });
+
   it("sign out asks first and only then calls onSignOut", () => {
     const onSignOut = vi.fn();
     const { getByTestId } = render(<ConnectionSection {...defaultProps({ hasToken: true, onSignOut })} />);

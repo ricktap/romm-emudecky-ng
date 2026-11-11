@@ -7,7 +7,7 @@
 import { FC } from "react";
 import { showModal } from "@decky/ui";
 import { TextInputModal } from "./TextInputModal";
-import { RmButton, RmCard, RmChoice, RmRow, RmValueRow } from "../rm";
+import { RmButton, RmCard, RmChoice, RmRow, RmValueRow, RmButtonGroup } from "../rm";
 
 const INPUT_MODES = [
   { data: "default", label: "Default" },
@@ -42,7 +42,7 @@ export const SteamGridDBSection: FC<SteamGridDBSectionProps> = ({
 }) => (
   <RmCard title="Artwork & controller">
     <RmRow label="SteamGridDB API key" sub={sgdbApiKey ? undefined : "Needed for hero, logo and wide artwork"}>
-      <span style={{ display: "flex", gap: 8 }}>
+      <RmButtonGroup>
         <RmButton
           variant="sm ghost"
           testId="edit-sgdb-key"
@@ -55,7 +55,7 @@ export const SteamGridDBSection: FC<SteamGridDBSectionProps> = ({
         <RmButton variant="sm ghost" testId="verify-sgdb-key" disabled={sgdbVerifying || !sgdbApiKey} onActivate={onVerifyKey}>
           {sgdbVerifying ? "Verifying..." : "Verify"}
         </RmButton>
-      </span>
+      </RmButtonGroup>
     </RmRow>
     {sgdbStatus && <RmValueRow label={sgdbStatus} />}
     <RmRow label="Steam Input for ROM shortcuts">

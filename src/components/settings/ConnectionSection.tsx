@@ -10,7 +10,7 @@ import { ConfirmModal, showModal } from "@decky/ui";
 import { TextInputModal } from "./TextInputModal";
 import { ConnectModal } from "./ConnectModal";
 import { isHttpsUrl } from "../../utils/serverUrl";
-import { RmButton, RmCard, RmRow, RmToggle, RmValueRow } from "../rm";
+import { RmButton, RmCard, RmRow, RmToggle, RmValueRow, RmButtonGroup } from "../rm";
 
 // Sign-out only forgets the token on this device; it never revokes it in RomM.
 const SIGN_OUT_CONFIRM_DESCRIPTION =
@@ -75,7 +75,7 @@ export const ConnectionSection: FC<ConnectionSectionProps> = ({
         </RmButton>
       </RmRow>
       <RmRow label="Account" sub={hasToken ? "Signed in" : "Not signed in"}>
-        <span style={{ display: "flex", gap: 8 }}>
+        <RmButtonGroup>
           <RmButton
             variant="sm ghost"
             testId="sign-in"
@@ -106,7 +106,7 @@ export const ConnectionSection: FC<ConnectionSectionProps> = ({
               Sign out
             </RmButton>
           )}
-        </span>
+        </RmButtonGroup>
       </RmRow>
       {isHttpsUrl(url) && (
         <RmRow label="Allow self-signed certificates" sub="LAN only">

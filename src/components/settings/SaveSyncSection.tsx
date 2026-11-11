@@ -8,7 +8,7 @@ import { FC } from "react";
 import { showModal } from "@decky/ui";
 import type { SaveSyncSettings as SaveSyncSettingsType } from "../../types";
 import { TextInputModal } from "./TextInputModal";
-import { RmButton, RmCard, RmChoice, RmRow, RmToggle, RmValueRow } from "../rm";
+import { RmButton, RmCard, RmChoice, RmRow, RmToggle, RmValueRow, RmButtonGroup } from "../rm";
 
 interface SaveSyncSectionProps {
   saveSyncSettings: SaveSyncSettingsType | null;
@@ -74,7 +74,7 @@ export const SaveSyncSection: FC<SaveSyncSectionProps> = ({
             />
           </RmRow>
           <RmRow label="Default save slot" sub="For new games and games without their own slot">
-            <span style={{ display: "flex", gap: 8 }}>
+            <RmButtonGroup>
               <RmButton
                 variant="sm ghost"
                 testId="edit-default-slot"
@@ -95,7 +95,7 @@ export const SaveSyncSection: FC<SaveSyncSectionProps> = ({
                   Reset
                 </RmButton>
               )}
-            </span>
+            </RmButtonGroup>
           </RmRow>
           <RmRow label="Versions kept per slot" sub="Older versions on the server are removed">
             <RmChoice

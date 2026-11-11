@@ -42,7 +42,11 @@ vi.mock("@decky/ui", async () => {
     Navigation: { Navigate: vi.fn(), CloseSideMenus: vi.fn() },
     // The RomM-styled controls are Focusables; here each one is a button so tests can click it by its text or label.
     Focusable: ({ children, onClick, className, ...rest }: AnyProps & { onClick?: () => void; className?: string }) =>
-      ce("button", { onClick, className, "aria-label": rest["aria-label"] as string | undefined }, children as never),
+      ce(
+        className?.includes("rm-btn") ? "button" : "div",
+        { onClick, className, "aria-label": rest["aria-label"] as string | undefined },
+        children as never,
+      ),
     PanelSection: (p: AnyProps & { title?: unknown }) => ce("section", { title: p.title }, p.children as never),
     PanelSectionRow: passthrough("div"),
     ButtonItem: ({ children, onClick, disabled }: AnyProps & { onClick?: () => void; disabled?: boolean }) =>

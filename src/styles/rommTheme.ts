@@ -54,6 +54,7 @@ export const ROMM_CSS = `
 .rm-dlrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #222831}
 .rm-sw{width:44px;height:24px;border-radius:12px;background:#3a414c;border:0;position:relative;cursor:pointer;flex:none}
 .rm-sw .rm-knob{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:9px;background:#dcdedf;transition:left .15s}
+.rm-sw:hover,.rm-sw.gpfocus{outline:3px solid #fff;outline-offset:3px}
 .rm-sw.rm-on{background:#1a9fff}
 .rm-sw.rm-on .rm-knob{left:23px}
 .rm-thumb{width:36px;height:48px;border-radius:3px;flex:none;display:flex;align-items:flex-end;font-size:9px;font-weight:800;color:rgba(255,255,255,.75);padding:3px}
@@ -160,4 +161,6 @@ export const ROMM_CSS = `
 .rm-btn.rm-openlib{height:48px;background:#23303f}
 .rm-btn.rm-openlib:hover,.rm-btn.rm-openlib.gpfocus{background:#dcdedf;color:#0e141b}
 .rm-notes{white-space:pre-wrap;max-height:220px;overflow-y:auto;font-size:12px;line-height:1.4;color:#c3c8ce}
+.rm-fchip.rm-on:hover,.rm-fchip.rm-on.gpfocus{background:#5cbaff;color:#fff;border-color:#5cbaff;outline:2px solid #fff;outline-offset:2px}
+.rm-pbtn.rm-on:hover,.rm-pbtn.rm-on.gpfocus{background:#5cbaff;color:#fff;outline:2px solid #fff;outline-offset:-2px}
 `;
