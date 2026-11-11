@@ -57,6 +57,11 @@ export function hideNativePlaySection(playSectionClass: string) {
   outline: 2px solid #1a9fff;
   outline-offset: 2px;
 }
+/* Steam's footer bar covers the bottom ~40 px: whatever takes the focus scrolls to leave room below it. */
+[data-romm], [data-romm] * {
+  scroll-margin-top: 24px;
+  scroll-margin-bottom: 64px;
+}
 .romm-wizard-btn:hover,
 .romm-wizard-btn:focus,
 .romm-wizard-btn.gpfocus {

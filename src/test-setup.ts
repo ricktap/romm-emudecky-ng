@@ -80,6 +80,7 @@ vi.mock("@decky/ui", () => {
           onClick,
           disabled,
           className,
+          onFocus: rest.onFocus as never,
           "aria-label": rest["aria-label"],
           title: rest.title,
           // Optional: lets a test address one of several buttons (style and FooterLegend props stay dropped).

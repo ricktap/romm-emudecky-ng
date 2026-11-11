@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, waitFor, act } from "@testing-library/react";
+import { render, waitFor, act, fireEvent } from "@testing-library/react";
 import { toaster } from "@decky/api";
 import { showContextMenu, Navigation } from "@decky/ui";
 import type { ReactElement } from "react";
@@ -141,6 +141,20 @@ describe("CustomPlayButton — download_failed listener", () => {
     // the Play label is gone.
     await findByText("Download");
     expect(queryByText("Play")).toBeNull();
+  });
+
+  it("focusing the Download button scrolls up all the way, like the gear buttons, so it is not left half behind the top bar", async () => {
+    mockCachedDetail({ rom_id: 42, installed: false });
+    const scroller = document.createElement("div");
+    scroller.style.overflowY = "auto";
+    Object.defineProperty(scroller, "scrollHeight", { value: 900 });
+    Object.defineProperty(scroller, "clientHeight", { value: 300 });
+    scroller.scrollTo = vi.fn() as never;
+    document.body.appendChild(scroller);
+    const { findByText } = render(<CustomPlayButton appId={100} />, { container: scroller });
+    const button = (await findByText("Download")).closest("button")!;
+    fireEvent.focus(button);
+    await waitFor(() => expect(scroller.scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 0 })));
   });
 
   it("ignores download_failed for a different rom_id", async () => {

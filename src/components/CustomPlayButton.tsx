@@ -961,6 +961,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
         style={btnContainerStyle}
       >
         <DialogButton
+          onFocus={scrollToTop}
           className={[appActionButtonClasses?.PlayButton, "romm-btn-play", "romm-dl-complete-flash"]
             .filter(Boolean)
             .join(" ")}
@@ -1056,6 +1057,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     // control — button + action — as one cohesive pulsing group.
     const downloadBtn = (
       <DialogButton
+        onFocus={scrollToTop}
         className={[appActionButtonClasses?.PlayButton, "romm-btn-download"].filter(Boolean).join(" ")}
         style={{
           ...mainBtnStyle,
@@ -1093,6 +1095,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
 
     const cancelX = (
       <DialogButton
+        onFocus={scrollToTop}
         className="romm-btn-cancel"
         aria-label="Cancel download"
         title="Cancel download"
@@ -1121,6 +1124,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     // resume, so there's nothing to pause).
     const dropdown = (
       <DialogButton
+        onFocus={scrollToTop}
         className="romm-btn-cancel"
         aria-label="Download actions"
         title="Download actions"
@@ -1148,6 +1152,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     // "working, can't stop" rather than offering a cancel/pause it can't honour.
     const extractThrobber = (
       <DialogButton
+        onFocus={scrollToTop}
         className="romm-btn-cancel"
         aria-label="Extracting"
         title="Extracting"
@@ -1189,6 +1194,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     return (
       <Focusable className={appActionButtonClasses?.PlayButtonContainer} style={btnContainerStyle}>
         <DialogButton
+          onFocus={scrollToTop}
           className={[appActionButtonClasses?.PlayButton, "romm-btn-download", "romm-dl-uninstall-flash"]
             .filter(Boolean)
             .join(" ")}
@@ -1210,6 +1216,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     return (
       <Focusable className={appActionButtonClasses?.PlayButtonContainer} style={btnContainerStyle}>
         <DialogButton
+          onFocus={scrollToTop}
           className={[appActionButtonClasses?.PlayButton, "romm-btn-play", isOffline && "romm-offline"]
             .filter(Boolean)
             .join(" ")}
@@ -1237,6 +1244,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     return (
       <Focusable className={appActionButtonClasses?.PlayButtonContainer} style={btnContainerStyle}>
         <DialogButton
+          onFocus={scrollToTop}
           className={[appActionButtonClasses?.PlayButton, "romm-btn-play", isOffline && "romm-offline"]
             .filter(Boolean)
             .join(" ")}
@@ -1264,6 +1272,7 @@ export const CustomPlayButton: FC<CustomPlayButtonProps> = ({ appId }) => { // N
     return (
       <Focusable ref={containerRef} className={appActionButtonClasses?.PlayButtonContainer} style={btnContainerStyle}>
         <DialogButton
+          onFocus={scrollToTop}
           className={[appActionButtonClasses?.PlayButton, "romm-btn-conflict"].filter(Boolean).join(" ")}
           style={{
             ...mainBtnStyle,

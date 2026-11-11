@@ -297,7 +297,7 @@ export const LibraryPage: FC<LibraryPageProps> = ({ onBack }) => {
 
   // --- Render ---
   return (
-    <div className="rm-root" style={{ background: "transparent" }}>
+    <div className="rm-root rm-qam" style={{ background: "transparent" }}>
       <RmStyles />
       <QamHeader title="Platforms & collections" onBack={onBack} />
       <RmSegments

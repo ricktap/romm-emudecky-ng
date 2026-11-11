@@ -18,6 +18,7 @@
 import { useState, useEffect, useRef, FC, ReactNode } from "react";
 import { addEventListener, removeEventListener, toaster } from "@decky/api";
 import { Menu, MenuItem, showContextMenu, DialogButton } from "@decky/ui";
+import { scrollToTop } from "../utils/scrollHelpers";
 import { FaCompactDisc, FaChevronDown } from "react-icons/fa";
 import { getCachedGameDetail, getDiscSelection, selectDisc, logError } from "../api/backend";
 import type { DiscSelection } from "../api/backend";
@@ -204,7 +205,7 @@ export const DiscSelector: FC<DiscSelectorProps> = ({ appId }) => {
   };
 
   return (
-    <DialogButton className="romm-disc-btn" onClick={openMenu}>
+    <DialogButton className="romm-disc-btn" onClick={openMenu} onFocus={scrollToTop}>
       {showPlaylistFace ? (
         <DiscStack size={22} color={DISC_GREY} />
       ) : (

@@ -57,7 +57,7 @@ export const QamSettings: FC<QamSettingsProps> = ({ onBack }) => {
   };
 
   return (
-    <div className="rm-root" style={{ background: "transparent" }}>
+    <div className="rm-root rm-qam" style={{ background: "transparent" }}>
       <RmStyles />
       <QamHeader title="Settings" onBack={onBack} />
       <div className="rm-scard">

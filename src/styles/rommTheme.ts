@@ -5,7 +5,9 @@
  */
 export const ROMM_CSS = `
 .rm-root{background:#10151c;color:#dcdedf}
-.rm-root *{box-sizing:border-box}
+/* Steam's footer bar covers the bottom ~40 px: whatever takes the focus scrolls to leave room below it. */
+.rm-root *{box-sizing:border-box;scroll-margin-top:24px;scroll-margin-bottom:64px}
+.rm-lmain,.rm-prail{scroll-padding-top:24px;scroll-padding-bottom:64px}
 .rm-root button{font-family:inherit}
 .rm-glyph{min-width:22px;height:22px;border-radius:11px;background:#dcdedf;color:#0a0c0f;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;padding:0 6px}
 .rm-btn{border:0;font-size:14px;font-weight:500;background:#2b313a;color:#dcdedf;border-radius:3px;padding:0 14px;height:40px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap}
@@ -65,6 +67,7 @@ export const ROMM_CSS = `
 .rm-searchwrap{position:relative;margin-left:auto}
 .rm-searchwrap svg{position:absolute;left:10px;top:10px;color:#8b929a}
 .rm-search{height:36px;border-radius:4px;border:1px solid #2f3540;background:#171c23;color:#fff;padding:0 12px 0 34px;font-size:14px;width:260px;font-family:inherit}
+.rm-qam{padding-bottom:48px}
 .rm-lbody{flex:1;display:flex;min-height:0}
 .rm-prail{width:230px;flex:none;padding:16px 12px;border-right:1px solid #222831;overflow-y:auto}
 .rm-pbtn{width:100%;display:flex;align-items:center;justify-content:space-between;border:0;background:transparent;color:#c3c8ce;font-size:14px;padding:0 12px;height:40px;border-radius:4px;cursor:pointer;text-align:left}

@@ -328,7 +328,7 @@ export const DownloadQueue: FC<DownloadQueueProps> = ({ onBack, compact }) => {
   );
 
   return (
-    <div className="rm-root" style={{ background: "transparent" }}>
+    <div className={`rm-root${compact ? " rm-qam" : ""}`} style={{ background: "transparent" }}>
       {compact && <RmStyles />}
       {compact && <QamHeader title="Downloads" onBack={onBack} />}
       {!compact && (
