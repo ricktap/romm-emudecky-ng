@@ -448,6 +448,8 @@ export const getRomMetadata = callable<[number], RomMetadata>("get_rom_metadata"
 export const getAllMetadataCache = callable<[], Record<string, RomMetadata>>("get_all_metadata_cache");
 export const getAppIdRomIdMap = callable<[], Record<string, number>>("get_app_id_rom_id_map");
 export const getLibraryOverview = callable<[], LibraryOverview>("get_library_overview");
+/** Choose (or clear, with null) the emulator all games of a platform use unless they have their own. */
+export const setPlatformCore = callable<[string, string | null], BackendResult>("set_platform_core");
 export const getInstalledRelaunchOptions = callable<[], { app_id: number; launch_options: string }[]>(
   "get_installed_relaunch_options",
 );

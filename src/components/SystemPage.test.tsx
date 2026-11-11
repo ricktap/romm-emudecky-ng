@@ -6,6 +6,9 @@ import { render, fireEvent, act } from "@testing-library/react";
 import { SystemPage, keyStateSummary } from "./SystemPage";
 import * as backend from "../api/backend";
 import { showModal } from "@decky/ui";
+import { batchConfirmLaunchOptions } from "../utils/launchOptionsReconcile";
+
+vi.mock("../utils/launchOptionsReconcile", () => ({ batchConfirmLaunchOptions: vi.fn() }));
 import type { FirmwareStatus, SwitchKeyFile } from "../types";
 
 const flushAsync = () =>
@@ -107,7 +110,7 @@ describe("SystemPage — the table", () => {
   it("the Switch row shows the emulators and 'Missing required keys' with its first required key file", async () => {
     const { getByTestId } = await renderPage(status());
     const row = getByTestId("system-switch").textContent!;
-    expect(row).toContain("Eden, Ryujinx");
+    expect(row).toContain("Eden (default)");
     expect(row).toContain("Missing required keys");
     expect(row).toContain("prod.keys");
   });
@@ -137,6 +140,54 @@ describe("SystemPage — the table", () => {
     const { getByTestId } = render(<SystemPage />);
     await flushAsync();
     expect(getByTestId("system-switch").textContent).toContain("Firmware and keys");
+  });
+});
+
+describe("SystemPage — the Switch emulator", () => {
+  beforeEach(() => {
+    vi.mocked(backend.setPlatformCore).mockReset();
+    vi.mocked(backend.getSettings).mockReset().mockResolvedValue({ platform_cores: {} } as never);
+    vi.mocked(backend.getInstalledRelaunchOptions).mockReset().mockResolvedValue([{ app_id: 9, launch_options: "cmd" }]);
+    vi.mocked(batchConfirmLaunchOptions).mockReset();
+  });
+
+  it("offers the installed emulators, the first one as the default, and shows the saved choice", async () => {
+    const first = await renderPage(status());
+    expect(first.getByTestId("choice-Switch emulator").textContent).toBe("Eden (default)");
+    first.unmount();
+    vi.mocked(backend.getSettings).mockResolvedValue({ platform_cores: { switch: "Ryujinx" } } as never);
+    expect((await renderPage(status())).getByTestId("choice-Switch emulator").textContent).toBe("Ryujinx");
+  });
+
+  it("choosing one saves it for the platform and bakes the new command into every installed shortcut", async () => {
+    vi.mocked(backend.setPlatformCore).mockResolvedValue({ success: true, message: "" });
+    const { getByTestId } = await renderPage(status());
+    await press(getByTestId("choice-Switch emulator"));
+    expect(backend.setPlatformCore).toHaveBeenCalledWith("switch", "Eden");
+    expect(batchConfirmLaunchOptions).toHaveBeenCalledWith([{ app_id: 9, launch_options: "cmd" }], "platform emulator");
+    expect(getByTestId("systems-note").textContent).toBe("Switch games now start in Eden");
+    await press(getByTestId("choice-Switch emulator"));
+    expect(backend.setPlatformCore).toHaveBeenLastCalledWith("switch", "Ryujinx");
+    await press(getByTestId("choice-Switch emulator"));
+    expect(backend.setPlatformCore).toHaveBeenLastCalledWith("switch", null);
+    expect(getByTestId("systems-note").textContent).toBe("Switch games start in the first installed emulator");
+  });
+
+  it("a refused or failed choice is undone and says so, and nothing is re-baked", async () => {
+    vi.mocked(backend.setPlatformCore).mockResolvedValue({ success: false, message: "Emulator 'Eden' is not available for switch" });
+    const { getByTestId } = await renderPage(status());
+    await press(getByTestId("choice-Switch emulator"));
+    expect(getByTestId("systems-note").textContent).toBe("Emulator 'Eden' is not available for switch");
+    expect(getByTestId("choice-Switch emulator").textContent).toBe("Eden (default)");
+    vi.mocked(backend.setPlatformCore).mockRejectedValue(new Error("x"));
+    await press(getByTestId("choice-Switch emulator"));
+    expect(getByTestId("systems-note").textContent).toBe("Could not choose the emulator");
+    expect(batchConfirmLaunchOptions).not.toHaveBeenCalled();
+  });
+
+  it("with no emulator installed there is nothing to choose", async () => {
+    const { queryByTestId } = await renderPage(status({ emulators: [], keys: [] }));
+    expect(queryByTestId("choice-Switch emulator")).toBeNull();
   });
 });
 

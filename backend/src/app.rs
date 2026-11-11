@@ -46,7 +46,7 @@ pub const PORTED_CALLABLES: &[&str] = &[
 
     "get_cached_game_detail", "get_rom_metadata", "get_all_metadata_cache", "fetch_cover_base64", "refresh_cover_artwork",
     "get_sgdb_artwork_base64", "verify_sgdb_api_key", "save_sgdb_api_key", "get_sgdb_resolution", "search_sgdb_games", "apply_sgdb_game_id",
-    "get_platform_core_info", "set_game_core", "clear_game_core", "get_disc_selection", "select_disc",
+    "get_platform_core_info", "set_game_core", "set_platform_core", "clear_game_core", "get_disc_selection", "select_disc",
     "get_rom_relaunch_options", "get_installed_relaunch_options",
     "get_artwork_base64",
     "remove_all_shortcuts", "remove_platform_shortcuts", "report_removal_results", "reconcile_shortcuts", "save_shortcut_icon",
@@ -271,7 +271,7 @@ impl Backend {
             persister: persister.clone(),
         });
         let launch_choices = Arc::new(crate::services::launch_choices::LaunchChoicesService::new(
-            crate::services::launch_choices::LaunchChoicesServiceConfig { preferences: library.clone(), launch: launch.clone() }
+            crate::services::launch_choices::LaunchChoicesServiceConfig { preferences: library.clone(), launch: launch.clone(), settings: settings.clone(), persister: persister.clone() }
         ));
         let downloads = DownloadService::new(DownloadServiceConfig {
             romm: romm_api.clone(),
@@ -514,6 +514,11 @@ impl Backend {
             "apply_sgdb_game_id" => bind(name,2,2,sgdb,|s,a|async move{Ok(s.apply(rom_id_arg(&a[0])?,rom_id_arg(&a[1])?).await.unwrap_or_else(|e|unknown_failure(&e)))}),
             "get_platform_core_info" => bind(name,1,1,choices,|s,a|async move {s.get_platform_core_info(rom_id_arg(&a[0])?).await.map_err(err)}),
             "set_game_core" => bind(name,2,2,choices,|s,a|async move {Ok(s.set_game_core(rom_id_arg(&a[0])?, &req_str(&a,1,"label")?).await.unwrap_or_else(|e|unknown_failure(&e)))}),
+            "set_platform_core" => bind(name,2,2,choices,|s,a|async move {
+                let slug = req_str(&a,0,"platform_slug")?;
+                let label = match a.get(1) { None | Some(Value::Null) => None, Some(_) => Some(req_str(&a,1,"label")?) };
+                Ok(s.set_platform_core(&slug, label.as_deref()).await.unwrap_or_else(|e|unknown_failure(&e)))
+            }),
             "clear_game_core" => bind(name,1,1,choices,|s,a|async move {Ok(s.clear_game_core(rom_id_arg(&a[0])?).await.unwrap_or_else(|e|unknown_failure(&e)))}),
             "get_disc_selection" => bind(name,1,1,choices,|s,a|async move {s.get_disc_selection(rom_id_arg(&a[0])?).await.map_err(err)}),
             "select_disc" => bind(name,2,2,choices,|s,a|async move {
@@ -841,7 +846,7 @@ mod tests {
     #[test]
     fn surface_matches_python_backend_size_and_includes_ported() {
         let names = callable_names();
-        assert_eq!(names.len(), 116);
+        assert_eq!(names.len(), 117);
         let mut dedup = names.clone();
         dedup.dedup();
         assert_eq!(dedup.len(), names.len());

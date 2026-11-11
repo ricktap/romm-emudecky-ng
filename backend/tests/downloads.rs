@@ -162,6 +162,70 @@ async fn start_progress_complete_with_eden_launch_options() {
     b.shutdown().await;
 }
 
+/// Every file and folder under `root`, relative and sorted, to compare before and after.
+fn tree(root: &Path) -> Vec<String> {
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            out.push(path.strip_prefix(root).unwrap().to_string_lossy().into_owned());
+            if path.is_dir() {
+                walk(&path, root, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, root, &mut out);
+    out.sort();
+    out
+}
+
+/// Every regular file under `root`.
+fn walk_files(root: &Path) -> Vec<PathBuf> {
+    tree(root).into_iter().map(|p| root.join(p)).filter(|p| p.is_file()).collect()
+}
+
+/// Test matrix "Uninstall leaves nothing": install, then remove; the card holds exactly what it held before, the
+/// install record and the baked command are gone, and the shortcut stays bound to its game (its command is empty) so
+/// artwork, collections and playtime survive and nothing is left half-registered.
+#[tokio::test]
+async fn install_then_uninstall_leaves_no_file_and_no_half_registered_shortcut() {
+    let romm = FakeRomm::start().await;
+    let dirs = Dirs::new();
+    prepare(&dirs, &romm);
+    let name = "Metroid [0100A3D008C5C000][v0].nsp";
+    romm.set_rom(switch_rom(7, name, LEN));
+    romm.set_content(7, payload(LEN));
+    let mut b = Backend::spawn(&dirs).await;
+    seed_rom(&dirs, 7, name, Some(APP_ID));
+    let card = dirs.root.path().join("sd/Emulation");
+    let before = tree(&card);
+
+    assert_eq!(b.call("start_download", json!([7])).await["success"], true);
+    b.wait_event("download_complete", |p| p["rom_id"] == 7).await;
+    assert_ne!(tree(&card), before, "the game is on the card");
+    assert!(b.call("get_rom_relaunch_options", json!([7])).await["launch_options"].as_str().unwrap().contains("Eden"));
+
+    let removed = b.call("remove_rom", json!([7])).await;
+    assert_eq!(removed["success"], true, "{removed}");
+    // No file is left. The system folder (roms/switch) stays: EmuDeck owns that layout and the next install needs it.
+    let left: Vec<String> = tree(&card).into_iter().filter(|p| !before.contains(p)).collect();
+    assert_eq!(left, ["roms", "roms/switch"], "only the empty system folders remain");
+    assert!(left.iter().all(|d| card.join(d).is_dir() && std::fs::read_dir(card.join(d)).unwrap().count() <= 1));
+    assert!(walk_files(&card).is_empty(), "no file of the game is left");
+    assert_eq!(b.call("get_installed_rom", json!([7])).await, Value::Null);
+    assert_eq!(b.call("get_rom_relaunch_options", json!([7])).await, Value::Null, "no command is baked for a game that is not installed");
+    assert_eq!(b.call("get_installed_relaunch_options", json!([])).await, json!([]));
+    assert_eq!(b.call("get_app_id_rom_id_map", json!([])).await[APP_ID.to_string()], 7, "the shortcut stays bound to its game");
+    assert_eq!(b.call("remove_rom", json!([7])).await["reason"], "not_installed", "a second removal is a clear no-op");
+    assert!(walk_files(&card).is_empty());
+
+    // And the same game installs again from scratch.
+    assert_eq!(b.call("start_download", json!([7])).await["success"], true);
+    b.wait_event("download_complete", |p| p["rom_id"] == 7).await;
+    assert_eq!(std::fs::read(card.join("roms/switch").join(name)).unwrap(), payload(LEN));
+    b.shutdown().await;
+}
+
 /// Test matrix "SD ejected, no writes": with EmuDeck's storage gone every start is refused with a reason, RomM is not
 /// even asked, and nothing appears on internal storage; once the card is back the same call works.
 #[tokio::test]

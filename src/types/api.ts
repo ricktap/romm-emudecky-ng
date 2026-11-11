@@ -53,6 +53,8 @@ export interface PluginSettings {
   /** Fallback address for when `romm_url` is unreachable (e.g. away from home); empty when not set. */
   romm_url_external?: string;
   has_token: boolean;
+  /** Per-platform default emulator label by platform slug (empty = the system default). */
+  platform_cores?: Record<string, string>;
   steam_input_mode: "default" | "force_on" | "force_off";
   sgdb_api_key_masked: string;
   log_level: "debug" | "info" | "warn" | "error";

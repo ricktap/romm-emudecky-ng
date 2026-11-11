@@ -7,7 +7,7 @@ use crate::services::testing::{DownloadEnv, EDEN};
 const RYU: &str = "/test-home/Applications/publish/Ryujinx.sh";
 
 fn service(env: &DownloadEnv) -> LaunchChoicesService {
-    LaunchChoicesService::new(LaunchChoicesServiceConfig { preferences: env.library.clone(), launch: env.launch.clone() })
+    LaunchChoicesService::new(LaunchChoicesServiceConfig { preferences: env.library.clone(), launch: env.launch.clone(), settings: env.settings.clone(), persister: Arc::new(crate::services::testing::FakePersister::default()) })
 }
 
 async fn folder(env: &DownloadEnv, id: i64, app: Option<i64>) -> String {
@@ -259,6 +259,7 @@ async fn concurrent_changes_are_reported_without_claiming_a_rebake() {
     folder(&env, 1, Some(99)).await;
     let s = LaunchChoicesService::new(LaunchChoicesServiceConfig {
         preferences: Arc::new(ChangedDuringProbe(env.library.clone())), launch: env.launch.clone(),
+        settings: env.settings.clone(), persister: Arc::new(crate::services::testing::FakePersister::default()),
     });
     let before = env.library.launch_snapshot(1).await.unwrap();
     for result in [s.set_game_core(1, "Eden").await.unwrap(), s.clear_game_core(1).await.unwrap(), s.select_disc(1, Some("update.nsp")).await.unwrap()] {
@@ -266,4 +267,57 @@ async fn concurrent_changes_are_reported_without_claiming_a_rebake() {
         assert!(result.get("launch_options").is_none());
     }
     assert_eq!(env.library.launch_snapshot(1).await.unwrap(), before);
+}
+
+#[tokio::test]
+async fn a_platform_default_applies_to_games_without_their_own_choice_and_only_installed_emulators_can_be_chosen() {
+    let env = DownloadEnv::new().await;
+    env.locator.installed.lock().unwrap().insert("ryujinx".into(), RYU.into());
+    let a = folder(&env, 1, Some(91)).await;
+    let b = folder(&env, 2, Some(92)).await;
+    let s = service(&env);
+    let launch_of = |id: i64| {
+        let s = &s;
+        async move { s.get_rom_relaunch_options(id).await.unwrap()["launch_options"].as_str().unwrap().to_string() }
+    };
+    // Out of the box both start in Eden; the acceptance case: one game on Ryujinx, the other stays on Eden.
+    assert!(launch_of(1).await.contains(EDEN));
+    assert!(launch_of(2).await.contains(EDEN));
+    assert_eq!(s.set_game_core(1, "Ryujinx").await.unwrap()["app_id"], 91);
+    assert!(launch_of(1).await.contains(RYU));
+    assert!(launch_of(2).await.contains(EDEN), "the other game is untouched");
+
+    // An emulator that is not installed cannot be chosen for the platform, and nothing is saved.
+    let refused = s.set_platform_core("switch", Some("yuzu")).await.unwrap();
+    assert_eq!((refused["success"].clone(), refused["reason"].clone()), (json!(false), json!("core_unavailable")));
+    assert_eq!(env.settings.get("platform_cores"), None, "nothing was saved");
+
+    // The platform default moves every game that has no override of its own; a game override still wins.
+    assert_eq!(s.set_platform_core("switch", Some("Ryujinx")).await.unwrap()["success"], true);
+    assert_eq!(env.settings.get("platform_cores"), Some(json!({"switch": "Ryujinx"})));
+    assert!(launch_of(2).await.contains(RYU));
+    assert_eq!(s.set_game_core(1, "Eden").await.unwrap()["success"], true);
+    assert!(launch_of(1).await.contains(EDEN), "the game's own choice wins over the platform default");
+    // Clearing it goes back to the system default.
+    assert_eq!(s.set_platform_core("switch", None).await.unwrap()["success"], true);
+    assert_eq!(env.settings.get("platform_cores"), Some(json!({})));
+    assert!(launch_of(2).await.contains(EDEN));
+    let _ = (a, b);
+}
+
+#[tokio::test]
+async fn a_failed_save_puts_the_platform_default_back() {
+    let env = DownloadEnv::new().await;
+    env.locator.installed.lock().unwrap().insert("ryujinx".into(), RYU.into());
+    let persister = Arc::new(crate::services::testing::FakePersister::default());
+    let s = LaunchChoicesService::new(LaunchChoicesServiceConfig {
+        preferences: env.library.clone(),
+        launch: env.launch.clone(),
+        settings: env.settings.clone(),
+        persister: persister.clone(),
+    });
+    env.settings.set("platform_cores", json!({"switch": "Eden"}));
+    persister.fail_with("disk full");
+    assert!(s.set_platform_core("switch", Some("Ryujinx")).await.is_err());
+    assert_eq!(env.settings.get("platform_cores"), Some(json!({"switch": "Eden"})), "what is shown is what is saved");
 }
