@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, FC, ReactNode } from "react";
 import { Focusable } from "@decky/ui";
-import { AttRow, Icon, NavRow, RmButton, RmStyles, RmButtonGroup } from "./rm";
+import { AttRow, Icon, NavRow, RmButton, RmStyles, RmButtonGroup, ActionRow } from "./rm";
 import { emudeckTitle, movedSummary, useEmudeckHealth } from "../utils/emudeckHealth";
 import { openLibraryRoute } from "../utils/libraryRoute";
 import { getSkipPreview, onSyncPreferencesChange } from "../utils/syncPreferences";
@@ -645,6 +645,16 @@ export const MainPage: FC<MainPageProps> = ({ onNavigate }) => {
       <NavRow label="Downloads" badge={activeDownloads.length} onActivate={() => onNavigate("downloads")} />
       <NavRow label="Platforms & collections" onActivate={() => onNavigate("platforms")} />
       <NavRow label="Settings" onActivate={() => onNavigate("settings")} />
+      <ActionRow
+        label="Check for updates"
+        testId="check-updates"
+        value={updateState.checking ? "Checking…" : updateState.info ? (updateState.info.update_available ? `v${updateState.info.latest_version} available` : "Up to date") : updateState.error ? "Check failed" : ""}
+        disabled={updateState.checking}
+        onActivate={() => {
+          // refreshUpdateState folds every failure into the store: it never rejects.
+          refreshUpdateState(true).catch(() => undefined);
+        }}
+      />
       <div style={{ marginTop: 18 }}>
         <RmButton variant="block" className="rm-openlib" onActivate={() => openLibraryRoute()}>
           <Icon name="grid" size={18} />

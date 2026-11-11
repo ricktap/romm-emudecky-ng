@@ -580,6 +580,29 @@ describe("MainPage", () => {
     beforeEach(() => resetUpdateState());
     afterEach(() => resetUpdateState());
 
+    it("has a Check for updates row in the Quick Access Menu that forces a check and shows what it found", async () => {
+      vi.mocked(backend.checkForUpdate).mockResolvedValue(updateInfo(false));
+      const { getByTestId } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      expect(getByTestId("check-updates").textContent).toContain("Up to date");
+      vi.mocked(backend.checkForUpdate).mockClear();
+      vi.mocked(backend.checkForUpdate).mockResolvedValue(updateInfo(true));
+      await act(async () => {
+        fireEvent.click(getByTestId("check-updates"));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(backend.checkForUpdate).toHaveBeenCalledWith(true);
+      expect(getByTestId("check-updates").textContent).toContain("v0.33.0 available");
+    });
+
+    it("the row says when a check failed", async () => {
+      vi.mocked(backend.checkForUpdate).mockResolvedValue({ success: false, message: "offline" } as never);
+      const { getByTestId } = render(<MainPage onNavigate={vi.fn()} />);
+      await flushAsync();
+      expect(getByTestId("check-updates").textContent).toContain("Check failed");
+    });
+
     it("runs a non-forced check on mount and shows the banner when an update is available", async () => {
       vi.mocked(backend.checkForUpdate).mockResolvedValue(updateInfo(true));
       const { container } = render(<MainPage onNavigate={vi.fn()} />);

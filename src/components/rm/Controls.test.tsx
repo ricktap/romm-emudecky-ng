@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
-import { RmButton, RmChoice, RmToggle, RmRow, RmCard, RmValueRow } from ".";
+import { ActionRow, RmButton, RmChoice, RmToggle, RmRow, RmCard, RmValueRow } from ".";
 
 describe("RmButton", () => {
   it("fires once for a press that arrives as A and as a click, and not when disabled", () => {
@@ -79,5 +79,19 @@ describe("rows and cards", () => {
     expect(container.querySelector("h3")?.textContent).toBe("Card");
     expect(container.textContent).toContain("small");
     expect(container.querySelector(".rm-v")?.textContent).toBe("1.0");
+  });
+});
+
+describe("ActionRow", () => {
+  it("shows its label and result, runs once when pressed, and does nothing while disabled", async () => {
+    const run = vi.fn();
+    const { getByTestId, rerender } = render(<ActionRow label="Do it" value="done" onActivate={run} />);
+    expect(getByTestId("action-Do it").textContent).toBe("Do itdone");
+    fireEvent.click(getByTestId("action-Do it"));
+    expect(run).toHaveBeenCalledTimes(1);
+    rerender(<ActionRow label="Do it" disabled onActivate={run} />);
+    await new Promise((r) => setTimeout(r, 300)); // a second press within 250 ms counts once anyway
+    fireEvent.click(getByTestId("action-Do it"));
+    expect(run).toHaveBeenCalledTimes(1);
   });
 });
