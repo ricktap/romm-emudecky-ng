@@ -385,3 +385,54 @@ async fn simultaneous_sync_fetch_and_refresh_share_atomic_cover_writes() {
     assert_eq!(std::fs::read(format!("{grid}/99p.png")).unwrap(),b"new cover");
     assert!(!std::path::Path::new(&format!("{}.tmp",c.art.assets.cache_path(1))).exists());
 }
+
+#[tokio::test]
+async fn screenshots_come_from_romm_paths_are_cached_and_still_count_offline() {
+    let c=CoverEnv::new().await;
+    // Unknown ROM and server down: the gallery says why instead of showing nothing.
+    assert_eq!(c.svc.screenshots(1).await["reason"],"server_unreachable");
+    let paths:Vec<String>=(0..10).map(|i|format!("/assets/romm/resources/roms/1/screenshots/{i}.jpg")).collect();
+    let mut listed=vec![json!("https://images.igdb.com/external.jpg"),json!("//elsewhere/x.jpg")];
+    listed.extend(paths.iter().map(|p|json!(p)));
+    c.g.e.romm.set_rom(json!({"id":1,"merged_screenshots":listed}));
+    // External URLs never go out with RomM credentials; at most eight.
+    assert_eq!(c.svc.screenshots(1).await,json!({"success":true,"count":8}));
+    c.g.e.romm.get_rom_calls.lock().unwrap().clear();
+    let shot=c.svc.screenshot(1,0).await;
+    assert_eq!(shot["base64"],STANDARD.encode(b"new cover"));
+    assert_eq!(shot["mime"],"image/jpeg");
+    assert_eq!(c.api.calls.lock().unwrap().as_slice(),[paths[0].clone()]);
+    // The listing's paths are reused: no second ROM read for the image.
+    assert!(c.g.e.romm.get_rom_calls.lock().unwrap().is_empty());
+    // Out of range or negative: nothing, and no download.
+    for index in [8,-1,i64::MAX]{assert_eq!(c.svc.screenshot(1,index).await,json!({"base64":null}));}
+    assert_eq!(c.api.calls.lock().unwrap().len(),1);
+    // A failed download leaves no partial file behind and can be retried.
+    c.api.fail.store(true,Ordering::SeqCst);
+    assert_eq!(c.svc.screenshot(1,1).await,json!({"base64":null}));
+    assert!(!std::path::Path::new(&format!("{}/1_shot1.img.tmp",c.art.assets.cache_dir())).exists());
+    c.api.fail.store(false,Ordering::SeqCst);
+    assert_eq!(c.svc.screenshot(1,1).await["base64"],STANDARD.encode(b"new cover"));
+    // Offline: the cached screenshots still count and load, without any download.
+    c.g.e.romm.roms.lock().unwrap().remove(&1);
+    assert_eq!(c.svc.screenshots(1).await,json!({"success":true,"count":2}));
+    let downloads=c.api.calls.lock().unwrap().len();
+    assert_eq!(c.svc.screenshot(1,0).await["base64"],STANDARD.encode(b"new cover"));
+    assert_eq!(c.api.calls.lock().unwrap().len(),downloads);
+}
+
+#[tokio::test]
+async fn screenshot_mime_follows_the_bytes_and_unsynced_screenshots_are_pruned() {
+    let c=CoverEnv::new().await;
+    let dir=c.art.assets.cache_dir();std::fs::create_dir_all(&dir).unwrap();
+    for (index,bytes,mime) in [(0,&b"\x89PNG\r\n"[..],"image/png"),(1,b"GIF89a",  "image/gif"),(2,b"RIFF0000WEBPVP8 ","image/webp"),(3,b"\xff\xd8\xff","image/jpeg")]{
+        std::fs::write(format!("{dir}/5_shot{index}.img"),bytes).unwrap();
+        assert_eq!(c.svc.screenshot(5,index).await["mime"],mime);
+    }
+    // ROM 5 is not synced; ROM 6 is. Startup cleanup drops only the unsynced one's screenshots.
+    c.g.e.seed_rom(6,"switch","kept",Some(66),None).await;
+    std::fs::write(format!("{dir}/6_shot0.img"),b"x").unwrap();
+    c.art.prune().await.unwrap();
+    assert!(!std::path::Path::new(&format!("{dir}/5_shot0.img")).exists());
+    assert!(std::path::Path::new(&format!("{dir}/6_shot0.img")).exists());
+}

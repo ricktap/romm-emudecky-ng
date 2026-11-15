@@ -40,7 +40,10 @@ impl ArtworkService {
         }
         let cache=self.assets.cache_dir();
         for name in self.assets.files_in(&cache).await? {
-            if name.ends_with(".tmp") || name.strip_suffix(".png").and_then(|n|n.parse::<i64>().ok()).is_some_and(|id|!registry.contains_key(&id)) {
+            let unbound=|id:Option<i64>|id.is_some_and(|id|!registry.contains_key(&id));
+            let cover=name.strip_suffix(".png").and_then(|n|n.parse::<i64>().ok());
+            let screenshot=name.split_once("_shot").and_then(|(id,_)|id.parse::<i64>().ok());
+            if name.ends_with(".tmp") || unbound(cover) || unbound(screenshot) {
                 self.assets.remove(&format!("{cache}/{name}")).await?;
             }
         }Ok(())

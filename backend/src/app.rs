@@ -45,6 +45,7 @@ pub const PORTED_CALLABLES: &[&str] = &[
     "record_session_start", "finalize_game_session", "get_all_playtime", "get_playtime_scope_notice", "reconcile_playtime",
 
     "get_cached_game_detail", "get_rom_metadata", "get_all_metadata_cache", "fetch_cover_base64", "refresh_cover_artwork",
+    "get_rom_screenshots", "get_rom_screenshot",
     "get_sgdb_artwork_base64", "verify_sgdb_api_key", "save_sgdb_api_key", "get_sgdb_resolution", "search_sgdb_games", "apply_sgdb_game_id",
     "get_platform_core_info", "set_game_core", "set_platform_core", "clear_game_core", "get_disc_selection", "select_disc",
     "get_rom_relaunch_options", "get_installed_relaunch_options",
@@ -505,6 +506,8 @@ impl Backend {
             "get_rom_metadata" => bind(name,1,1,game,|s,a|async move{s.metadata(rom_id_arg(&a[0])?).await.map_err(err)}),
             "get_all_metadata_cache" => bind(name,0,0,game,|s,_|async move{s.all_metadata().await.map_err(err)}),
             "fetch_cover_base64" => bind(name,1,1,covers,|s,a|async move{Ok(s.fetch(rom_id_arg(&a[0])?).await)}),
+            "get_rom_screenshots" => bind(name,1,1,covers,|s,a|async move{Ok(s.screenshots(rom_id_arg(&a[0])?).await)}),
+            "get_rom_screenshot" => bind(name,2,2,covers,|s,a|async move{Ok(s.screenshot(rom_id_arg(&a[0])?,a[1].as_i64().ok_or_else(||"index must be an integer".to_string())?).await)}),
             "refresh_cover_artwork" => bind(name,1,1,covers,|s,a|async move{Ok(s.refresh(rom_id_arg(&a[0])?).await.unwrap_or_else(|e|unknown_failure(&e)))}),
             "get_sgdb_artwork_base64" => bind(name,2,2,sgdb,|s,a|async move{Ok(s.artwork(rom_id_arg(&a[0])?,rom_id_arg(&a[1])?).await)}),
             "verify_sgdb_api_key" => bind(name,0,1,sgdb,|s,a|async move{let key=opt_str(&a,0,"api_key")?;Ok(s.verify(Some(&key)).await)}),
@@ -846,7 +849,7 @@ mod tests {
     #[test]
     fn surface_matches_python_backend_size_and_includes_ported() {
         let names = callable_names();
-        assert_eq!(names.len(), 117);
+        assert_eq!(names.len(), 119);
         let mut dedup = names.clone();
         dedup.dedup();
         assert_eq!(dedup.len(), names.len());

@@ -45,6 +45,8 @@
   "get_registry_platforms",
   "get_rom_metadata",
   "get_rom_relaunch_options",
+  "get_rom_screenshot",
+  "get_rom_screenshots",
   "get_save_setup_info",
   "get_save_slots",
   "get_save_status",
