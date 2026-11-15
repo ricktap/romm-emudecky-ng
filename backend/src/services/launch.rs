@@ -127,7 +127,15 @@ impl LaunchService {
             return Vec::new();
         };
         let files = self.files.scan_files_with_sizes(folder).await;
-        enumerate_size_ranked(&files, extensions)
+        // A game's base files sit at the top of its folder, its updates and DLC in subfolders (`update/`, `dlc/`):
+        // the top-level candidates rank first (so the default is never a big DLC), the rest follow, each by size.
+        let (top, nested): (Vec<_>, Vec<_>) = files.into_iter().partition(|(p, _)| is_top_level(p, folder));
+        let mut ranked = enumerate_size_ranked(&top, extensions);
+        ranked.extend(enumerate_size_ranked(&nested, extensions));
+        for (i, disc) in ranked.iter_mut().enumerate() {
+            disc.index = i + 1;
+        }
+        ranked
     }
 
     /// Resolve `emulator` into a launch-command prefix, re-probing a table
@@ -167,6 +175,12 @@ impl LaunchService {
         let bake = self.resolve_bake_path(install, snapshot.rom.selected_disc.as_deref()).await;
         Some(json!({"app_id": app_id, "launch_options": self.launch_options(emulator.as_ref(), &bake)}))
     }
+}
+
+/// Whether `path` lies directly in `folder`.
+fn is_top_level(path: &str, folder: &str) -> bool {
+    let prefix = format!("{}/", folder.trim_end_matches('/'));
+    path.strip_prefix(&prefix).is_some_and(|rel| !rel.contains('/'))
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
 //! already there. Pure compute; the caller scans the install folder and downloads the chosen files one by one.
 use std::collections::HashMap;
 use serde_json::Value;
-use crate::domain::install_layout::{relative_file_path, rom_root};
+use crate::domain::install_layout::{ExpectedFile, InstallLayout, relative_file_path, rom_root};
 
 /// One file of a multi-file ROM on RomM.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +81,56 @@ pub fn file_state(file: &RemoteFile, on_disk: &HashMap<String, u64>) -> FileStat
     }
 }
 
+/// The files that are game content for `system` (what its emulators load). Everything else in a game folder (`.nfo`,
+/// `.sfv`, scans, …) is never downloaded or offered. `None` for a system whose folders are fetched whole.
+pub fn content_extensions(system: &str) -> Option<&'static [&'static str]> {
+    match system {
+        "switch" => Some(&[".xci", ".nsp", ".xcz", ".nsz"]),
+        _ => None,
+    }
+}
+
+pub fn is_content(path: &str, extensions: &[&str]) -> bool {
+    let lower = path.to_ascii_lowercase();
+    extensions.iter().any(|ext| lower.ends_with(ext))
+}
+
+/// The content files of `files` (all of them when the system has no content list).
+pub fn content_files(files: Vec<RemoteFile>, system: &str) -> Vec<RemoteFile> {
+    match content_extensions(system) {
+        Some(extensions) => files.into_iter().filter(|f| is_content(&f.rel_path, extensions)).collect(),
+        None => files,
+    }
+}
+
+/// The base game file of a game folder: the largest content file at the top of the folder that RomM does not mark as
+/// an update or DLC (those sit in subfolders), ties broken by name. `None` when the folder has none.
+pub fn base_game_file<'a>(files: &'a [RemoteFile], extensions: &[&str]) -> Option<&'a RemoteFile> {
+    files
+        .iter()
+        .filter(|f| !f.rel_path.contains('/') && is_content(&f.rel_path, extensions))
+        .filter(|f| f.category != "update" && f.category != "dlc")
+        .min_by(|a, b| b.size.cmp(&a.size).then_with(|| a.rel_path.cmp(&b.rel_path)))
+}
+
+/// The base game file `rom` installs as for `system`, when the system installs game folders file by file.
+pub fn base_game_file_of(rom: &Value, system: &str) -> Option<RemoteFile> {
+    let extensions = content_extensions(system)?;
+    let files = remote_files(rom)?;
+    base_game_file(&files, extensions).cloned()
+}
+
+/// A game folder installed file by file holds its base game file and whatever else the user chose, so "already on disk"
+/// means the base game file is there: the expected layout is narrowed to it. Other layouts are returned unchanged.
+pub fn narrow_to_base(layout: InstallLayout, rom: &Value, system: &str) -> InstallLayout {
+    match (layout, base_game_file_of(rom, system)) {
+        (InstallLayout::Multi { dir_candidates, .. }, Some(base)) => {
+            InstallLayout::Multi { dir_candidates, files: vec![ExpectedFile { rel_path: base.rel_path, size: base.size }] }
+        }
+        (layout, _) => layout,
+    }
+}
+
 /// How the queue labels a file download.
 pub fn category_label(category: &str) -> String {
     match category {
@@ -151,6 +201,60 @@ mod tests {
         assert_eq!(file_state(&file, &disk(&[("update/u.nsp", 9)])), FileState::Changed);
         assert_eq!(file_state(&file, &disk(&[("update/u.nsp", 10)])), FileState::Present);
         assert_eq!([FileState::Missing, FileState::Changed, FileState::Present].map(FileState::as_str), ["missing", "changed", "present"]);
+    }
+
+    fn remote(id: i64, rel_path: &str, size: u64, category: &str) -> RemoteFile {
+        RemoteFile { file_id: id, file_name: rel_path.rsplit('/').next().unwrap().into(), rel_path: rel_path.into(), size, category: category.into() }
+    }
+
+    #[test]
+    fn only_switch_content_counts_and_other_systems_keep_everything() {
+        let files = vec![remote(1, "Game.nsp", 9, "game"), remote(2, "Game.nfo", 1, "game"), remote(3, "update/U.NSZ", 2, "update"), remote(4, "game.sfv", 1, "game"), remote(5, "dlc/D.xcz", 3, "dlc")];
+        let ids = |v: Vec<RemoteFile>| v.iter().map(|f| f.file_id).collect::<Vec<_>>();
+        assert_eq!(ids(content_files(files.clone(), "switch")), [1, 3, 5]);
+        assert_eq!(ids(content_files(files, "psx")), [1, 2, 3, 4, 5]);
+        assert!(content_extensions("psx").is_none());
+    }
+
+    #[test]
+    fn the_base_game_is_the_largest_top_level_content_file_that_is_not_an_update_or_dlc() {
+        let exts = content_extensions("switch").unwrap();
+        let files = vec![
+            remote(1, "Game.nfo", 999, "game"),
+            remote(2, "Game [base].nsp", 100, "game"),
+            remote(3, "Game.xci", 100, "game"),
+            remote(4, "Game update.nsp", 500, "update"),
+            remote(5, "dlc/Huge DLC.nsp", 900, "dlc"),
+        ];
+        assert_eq!(base_game_file(&files, exts).map(|f| f.file_id), Some(2), "ties go to the first name");
+        let only_nested = vec![remote(5, "dlc/Huge DLC.nsp", 900, "dlc"), remote(6, "base/Game.nsp", 50, "game")];
+        assert_eq!(base_game_file(&only_nested, exts), None);
+        assert_eq!(base_game_file(&[], exts), None);
+    }
+
+    #[test]
+    fn adoption_of_a_switch_folder_expects_only_its_base_game_file() {
+        let rom = rom(vec![
+            f(1, "switch/Mario Kart", "MK8.xci", 100, json!("game")),
+            f(2, "switch/Mario Kart", "MK8.nfo", 1, json!("game")),
+            f(3, "switch/Mario Kart/update", "U.nsp", 30, json!("update")),
+        ]);
+        let all = InstallLayout::Multi {
+            dir_candidates: vec!["Mario Kart".into()],
+            files: vec![
+                ExpectedFile { rel_path: "MK8.xci".into(), size: 100 },
+                ExpectedFile { rel_path: "MK8.nfo".into(), size: 1 },
+                ExpectedFile { rel_path: "update/U.nsp".into(), size: 30 },
+            ],
+        };
+        assert_eq!(
+            narrow_to_base(all.clone(), &rom, "switch"),
+            InstallLayout::Multi { dir_candidates: vec!["Mario Kart".into()], files: vec![ExpectedFile { rel_path: "MK8.xci".into(), size: 100 }] }
+        );
+        assert_eq!(narrow_to_base(all.clone(), &rom, "psx"), all);
+        let single = InstallLayout::Single { file_name: "x.nsp".into(), size: 1 };
+        assert_eq!(narrow_to_base(single.clone(), &rom, "switch"), single);
+        assert_eq!(base_game_file_of(&rom, "switch").map(|f| f.file_id), Some(1));
     }
 
     #[test]

@@ -207,6 +207,11 @@ archive identity columns; legacy multipart partials are flagged `needs_recovery`
   `qt-config.ini.romm-backup`. **Ryujinx is deferred:** its `autoload_dirs` are only scanned when its game list loads,
   which a direct launch skips; doing it properly means writing `games/<title-id>/updates.json` + `dlc.json`, which needs
   title IDs from NCA headers (AES-XTS with `prod.keys`).
+- **Switch game folders install file by file:** the first download of a multi-file Switch ROM fetches only its base
+  game file (largest top-level `.xci/.nsp/.xcz/.nsz` not marked update/DLC) via `?file_ids=` into the game folder —
+  no RomM ZIP, known size, resumable; the install keeps `rom_dir`. Without an identifiable base file the folder is
+  fetched whole as before. Only content files are listed/downloadable (no `.nfo`/`.sfv`). Launch candidates rank
+  top-level files first (a big DLC never becomes the default); adoption of a Switch folder expects its base file.
 - **Single game files (updates/DLC added later):** game page gear → "Game files…" lists RomM's files of an installed
   multi-file game (missing / changed size / present) and queues the chosen ones as `rom_file` jobs (keyed by RomM file
   id, `parent_rom_id` in `download_jobs` since migration 016). RomM's `/api/roms/{id}/content/{name}?file_ids=<one>`

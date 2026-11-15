@@ -161,8 +161,9 @@ impl InstallAdoptionService {
 
     /// The install a download would have written, when the files match exactly.
     async fn probe_install(&self, rom: &Value) -> Option<RomInstall> {
-        let layout = expected_install_layout(rom)?;
         let (slug, system) = self.system_of(rom);
+        // A Switch game folder is installed file by file: its base game file being there is what "installed" means.
+        let layout = crate::domain::rom_file_status::narrow_to_base(expected_install_layout(rom)?, rom, &system);
         let roms_dir = self.system_dir(&system)?;
         match layout {
             InstallLayout::Single { file_name, size } => {
