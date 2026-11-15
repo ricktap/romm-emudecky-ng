@@ -1,4 +1,5 @@
-//! DownloadJob — one download (a ROM or a firmware file) that has not finished yet.
+//! DownloadJob — one download (a ROM, a firmware file, or one file of an installed multi-file ROM) that has not
+//! finished yet.
 //!
 //! The durable half of the download queue: a row exists exactly while a
 //! download is queued, transferring, extracting, paused by the user, or
@@ -15,6 +16,8 @@ pub enum JobKind {
     #[default]
     Rom,
     Firmware,
+    /// One file of an installed multi-file ROM (an update or DLC added on RomM), keyed by its RomM file id.
+    RomFile,
 }
 
 impl JobKind {
@@ -22,6 +25,7 @@ impl JobKind {
         match self {
             Self::Rom => "rom",
             Self::Firmware => "firmware",
+            Self::RomFile => "rom_file",
         }
     }
 
@@ -29,6 +33,7 @@ impl JobKind {
         match s {
             "rom" => Some(Self::Rom),
             "firmware" => Some(Self::Firmware),
+            "rom_file" => Some(Self::RomFile),
             _ => None,
         }
     }
@@ -49,6 +54,10 @@ impl JobKey {
 
     pub fn firmware(id: i64) -> Self {
         Self { kind: JobKind::Firmware, id }
+    }
+
+    pub fn rom_file(file_id: i64) -> Self {
+        Self { kind: JobKind::RomFile, id: file_id }
     }
 }
 
@@ -129,6 +138,8 @@ pub struct NewJob {
     pub is_multi: bool,
     pub position: i64,
     pub total_bytes: Option<u64>,
+    /// The ROM a `RomFile` job belongs to (required for that kind, `None` otherwise).
+    pub parent_rom_id: Option<i64>,
 }
 
 /// One unfinished download, keyed by `(kind, item_id)`, ordered by `position`.
@@ -158,6 +169,8 @@ pub struct DownloadJob {
     pub cached_zip: bool,
     /// The partial predates archive validators: keep it, offer a restart.
     pub needs_recovery: bool,
+    /// The ROM a `RomFile` job belongs to; `None` for the other kinds.
+    pub parent_rom_id: Option<i64>,
 }
 
 impl DownloadJob {
@@ -172,6 +185,11 @@ impl DownloadJob {
         if new.tmp_path == new.target_path {
             return Err(JobError::Invalid("tmp_path must differ from target_path".into()));
         }
+        let parent_rom_id = match (new.kind, new.parent_rom_id) {
+            (JobKind::RomFile, Some(id)) if id > 0 => Some(id),
+            (JobKind::RomFile, _) => return Err(JobError::Invalid("a rom_file job needs its parent_rom_id".into())),
+            _ => None,
+        };
         Ok(Self {
             kind: new.kind,
             item_id: new.item_id,
@@ -193,6 +211,7 @@ impl DownloadJob {
             representation_length: None,
             cached_zip: false,
             needs_recovery: false,
+            parent_rom_id,
         })
     }
 
@@ -351,11 +370,27 @@ mod tests {
             is_multi: false,
             position: 3,
             total_bytes: Some(1024),
+            parent_rom_id: None,
         }
     }
 
     fn job() -> DownloadJob {
         DownloadJob::enqueue(new_job(), T0).unwrap()
+    }
+
+    #[test]
+    fn a_game_file_job_needs_its_game_and_other_kinds_never_carry_one() {
+        let file = |parent| NewJob { kind: JobKind::RomFile, item_id: 40, parent_rom_id: parent, ..new_job() };
+        for parent in [None, Some(0), Some(-1)] {
+            assert!(matches!(DownloadJob::enqueue(file(parent), T0), Err(JobError::Invalid(_))), "{parent:?}");
+        }
+        let job = DownloadJob::enqueue(file(Some(7)), T0).unwrap();
+        assert_eq!((job.key(), job.parent_rom_id), (JobKey::rom_file(40), Some(7)));
+        let rom = DownloadJob::enqueue(NewJob { parent_rom_id: Some(7), ..new_job() }, T0).unwrap();
+        assert_eq!(rom.parent_rom_id, None);
+        assert_eq!(JobKind::parse("rom_file"), Some(JobKind::RomFile));
+        assert_eq!(JobKind::RomFile.as_str(), "rom_file");
+        assert_eq!(JobKey::rom_file(40).to_string(), "rom_file 40");
     }
 
     fn in_status(status: JobStatus) -> DownloadJob {

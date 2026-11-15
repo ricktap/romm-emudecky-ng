@@ -161,6 +161,19 @@ impl RommRomApi for RommApi {
         let path = format!("/api/roms/{rom_id}/content/{}", quote(file_name, ""));
         self.http.download(&path, dest, mode, hooks).await
     }
+
+    async fn download_rom_file(
+        &self,
+        rom_id: i64,
+        file_id: i64,
+        file_name: &str,
+        dest: &str,
+        mode: TransferMode,
+        hooks: TransferHooks,
+    ) -> anyhow::Result<TransferOutcome> {
+        let path = format!("/api/roms/{rom_id}/content/{}?file_ids={file_id}", quote(file_name, ""));
+        self.http.download(&path, dest, mode, hooks).await
+    }
 }
 
 #[async_trait]

@@ -224,6 +224,16 @@ pub trait RommRomApi: Send + Sync {
         mode: TransferMode,
         hooks: TransferHooks,
     ) -> anyhow::Result<TransferOutcome>;
+    /// Stream one file of a multi-file ROM (`?file_ids=<file_id>`: RomM serves that file itself, not a ZIP).
+    async fn download_rom_file(
+        &self,
+        rom_id: i64,
+        file_id: i64,
+        file_name: &str,
+        dest: &str,
+        mode: TransferMode,
+        hooks: TransferHooks,
+    ) -> anyhow::Result<TransferOutcome>;
 }
 
 /// One save upload (`POST /api/saves`, or `PUT /api/saves/<id>` when `save_id` is set).

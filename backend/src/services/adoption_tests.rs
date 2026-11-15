@@ -41,6 +41,7 @@ async fn job_for(env: &DownloadEnv, rom_id: i64) {
             is_multi: false,
             position: 1,
             total_bytes: None,
+            parent_rom_id: None,
         },
         "t",
     )

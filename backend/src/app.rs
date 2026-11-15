@@ -42,6 +42,7 @@ pub const PORTED_CALLABLES: &[&str] = &[
     "get_firmware_status", "save_firmware_version", "replace_firmware_key", "download_required_firmware", "download_all_firmware",
     "get_version_list", "switch_version", "evaluate_launch", "check_local_drift", "check_core_change",
     "remove_rom", "uninstall_all_roms", "apply_steam_input_setting", "check_for_update", "set_eden_external_content",
+    "get_rom_files", "download_rom_files",
     "record_session_start", "finalize_game_session", "get_all_playtime", "get_playtime_scope_notice", "reconcile_playtime",
 
     "get_cached_game_detail", "get_rom_metadata", "get_all_metadata_cache", "fetch_cover_base64", "refresh_cover_artwork",
@@ -571,12 +572,15 @@ impl Backend {
                 match job_args(&a)? {
                     (id, JobKind::Rom) => Ok(d.start_download(id).await),
                     (id, JobKind::Firmware) => Ok(d.start_firmware_download(id).await),
+                    // A game file is queued with its game: download_rom_files.
+                    (_, JobKind::RomFile) => Ok(crate::domain::errors::failure("invalid_kind", "Use download_rom_files to download a game's files")),
                 }
             }),
             "resume_download" => bind(name, 1, 2, d, |d, a| async move {
                 match job_args(&a)? {
                     (id, JobKind::Rom) => Ok(d.resume_download(id).await),
                     (id, JobKind::Firmware) => Ok(d.resume_firmware_download(id).await),
+                    (id, JobKind::RomFile) => Ok(d.resume_rom_file_download(id).await),
                 }
             }),
             "cancel_download" => bind(name, 1, 2, d, |d, a| async move {
@@ -594,6 +598,13 @@ impl Backend {
             "get_emudeck_health" => bind(name, 0, 0, loc, |l, _| async move { Ok(l.status().await) }),
             "accept_emudeck_storage_path" => bind(name, 0, 0, loc, |l, _| async move { Ok(l.accept().await) }),
             "get_download_queue" => bind(name, 0, 0, d, |d, _| async move { Ok(d.get_download_queue()) }),
+            "get_rom_files" => bind(name, 1, 1, d, |d, a| async move { Ok(d.get_rom_files(rom_id_arg(&a[0])?).await) }),
+            "download_rom_files" => bind(name, 2, 2, d, |d, a| async move {
+                let rom_id = rom_id_arg(&a[0])?;
+                let ids = a[1].as_array().ok_or_else(|| "file_ids must be a list".to_string())?;
+                let ids: Vec<i64> = ids.iter().map(|v| v.as_i64().filter(|id| *id > 0).ok_or_else(|| "file_ids must be positive integers".to_string())).collect::<Result<_, _>>()?;
+                Ok(d.start_rom_file_downloads(rom_id, &ids).await)
+            }),
             "get_installed_rom" => bind(name, 1, 1, d, |d, a| async move {
                 let id = rom_id_arg(&a[0])?;
                 d.get_installed_rom(id).await.map_err(err)
@@ -792,7 +803,7 @@ fn job_args(a: &[Value]) -> Result<(i64, JobKind), String> {
     let kind = match a.get(1) {
         None | Some(Value::Null) => JobKind::Rom,
         Some(Value::String(s)) => {
-            JobKind::parse(s).ok_or_else(|| format!("kind must be \"rom\" or \"firmware\", got {s:?}"))?
+            JobKind::parse(s).ok_or_else(|| format!("kind must be \"rom\", \"firmware\" or \"rom_file\", got {s:?}"))?
         }
         Some(other) => return Err(format!("kind must be a string, got {other}")),
     };
@@ -866,7 +877,7 @@ mod tests {
     #[test]
     fn surface_matches_python_backend_size_and_includes_ported() {
         let names = callable_names();
-        assert_eq!(names.len(), 122);
+        assert_eq!(names.len(), 124);
         let mut dedup = names.clone();
         dedup.dedup();
         assert_eq!(dedup.len(), names.len());
