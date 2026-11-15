@@ -100,6 +100,7 @@
   "select_disc",
   "set_all_collections_sync",
   "set_all_platforms_sync",
+  "set_eden_external_content",
   "set_game_core",
   "set_platform_core",
   "set_save_profile",

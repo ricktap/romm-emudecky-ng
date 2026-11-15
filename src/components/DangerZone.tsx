@@ -24,6 +24,7 @@ import {
   logError,
   getWhitelistSettings,
   updateWhitelistSettings,
+  setEdenExternalContent,
 } from "../api/backend";
 import { removeShortcut } from "../utils/steamShortcuts";
 import { batchConfirmLaunchOptions } from "../utils/launchOptionsReconcile";
@@ -556,6 +557,46 @@ const NonSteamRemovalSection: FC<NonSteamRemovalSectionProps> = ({
   );
 };
 
+/** Eden's External Content folder for Switch updates and DLC, set on demand (the plugin also sets it on its own). */
+export const EdenContentSection: FC = () => {
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("");
+
+  const run = async () => {
+    setBusy(true);
+    setStatus("");
+    try {
+      const result = await setEdenExternalContent();
+      setStatus(result.message || (result.success ? "Done" : "Could not set Eden's folder"));
+    } catch {
+      setStatus("Could not set Eden's folder");
+    }
+    setBusy(false);
+  };
+
+  return (
+    <PanelSection title="Eden updates & DLC">
+      <PanelSectionRow>
+        <ButtonItem
+          layout="below"
+          disabled={busy}
+          description="Eden loads the update and DLC files in your Switch game folders, without installing them."
+          onClick={() => {
+            detach(run());
+          }}
+        >
+          {busy ? "Setting..." : "Set Eden's update & DLC folder"}
+        </ButtonItem>
+      </PanelSectionRow>
+      {status && (
+        <PanelSectionRow>
+          <Field label={status} focusable />
+        </PanelSectionRow>
+      )}
+    </PanelSection>
+  );
+};
+
 interface DangerZoneProps {
   onBack: () => void;
 }
@@ -663,6 +704,8 @@ export const DangerZone: FC<DangerZoneProps> = ({ onBack }) => {
           </ButtonItem>
         </PanelSectionRow>
       </PanelSection>
+
+      <EdenContentSection />
 
       <ShortcutRemovalSection
         platforms={platforms}

@@ -2,7 +2,8 @@
 //! in subfolders; with `<roms>/switch` in Eden's External Content folders (scanned recursively whenever a game starts,
 //! also from a Steam shortcut) they work without installing anything to Eden's NAND.
 use std::sync::Arc;
-use crate::{services::ports::{EmuDeckPaths, ExternalContentDirs, ExternalContentOutcome}, util::path_safety::safe_join_lexical};
+use serde_json::{Value, json};
+use crate::{domain::errors::failure, services::ports::{EmuDeckPaths, ExternalContentDirs, ExternalContentOutcome}, util::path_safety::safe_join_lexical};
 
 /// EmuDeck's ROM folder for the Switch.
 pub const SWITCH_SYSTEM: &str = "switch";
@@ -21,20 +22,42 @@ impl ExternalContentService {
     /// written then); otherwise what happened. Called at startup and after every Switch download, so a change skipped
     /// because Eden was running is made the next time.
     pub async fn ensure_switch_content(&self) -> Option<ExternalContentOutcome> {
+        self.check().await.ok().map(|(_, outcome)| outcome)
+    }
+
+    /// The same check on demand (Danger zone), as a callable result: `{success: true, outcome, folder, message}` when
+    /// Eden scans the folder now, otherwise `{success: false, reason, message}` saying what to do.
+    pub async fn ensure_switch_content_result(&self) -> Value {
+        let (folder, outcome) = match self.check().await {
+            Ok(done) => done,
+            Err(why) => return failure("emudeck_unavailable", &format!("EmuDeck's storage folder is not available ({why})")),
+        };
+        let done = |outcome: &str, message: &str| json!({"success": true, "outcome": outcome, "folder": folder, "message": message});
+        match outcome {
+            ExternalContentOutcome::Added => done("added", "Eden now loads updates and DLC from roms/switch"),
+            ExternalContentOutcome::AlreadyPresent => done("already_present", "Eden already loads updates and DLC from roms/switch"),
+            ExternalContentOutcome::NotConfigured => failure("eden_not_configured", "Start Eden once so it creates its settings, then try again"),
+            ExternalContentOutcome::EmulatorRunning => failure("emulator_running", "Close Eden, then try again"),
+            ExternalContentOutcome::Failed(e) => failure("write_failed", &e),
+        }
+    }
+
+    /// `(folder, outcome)`, or why nothing was checked.
+    async fn check(&self) -> Result<(String, ExternalContentOutcome), String> {
         let health = self.paths.health();
         if !health.is_ok() {
             tracing::info!("Eden external content not checked: EmuDeck paths are {}", health.as_str());
-            return None;
+            return Err(health.as_str().to_string());
         }
         let dir = match safe_join_lexical(&self.paths.roms_path(), &[SWITCH_SYSTEM]) {
             Ok(dir) if dir.starts_with('/') => dir,
             Ok(dir) => {
                 tracing::warn!("Eden external content not checked: ROM folder {dir:?} is not an absolute path");
-                return None;
+                return Err("ROM folder is not an absolute path".into());
             }
             Err(e) => {
                 tracing::warn!("Eden external content not checked: {e}");
-                return None;
+                return Err(e.to_string());
             }
         };
         let outcome = self.dirs.ensure(&dir).await;
@@ -45,7 +68,7 @@ impl ExternalContentService {
             ExternalContentOutcome::EmulatorRunning => tracing::info!("Eden is running; external content folder will be set later"),
             ExternalContentOutcome::Failed(e) => tracing::warn!("Cannot set Eden's external content folder: {e}"),
         }
-        Some(outcome)
+        Ok((dir, outcome))
     }
 }
 
@@ -83,6 +106,32 @@ mod tests {
             assert_eq!(svc.ensure_switch_content().await, None, "{roms:?}");
         }
         assert!(dirs.calls().is_empty(), "{:?}", dirs.calls());
+    }
+
+    #[tokio::test]
+    async fn the_on_demand_result_says_what_happened_and_what_to_do() {
+        let result = |outcome: ExternalContentOutcome| async move {
+            let dirs = Arc::new(RecordingContentDirs::answering(outcome));
+            ExternalContentService::new(paths("/sd/Emulation/roms", EmuDeckHealth::Ok), dirs).ensure_switch_content_result().await
+        };
+        let added = result(ExternalContentOutcome::Added).await;
+        assert_eq!(added["success"], true);
+        assert_eq!(added["outcome"], "added");
+        assert_eq!(added["folder"], "/sd/Emulation/roms/switch");
+        assert_eq!(result(ExternalContentOutcome::AlreadyPresent).await["outcome"], "already_present");
+        for (outcome, reason, message) in [
+            (ExternalContentOutcome::NotConfigured, "eden_not_configured", "Start Eden once so it creates its settings, then try again"),
+            (ExternalContentOutcome::EmulatorRunning, "emulator_running", "Close Eden, then try again"),
+            (ExternalContentOutcome::Failed("Cannot write x: disk full".into()), "write_failed", "Cannot write x: disk full"),
+        ] {
+            let r = result(outcome).await;
+            assert_eq!((r["success"].clone(), r["reason"].clone(), r["message"].clone()), (json!(false), json!(reason), json!(message)));
+            assert!(r.get("error").is_none() && r.get("error_code").is_none());
+        }
+        let dirs = Arc::new(RecordingContentDirs::answering(ExternalContentOutcome::Added));
+        let r = ExternalContentService::new(paths("/sd", EmuDeckHealth::Absent), dirs.clone()).ensure_switch_content_result().await;
+        assert_eq!(r["reason"], "emudeck_unavailable");
+        assert!(dirs.calls().is_empty());
     }
 
     #[tokio::test]

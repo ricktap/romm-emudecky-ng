@@ -606,3 +606,9 @@ export const savesRollbackToVersion = callable<[number, string, number], Rollbac
 // Self-update: checks GitHub for a newer release (throttled to every 6 h unless
 // force=true). Never installs — see utils/selfUpdate.ts for the Decky handoff.
 export const checkForUpdate = callable<[boolean], UpdateCheckResult>("check_for_update");
+// Danger zone: put <roms>/switch into Eden's External Content folders now (the plugin also does it at startup and after
+// every Switch download), so Eden loads the update and DLC files in the game folders without installing them.
+export const setEdenExternalContent = callable<
+  [],
+  { success: boolean; outcome?: "added" | "already_present"; folder?: string; reason?: string; message: string }
+>("set_eden_external_content");

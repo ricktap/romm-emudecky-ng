@@ -41,7 +41,7 @@ const CALLABLE_NAMES_JSON: &str = include_str!("../callables.json");
 pub const PORTED_CALLABLES: &[&str] = &[
     "get_firmware_status", "save_firmware_version", "replace_firmware_key", "download_required_firmware", "download_all_firmware",
     "get_version_list", "switch_version", "evaluate_launch", "check_local_drift", "check_core_change",
-    "remove_rom", "uninstall_all_roms", "apply_steam_input_setting", "check_for_update",
+    "remove_rom", "uninstall_all_roms", "apply_steam_input_setting", "check_for_update", "set_eden_external_content",
     "record_session_start", "finalize_game_session", "get_all_playtime", "get_playtime_scope_notice", "reconcile_playtime",
 
     "get_cached_game_detail", "get_rom_metadata", "get_all_metadata_cache", "fetch_cover_base64", "refresh_cover_artwork",
@@ -182,6 +182,8 @@ pub struct Backend {
     pub adoption: Arc<InstallAdoptionService>,
     pub firmware: Arc<crate::services::firmware::FirmwareService>,
     pub saves: Arc<crate::services::saves::SaveService>,
+    /// Eden's External Content folder for Switch updates and DLC.
+    pub external_content: Arc<crate::services::external_content::ExternalContentService>,
 }
 
 impl Backend {
@@ -379,7 +381,10 @@ impl Backend {
         // tmp files, and auto-resume interrupted jobs in the background.
         downloads.reconcile_persisted_downloads().await;
         // Eden loads Switch updates and DLC from the ROM folder (a change skipped while Eden runs is retried here).
-        tokio::spawn(async move { external_content.ensure_switch_content().await; });
+        {
+            let external_content = external_content.clone();
+            tokio::spawn(async move { external_content.ensure_switch_content().await; });
+        }
         {
             // Downloads cut off by an unreachable server pick up again once it is back.
             let downloads = downloads.clone();
@@ -414,6 +419,7 @@ impl Backend {
             adoption,
             firmware,
             saves: save_service,
+            external_content,
         })
     }
 
@@ -445,6 +451,7 @@ impl Backend {
         let actions=self.game_actions.clone();
         let playtime=self.playtime.clone();
         let update=self.update.clone();
+        let content=self.external_content.clone();
         let firmware=self.firmware.clone();
         let sv=self.saves.clone();
         let h: Handler = match name {
@@ -502,6 +509,7 @@ impl Backend {
             "remove_rom" => bind(name,1,1,actions,|s,a|async move{Ok(s.remove(rom_id_arg(&a[0])?).await)}),
             "uninstall_all_roms" => bind(name,0,0,actions,|s,_|async move{Ok(s.uninstall_all().await.unwrap_or_else(|e|unknown_failure(&e)))}),
             "apply_steam_input_setting" => bind(name,0,0,actions,|s,_|async move{Ok(s.apply_input().await.unwrap_or_else(|e|unknown_failure(&e)))}),
+            "set_eden_external_content" => bind(name,0,0,content,|s,_|async move{Ok(s.ensure_switch_content_result().await)}),
             "check_for_update" => bind(name,1,1,update,|s,a|async move{Ok(s.check(crate::domain::settings::truthy(&a[0])).await)}),
             "record_session_start" => bind(name,1,1,playtime,|s,a|async move{let result=s.start(rom_id_arg(&a[0])?).await.map_err(err)?;s.schedule_flush().await;Ok(result)}),
             "finalize_game_session" => bind(name,1,1,playtime,|s,a|async move{Ok(s.finalize(rom_id_arg(&a[0])?).await)}),
@@ -858,7 +866,7 @@ mod tests {
     #[test]
     fn surface_matches_python_backend_size_and_includes_ported() {
         let names = callable_names();
-        assert_eq!(names.len(), 121);
+        assert_eq!(names.len(), 122);
         let mut dedup = names.clone();
         dedup.dedup();
         assert_eq!(dedup.len(), names.len());

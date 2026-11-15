@@ -98,6 +98,12 @@ describe("DangerZone", () => {
       deleted_count: 0,
       message: "",
     });
+    vi.mocked(backend.setEdenExternalContent).mockResolvedValue({
+      success: true,
+      outcome: "added",
+      folder: "/sd/Emulation/roms/switch",
+      message: "Eden now loads updates and DLC from roms/switch",
+    });
     vi.mocked(clearPlatformCollection).mockResolvedValue(undefined);
     vi.mocked(clearAllRomMCollections).mockResolvedValue(undefined);
     // Default app store / collection store — empty.
@@ -108,6 +114,48 @@ describe("DangerZone", () => {
     // here so NonSteamRemovalSection.handleRemoveAll can fire without ReferenceError.
     vi.stubGlobal("SteamClient", {
       Apps: { RemoveShortcut: vi.fn() },
+    });
+  });
+
+  describe("Eden updates & DLC", () => {
+    it("sets Eden's folder on demand and shows what happened", async () => {
+      const { getByText, queryByText } = render(<DangerZone onBack={vi.fn()} />);
+      await flushAsync();
+      expect(queryByText("Eden now loads updates and DLC from roms/switch")).toBeNull();
+      await act(async () => {
+        fireEvent.click(getByText("Set Eden's update & DLC folder"));
+      });
+      await flushAsync();
+      expect(backend.setEdenExternalContent).toHaveBeenCalledTimes(1);
+      expect(getByText("Eden now loads updates and DLC from roms/switch")).toBeTruthy();
+      expect((getByText("Set Eden's update & DLC folder") as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("a refusal shows the backend's hint (e.g. close Eden first)", async () => {
+      vi.mocked(backend.setEdenExternalContent).mockResolvedValue({
+        success: false,
+        reason: "emulator_running",
+        message: "Close Eden, then try again",
+      });
+      const { getByText } = render(<DangerZone onBack={vi.fn()} />);
+      await flushAsync();
+      await act(async () => {
+        fireEvent.click(getByText("Set Eden's update & DLC folder"));
+      });
+      await flushAsync();
+      expect(getByText("Close Eden, then try again")).toBeTruthy();
+    });
+
+    it("a failed call says so and lets the user try again", async () => {
+      vi.mocked(backend.setEdenExternalContent).mockRejectedValue(new Error("socket"));
+      const { getByText } = render(<DangerZone onBack={vi.fn()} />);
+      await flushAsync();
+      await act(async () => {
+        fireEvent.click(getByText("Set Eden's update & DLC folder"));
+      });
+      await flushAsync();
+      expect(getByText("Could not set Eden's folder")).toBeTruthy();
+      expect((getByText("Set Eden's update & DLC folder") as HTMLButtonElement).disabled).toBe(false);
     });
   });
 
