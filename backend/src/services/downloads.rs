@@ -249,6 +249,8 @@ pub struct DownloadServiceConfig {
     pub clock: Arc<dyn Clock>,
     pub firmware_api: Arc<dyn RommFirmwareApi>,
     pub firmware_jobs: Arc<dyn FirmwareJobs>,
+    /// Keeps Eden loading updates and DLC from the Switch ROM folder; checked after every Switch download.
+    pub external_content: Arc<crate::services::external_content::ExternalContentService>,
 }
 
 pub struct DownloadService {
@@ -267,6 +269,7 @@ pub struct DownloadService {
     clock: Arc<dyn Clock>,
     firmware_api: Arc<dyn RommFirmwareApi>,
     firmware_jobs: Arc<dyn FirmwareJobs>,
+    external_content: Arc<crate::services::external_content::ExternalContentService>,
     state: Mutex<State>,
     /// Serializes every read-modify-write of a `download_jobs` row.
     job_lock: AsyncMutex<()>,
@@ -316,6 +319,7 @@ impl DownloadService {
             clock: config.clock,
             firmware_api: config.firmware_api,
             firmware_jobs: config.firmware_jobs,
+            external_content: config.external_content,
             state: Mutex::new(State::default()),
             job_lock: AsyncMutex::new(()),
         })
@@ -1834,6 +1838,10 @@ impl DownloadService {
             }),
         );
         tracing::info!("Download complete: {} -> {final_path}", plan.rom_name);
+        // A Switch game folder can bring update and DLC files; Eden picks them up from the ROM folder.
+        if plan.system == crate::services::external_content::SWITCH_SYSTEM {
+            self.external_content.ensure_switch_content().await;
+        }
     }
 
     /// `(shortcut_app_id, launch_options)` for a just-installed ROM: the full

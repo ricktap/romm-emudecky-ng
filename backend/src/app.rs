@@ -274,6 +274,10 @@ impl Backend {
         let launch_choices = Arc::new(crate::services::launch_choices::LaunchChoicesService::new(
             crate::services::launch_choices::LaunchChoicesServiceConfig { preferences: library.clone(), launch: launch.clone(), settings: settings.clone(), persister: persister.clone() }
         ));
+        let external_content = Arc::new(crate::services::external_content::ExternalContentService::new(
+            paths.clone(),
+            Arc::new(crate::adapters::eden_config::EdenConfig::new(&env.user_home)),
+        ));
         let downloads = DownloadService::new(DownloadServiceConfig {
             romm: romm_api.clone(),
             files: files.clone(),
@@ -287,6 +291,7 @@ impl Backend {
             clock: clock.clone(),
             firmware_api: romm_api.clone(),
             firmware_jobs: firmware.clone(),
+            external_content: external_content.clone(),
         });
         let active = downloads.clone();
         let emudeck_location = crate::services::emudeck_location::EmuDeckLocationService::new(
@@ -373,6 +378,8 @@ impl Backend {
         // Restore the durable download queue: keep job partials, drop orphan
         // tmp files, and auto-resume interrupted jobs in the background.
         downloads.reconcile_persisted_downloads().await;
+        // Eden loads Switch updates and DLC from the ROM folder (a change skipped while Eden runs is retried here).
+        tokio::spawn(async move { external_content.ensure_switch_content().await; });
         {
             // Downloads cut off by an unreachable server pick up again once it is back.
             let downloads = downloads.clone();

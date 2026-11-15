@@ -26,6 +26,7 @@ pub mod shortcut_removal;
 pub mod game_detail;
 pub mod game_covers;
 pub mod steamgrid;
+pub mod external_content;
 
 #[cfg(test)]
 mod game_artwork_tests;

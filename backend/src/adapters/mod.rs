@@ -19,3 +19,4 @@ pub mod releases;
 pub mod switch_save_safety;
 pub mod switch_save_files;
 pub mod switch_saves;
+pub mod eden_config;

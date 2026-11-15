@@ -29,6 +29,7 @@ pub mod sync_action;
 pub mod rom_save_state;
 pub mod save_status;
 pub mod switch_save;
+pub mod eden_content;
 pub mod sgdb_artwork;
 
 pub mod iso_time;

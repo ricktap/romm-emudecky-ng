@@ -890,6 +890,10 @@ async fn progress_is_throttled_but_the_final_tick_always_emits() {
         clock,
         firmware_api: env.romm.clone(),
         firmware_jobs: env.firmware_jobs.clone(),
+        external_content: Arc::new(crate::services::external_content::ExternalContentService::new(
+            Arc::new(crate::services::testing::FixedPaths { roms: String::new(), bios: String::new() }),
+            Arc::new(crate::services::testing::RecordingContentDirs::answering(crate::services::ports::ExternalContentOutcome::Added)),
+        )),
     });
     let mut hook = svc.progress_hook(&plan);
     hook(1, 10); // no entry yet: nothing
@@ -1494,4 +1498,39 @@ mod firmware {
         assert!(std::path::Path::new(&owned).exists(), "a job's partial under bios/ is kept");
         assert!(!std::path::Path::new(&orphan).exists(), "an orphan is cleaned");
     }
+}
+
+/// The folders Eden was asked to scan once the download task got past `download_complete` (it runs right after).
+async fn content_dirs_after_completion(env: &DownloadEnv, expect_any: bool) -> Vec<String> {
+    for _ in 0..200 {
+        let calls = env.content_dirs.calls();
+        if !calls.is_empty() || !expect_any {
+            return calls;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    env.content_dirs.calls()
+}
+
+#[tokio::test]
+async fn a_finished_switch_download_points_eden_at_the_switch_rom_folder() {
+    let env = env_with_rom().await;
+    env.svc.start_download(ROM).await;
+    env.wait_status(ROM, "completed").await;
+    assert_eq!(content_dirs_after_completion(&env, true).await, [format!("{}/switch", env.roms_s())]);
+}
+
+#[tokio::test]
+async fn a_finished_download_of_another_system_leaves_eden_alone() {
+    let env = DownloadEnv::new().await;
+    env.seed_rom(ROM, "n64", "Mario.z64", None, None).await;
+    let mut rom = switch_rom(ROM, "Mario.z64", LEN);
+    rom["platform_slug"] = json!("n64");
+    rom["platform_fs_slug"] = json!("n64");
+    env.romm.set_rom(rom);
+    env.romm.set_content(ROM, payload(LEN));
+    env.svc.start_download(ROM).await;
+    env.wait_status(ROM, "completed").await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(content_dirs_after_completion(&env, false).await.is_empty());
 }

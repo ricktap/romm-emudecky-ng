@@ -574,6 +574,29 @@ impl DownloadFiles for FakeFiles {
     }
 }
 
+/// Records every folder it is asked to ensure and answers with a fixed outcome.
+pub struct RecordingContentDirs {
+    outcome: crate::services::ports::ExternalContentOutcome,
+    calls: std::sync::Mutex<Vec<String>>,
+}
+
+impl RecordingContentDirs {
+    pub fn answering(outcome: crate::services::ports::ExternalContentOutcome) -> Self {
+        Self { outcome, calls: Default::default() }
+    }
+    pub fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::services::ports::ExternalContentDirs for RecordingContentDirs {
+    async fn ensure(&self, dir: &str) -> crate::services::ports::ExternalContentOutcome {
+        self.calls.lock().unwrap().push(dir.into());
+        self.outcome.clone()
+    }
+}
+
 pub struct FixedPaths {
     pub roms: String,
     pub bios: String,
@@ -672,6 +695,8 @@ pub struct DownloadEnv {
     pub health: Arc<std::sync::Mutex<crate::domain::emudeck_health::EmuDeckHealth>>,
     /// The storage path EmuDeck's settings name.
     pub storage: Arc<std::sync::Mutex<Option<String>>>,
+    /// The folders Eden was asked to scan for updates and DLC.
+    pub content_dirs: Arc<RecordingContentDirs>,
 }
 
 impl DownloadEnv {
@@ -719,6 +744,7 @@ impl DownloadEnv {
             paths: paths.clone(),
         }));
         let firmware_jobs = Arc::new(FakeFirmwareJobs::default());
+        let content_dirs = Arc::new(RecordingContentDirs::answering(crate::services::ports::ExternalContentOutcome::Added));
         let svc = DownloadService::new(DownloadServiceConfig {
             romm: romm.clone(),
             files: files.clone(),
@@ -732,6 +758,10 @@ impl DownloadEnv {
             clock: clock.clone(),
             firmware_api: romm.clone(),
             firmware_jobs: firmware_jobs.clone(),
+            external_content: Arc::new(crate::services::external_content::ExternalContentService::new(
+                paths.clone(),
+                content_dirs.clone(),
+            )),
         });
         let active = svc.clone();
         let adoption = InstallAdoptionService::new(InstallAdoptionServiceConfig {
@@ -763,6 +793,7 @@ impl DownloadEnv {
             clock,
             health,
             storage,
+            content_dirs,
         }
     }
 
