@@ -906,6 +906,84 @@ describe("index.tsx — firmware downloads share the queue without being mistake
   });
 });
 
+describe("index.tsx — game-file downloads (update/DLC of an installed game) are not ROM installs", () => {
+  beforeEach(() => {
+    setLaunchOptionsConfirmed.mockClear();
+    vi.mocked(toaster.toast).mockClear();
+    setDownloads([]);
+  });
+
+  const fileFrame: DownloadProgressEvent = {
+    kind: "rom_file",
+    file_id: 302,
+    rom_name: "Mario Kart \u00b7 MK8 v3.nsp",
+    platform_name: "Update",
+    file_name: "MK8 v3.nsp",
+    status: "downloading",
+    progress: 0.5,
+    bytes_downloaded: 8,
+    total_bytes: 16,
+  };
+
+  it("a game-file frame is its own entry, apart from a ROM with the same number", () => {
+    const plugin = pluginFactory();
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", fileFrame);
+      const { file_id: _fileId, ...romFrame } = fileFrame;
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", { ...romFrame, kind: "rom", rom_id: 302 });
+    });
+    const items = getDownloadState();
+    expect(items).toHaveLength(2);
+    expect(items.find((d) => d.kind === "rom_file")?.file_id).toBe(302);
+    plugin.onDismount();
+  });
+
+  it("a finished game file toasts, marks its entry done, tells the game page, and sets no launch options", async () => {
+    const plugin = pluginFactory();
+    const changed = vi.fn();
+    globalThis.addEventListener("romm_data_changed", changed);
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", fileFrame);
+      emitDeckyEvent<[DownloadCompleteEvent]>("download_complete", {
+        kind: "rom_file",
+        file_id: 302,
+        parent_rom_id: 30,
+        rom_name: "Mario Kart \u00b7 MK8 v3.nsp",
+        platform_name: "Update",
+        file_path: "/roms/switch/Mario Kart/update/MK8 v3.nsp",
+      } as DownloadCompleteEvent);
+    });
+    await flush();
+    const entry = getDownloadState().find((d) => d.kind === "rom_file");
+    expect(entry?.status).toBe("completed");
+    expect(entry?.file_name).toBe("MK8 v3.nsp");
+    expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(expect.objectContaining({ body: "Downloaded Mario Kart \u00b7 MK8 v3.nsp" }));
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ detail: { type: "rom_files", rom_id: 30 } }));
+    expect(setLaunchOptionsConfirmed).not.toHaveBeenCalled();
+    expect(getDownloadState().some((d) => (d.kind ?? "rom") === "rom")).toBe(false);
+    globalThis.removeEventListener("romm_data_changed", changed);
+    plugin.onDismount();
+  });
+
+  it("a failed game file is shown as a failure for that file", () => {
+    const plugin = pluginFactory();
+    act(() => {
+      emitDeckyEvent<[DownloadProgressEvent]>("download_progress", fileFrame);
+      emitDeckyEvent<[DownloadFailedEvent]>("download_failed", {
+        kind: "rom_file",
+        file_id: 302,
+        rom_name: "Mario Kart \u00b7 MK8 v3.nsp",
+        platform_name: "Update",
+        error_message: "MK8 v3.nsp has 29 bytes, RomM reports 30; it was not installed",
+      });
+    });
+    const entry = getDownloadState().find((d) => d.kind === "rom_file");
+    expect(entry?.status).toBe("failed");
+    expect(entry?.file_id).toBe(302);
+    plugin.onDismount();
+  });
+});
+
 describe("index.tsx — library route", () => {
   it("registers /romm-library on load and removes it on dismount", () => {
     vi.mocked(routerHook.addRoute).mockClear();

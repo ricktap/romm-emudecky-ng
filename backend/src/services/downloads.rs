@@ -30,6 +30,7 @@ use crate::domain::download_job::{
 };
 use crate::domain::errors::{failure, reason};
 use crate::domain::install_layout::resolve_download_names;
+use crate::domain::rom_file_status::{base_game_file_of, category_label, content_files, file_state, remote_files};
 use crate::domain::rom_files::{detect_launch_file, is_multi_file_download};
 use crate::domain::rom_install::RomInstall;
 use crate::services::launch::LaunchService;
@@ -152,12 +153,13 @@ impl QueueEntry {
 }
 
 /// Write a job's identity into a frame: `kind`, plus the id under the name its consumers use
-/// (`rom_id` for a ROM, `firmware_id` for firmware).
+/// (`rom_id` for a ROM, `firmware_id` for firmware, `file_id` for one file of an installed ROM).
 fn set_identity(v: &mut Value, key: JobKey) {
     v["kind"] = json!(key.kind.as_str());
     match key.kind {
         JobKind::Rom => v["rom_id"] = json!(key.id),
         JobKind::Firmware => v["firmware_id"] = json!(key.id),
+        JobKind::RomFile => v["file_id"] = json!(key.id),
     }
 }
 
@@ -249,6 +251,8 @@ pub struct DownloadServiceConfig {
     pub clock: Arc<dyn Clock>,
     pub firmware_api: Arc<dyn RommFirmwareApi>,
     pub firmware_jobs: Arc<dyn FirmwareJobs>,
+    /// Keeps Eden loading updates and DLC from the Switch ROM folder; checked after every Switch download.
+    pub external_content: Arc<crate::services::external_content::ExternalContentService>,
 }
 
 pub struct DownloadService {
@@ -267,6 +271,7 @@ pub struct DownloadService {
     clock: Arc<dyn Clock>,
     firmware_api: Arc<dyn RommFirmwareApi>,
     firmware_jobs: Arc<dyn FirmwareJobs>,
+    external_content: Arc<crate::services::external_content::ExternalContentService>,
     state: Mutex<State>,
     /// Serializes every read-modify-write of a `download_jobs` row.
     job_lock: AsyncMutex<()>,
@@ -279,6 +284,27 @@ enum Ended {
     Error(anyhow::Error),
 }
 
+/// One file of an installed multi-file ROM and where it goes.
+#[derive(Clone, Debug)]
+struct RomFileTarget {
+    rom_id: i64,
+    file_id: i64,
+    /// The name RomM serves the file under.
+    file_name: String,
+    dest_path: String,
+    /// The install folder the file belongs to (checked again before the file is put in place).
+    install_dir: String,
+    size: u64,
+}
+
+/// The base game file a ROM download fetches on its own, and the game folder it goes into.
+#[derive(Clone, Debug)]
+struct BaseFile {
+    file_id: i64,
+    install_dir: String,
+    size: u64,
+}
+
 /// The fixed facts of one download attempt.
 #[derive(Clone)]
 struct Plan {
@@ -288,6 +314,11 @@ struct Plan {
     rom_id: i64,
     /// The firmware file to fetch and where it goes; `None` for a ROM.
     firmware: Option<FirmwareTarget>,
+    /// The single file of an installed multi-file ROM to fetch; `None` for the other kinds.
+    rom_file: Option<RomFileTarget>,
+    /// A game folder installed file by file: the ROM job fetches only its base game file (no archive) into
+    /// `install_dir`; `None` for a single-file ROM and for a folder fetched whole as a ZIP.
+    base_file: Option<BaseFile>,
     rom: Value,
     target_path: String,
     system: String,
@@ -316,6 +347,7 @@ impl DownloadService {
             clock: config.clock,
             firmware_api: config.firmware_api,
             firmware_jobs: config.firmware_jobs,
+            external_content: config.external_content,
             state: Mutex::new(State::default()),
             job_lock: AsyncMutex::new(()),
         })
@@ -657,6 +689,7 @@ impl DownloadService {
             let result = match key.kind {
                 JobKind::Rom => self.resume_inner(key.id, false).await,
                 JobKind::Firmware => self.resume_firmware_download(key.id).await,
+                JobKind::RomFile => self.resume_rom_file_download(key.id).await,
             };
             if result["success"] == true {
                 continue;
@@ -918,10 +951,37 @@ impl DownloadService {
         if names.file_name_changed() {
             tracing::warn!("Sanitized fs_name from '{}' to '{}'", names.raw_file_name, names.file_name);
         }
-        let file_name = names.file_name.clone();
-        let file_size = rom.get("fs_size_bytes").and_then(Value::as_u64).unwrap_or(0);
-        let target_path = join(&roms_dir, &[&file_name]);
-        let is_multi = is_multi_file_download(&rom);
+        // A game folder of a system installed file by file (Switch): only its base game file, fetched on its own
+        // (no archive RomM has to pack first). Updates and DLC are chosen later (Game files). A folder without an
+        // identifiable base game file is fetched whole, as before.
+        let base = if is_multi_file_download(&rom) { base_game_file_of(&rom, &system) } else { None };
+        let base_plan = match &base {
+            Some(base) => {
+                let install_dir = join(&roms_dir, &[&names.extract_dir_name]);
+                match safe_join_lexical(&install_dir, &base.parts()) {
+                    Ok(target) => Some((base.clone(), install_dir, target)),
+                    Err(e) => {
+                        tracing::warn!("Unsafe base game path {:?} for ROM {rom_id}: {e}; fetching the folder whole", base.rel_path);
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+        let (file_name, file_size, target_path, is_multi) = match &base_plan {
+            Some((base, _, target)) => (base.file_name.clone(), base.size, target.clone(), false),
+            None => (
+                names.file_name.clone(),
+                rom.get("fs_size_bytes").and_then(Value::as_u64).unwrap_or(0),
+                join(&roms_dir, &[&names.file_name]),
+                is_multi_file_download(&rom),
+            ),
+        };
+        let base_file = base_plan.as_ref().map(|(base, install_dir, _)| BaseFile {
+            file_id: base.file_id,
+            install_dir: install_dir.clone(),
+            size: base.size,
+        });
         let tmp_path = format!("{target_path}{}", if is_multi { ZIP_TMP_EXT } else { TMP_EXT });
         let partial_bytes = if resume { self.files.file_size(&tmp_path).await } else { 0 };
 
@@ -931,6 +991,9 @@ impl DownloadService {
         };
         let preflight: anyhow::Result<Option<Value>> = async {
             self.files.make_dirs(&roms_dir).await?;
+            if base_file.is_some() {
+                self.files.make_dirs(dirname(&target_path)).await?;
+            }
             let free = self.files.disk_free(&roms_dir).await?;
             let reserved: u64 = self.st().reserved.values().sum();
             let available = i128::from(free) - i128::from(reserved);
@@ -976,6 +1039,7 @@ impl DownloadService {
                 is_multi,
                 position: 0,
                 total_bytes: (!is_multi).then_some(file_size),
+                parent_rom_id: None,
             })
             .await;
         let total_bytes = job.and_then(|j| j.total_bytes).unwrap_or(file_size);
@@ -993,6 +1057,8 @@ impl DownloadService {
             restart,
             key: JobKey::rom(rom_id),
             firmware: None,
+            rom_file: None,
+            base_file,
         };
         self.launch_transfer(plan, partial_bytes, total_bytes, required, resume);
         json!({"success": true, "message": "Download started"})
@@ -1147,6 +1213,7 @@ impl DownloadService {
                 is_multi: false,
                 position: 0,
                 total_bytes: (target.size > 0).then_some(target.size),
+                parent_rom_id: None,
             })
             .await;
         let total_bytes = job.and_then(|j| j.total_bytes).unwrap_or(target.size);
@@ -1154,6 +1221,8 @@ impl DownloadService {
             key,
             rom_id: firmware_id,
             firmware: Some(target.clone()),
+            rom_file: None,
+            base_file: None,
             rom: Value::Null,
             target_path: target.dest_path.clone(),
             system: String::new(),
@@ -1208,6 +1277,315 @@ impl DownloadService {
         set_identity(&mut payload, key);
         self.emit("download_complete", payload);
         tracing::info!("Firmware download complete: {} -> {final_path}", plan.rom_name);
+    }
+
+    // ── Single files of an installed multi-file ROM ─────────────────────
+
+    /// The install folder of `rom_id` when it is installed as a folder (a multi-file ROM).
+    async fn installed_rom_dir(&self, rom_id: i64) -> Option<String> {
+        self.library.install(rom_id).await.ok().flatten().and_then(|install| install.rom_dir).filter(|d| !d.is_empty())
+    }
+
+    /// The files RomM lists for installed multi-file ROM `rom_id`, each with its state in the install folder
+    /// (`missing`, `changed` size, `present`) and whether a download of it is unfinished in the queue.
+    pub async fn get_rom_files(&self, rom_id: i64) -> Value {
+        let install = self.library.install(rom_id).await.ok().flatten();
+        let Some((dir, system)) = install.and_then(|i| i.rom_dir.filter(|d| !d.is_empty()).map(|d| (d, i.system))) else {
+            return failure("not_installed", "Only a game installed as a folder has separate files");
+        };
+        let rom = match self.romm.get_rom(rom_id).await {
+            Ok(rom) => rom,
+            Err(e) => return e.to_failure(),
+        };
+        let Some(files) = remote_files(&rom) else {
+            return failure("unknown_layout", "RomM's file list for this game cannot be used");
+        };
+        // Only game content (for the Switch .xci/.nsp/.xcz/.nsz): no .nfo, .sfv, scans.
+        let files = content_files(files, &system);
+        let prefix = format!("{}/", dir.trim_end_matches('/'));
+        let on_disk: HashMap<String, u64> = self
+            .files
+            .scan_files_with_sizes(&dir)
+            .await
+            .into_iter()
+            .filter_map(|(path, size)| path.strip_prefix(&prefix).map(|rel| (rel.to_string(), size)))
+            .collect();
+        let unfinished: HashSet<i64> = {
+            let st = self.st();
+            st.queue
+                .iter()
+                .filter(|(key, e)| key.kind == JobKind::RomFile && !matches!(e.status.as_str(), "completed" | "failed" | "cancelled"))
+                .map(|(key, _)| key.id)
+                .collect()
+        };
+        let list: Vec<Value> = files
+            .iter()
+            .map(|f| {
+                json!({
+                    "file_id": f.file_id,
+                    "path": f.rel_path,
+                    "category": f.category,
+                    "size": f.size,
+                    "state": file_state(f, &on_disk).as_str(),
+                    "downloading": unfinished.contains(&f.file_id),
+                })
+            })
+            .collect();
+        json!({"success": true, "rom_id": rom_id, "files": list})
+    }
+
+    /// Queue the chosen files of installed ROM `rom_id`, one download each. Succeeds when at least one was queued;
+    /// `errors` lists the files that were not (with reason and message).
+    pub async fn start_rom_file_downloads(self: &Arc<Self>, rom_id: i64, file_ids: &[i64]) -> Value {
+        if file_ids.is_empty() {
+            return failure("nothing_selected", "Choose at least one file");
+        }
+        let mut started = 0;
+        let mut errors = Vec::new();
+        for &file_id in file_ids {
+            let result = self.start_rom_file_download(rom_id, file_id).await;
+            if result["success"] == true {
+                started += 1;
+            } else {
+                errors.push(json!({"file_id": file_id, "reason": result["reason"], "message": result["message"]}));
+            }
+        }
+        if started == 0 {
+            let mut first = errors[0].clone();
+            first["success"] = json!(false);
+            first["errors"] = json!(errors);
+            return first;
+        }
+        let message = if started == 1 { "1 file queued".to_string() } else { format!("{started} files queued") };
+        json!({"success": true, "started": started, "errors": errors, "message": message})
+    }
+
+    async fn start_rom_file_download(self: &Arc<Self>, rom_id: i64, file_id: i64) -> Value {
+        let _mutation = self.mutation_lock.lock().await;
+        if !self.st().in_progress.insert(JobKey::rom_file(file_id)) {
+            return failure("already_downloading", "Already downloading");
+        }
+        self.begin_rom_file(rom_id, file_id, false).await
+    }
+
+    /// Resume a paused or interrupted file download from its partial (its game comes from the job row).
+    pub async fn resume_rom_file_download(self: &Arc<Self>, file_id: i64) -> Value {
+        let _mutation = self.mutation_lock.lock().await;
+        let key = JobKey::rom_file(file_id);
+        let resumable = self.st().queue.get(&key).is_some_and(|e| e.status == "paused" || e.status == "interrupted");
+        let rom_id = self.load_job(key).await.and_then(|j| j.parent_rom_id);
+        let (true, Some(rom_id)) = (resumable, rom_id) else {
+            return failure("not_paused", "No paused download for this file");
+        };
+        if !self.st().in_progress.insert(key) {
+            return failure("already_downloading", "Already downloading");
+        }
+        self.begin_rom_file(rom_id, file_id, true).await
+    }
+
+    async fn begin_rom_file(self: &Arc<Self>, rom_id: i64, file_id: i64, resume: bool) -> Value {
+        let key = JobKey::rom_file(file_id);
+        let release = |me: &Self| {
+            me.st().in_progress.remove(&key);
+        };
+        if let Some(refusal) = self.emudeck_refusal() {
+            release(self);
+            return refusal;
+        }
+        let install = self.library.install(rom_id).await.ok().flatten();
+        let Some((install_dir, system)) =
+            install.and_then(|i| i.rom_dir.filter(|d| !d.is_empty()).map(|d| (d, i.system)))
+        else {
+            release(self);
+            if resume {
+                self.evict_job(key).await;
+            }
+            return failure("not_installed", "The game is not installed as a folder");
+        };
+        let rom = match self.romm.get_rom(rom_id).await {
+            Ok(rom) => rom,
+            Err(e) => {
+                release(self);
+                tracing::error!("Failed to fetch ROM {rom_id} for file {file_id}: {e}");
+                let mut response = e.to_failure();
+                if resume
+                    && let Outcome::Interrupted(why) = classify_download_failure(&anyhow::Error::new(e))
+                {
+                    self.mark_interrupted(key, why).await;
+                    response["reason"] = json!(why);
+                }
+                return response;
+            }
+        };
+        let file = remote_files(&rom).and_then(|files| content_files(files, &system).into_iter().find(|f| f.file_id == file_id));
+        let Some(file) = file else {
+            release(self);
+            if resume {
+                self.evict_job(key).await;
+            }
+            return failure("file_not_found", "RomM does not list this file for the game any more");
+        };
+        let dest_path = match safe_join_lexical(&install_dir, &file.parts()) {
+            Ok(path) => path,
+            Err(e) => {
+                release(self);
+                tracing::error!("Rejected file {file_id} of ROM {rom_id}: unsafe path {:?}: {e}", file.rel_path);
+                return failure("unsafe_path", "The server sent an unsafe file path");
+            }
+        };
+        let tmp_path = format!("{dest_path}{TMP_EXT}");
+        let partial_bytes = if resume { self.files.file_size(&tmp_path).await } else { 0 };
+        if !resume && let Err(e) = self.files.remove_file(&tmp_path).await {
+            tracing::warn!("Could not remove a stale {tmp_path}: {e}");
+        }
+        let required = file.size.saturating_sub(partial_bytes) + SPACE_BUFFER;
+        let dest_dir = dirname(&dest_path).to_string();
+        let preflight: anyhow::Result<Option<Value>> = async {
+            self.files.make_dirs(&dest_dir).await?;
+            let free = self.files.disk_free(&dest_dir).await?;
+            let reserved: u64 = self.st().reserved.values().sum();
+            let available = i128::from(free) - i128::from(reserved);
+            if file.size > 0 && available < i128::from(required) {
+                let free_mb = available.max(0) / (1024 * 1024);
+                return Ok(Some(failure(
+                    "insufficient_space",
+                    &format!("Not enough disk space ({free_mb}MB free, need {}MB)", required / (1024 * 1024)),
+                )));
+            }
+            Ok(None)
+        }
+        .await;
+        match preflight {
+            Ok(None) => {}
+            Ok(Some(no_space)) => {
+                release(self);
+                if resume {
+                    self.mark_interrupted(key, INTERRUPT_DISK_FULL).await;
+                }
+                return no_space;
+            }
+            Err(e) => {
+                release(self);
+                tracing::error!("Failed to prepare download of file {file_id} of ROM {rom_id}: {e:#}");
+                return failure(reason::UNKNOWN, "Failed to start download");
+            }
+        }
+        let game = rom.get("name").and_then(Value::as_str).filter(|n| !n.is_empty()).unwrap_or(&file.file_name);
+        let display_name = format!("{game} \u{b7} {}", file.file_name);
+        let label = category_label(&file.category);
+        let job = self
+            .enqueue_job(NewJob {
+                kind: JobKind::RomFile,
+                item_id: file_id,
+                rom_name: display_name.clone(),
+                platform_name: label.clone(),
+                file_name: file.file_name.clone(),
+                target_path: dest_path.clone(),
+                tmp_path,
+                is_multi: false,
+                position: 0,
+                total_bytes: (file.size > 0).then_some(file.size),
+                parent_rom_id: Some(rom_id),
+            })
+            .await;
+        let total_bytes = job.and_then(|j| j.total_bytes).unwrap_or(file.size);
+        let plan = Plan {
+            key,
+            rom_id,
+            firmware: None,
+            base_file: None,
+            rom_file: Some(RomFileTarget {
+                rom_id,
+                file_id,
+                file_name: file.file_name.clone(),
+                dest_path: dest_path.clone(),
+                install_dir,
+                size: file.size,
+            }),
+            rom: Value::Null,
+            target_path: dest_path,
+            system,
+            file_name: file.file_name,
+            rom_name: display_name,
+            platform_name: label,
+            has_multiple: false,
+            extract_dir_name: String::new(),
+            restart: false,
+        };
+        self.launch_transfer(plan, partial_bytes, total_bytes, required, resume);
+        json!({"success": true, "message": "Download started"})
+    }
+
+    /// One file of a multi-file ROM: continue the partial when the server honours `Range`, skip the transfer when
+    /// the partial is already complete, restart when it is longer than the file.
+    async fn transfer_rom_file(self: &Arc<Self>, plan: &Plan, tmp_path: &str, control: &Control, resume: bool) -> anyhow::Result<bool> {
+        let target = plan.rom_file.as_ref().ok_or_else(|| anyhow::anyhow!("a file plan without a target"))?;
+        let mut resume = resume;
+        if resume {
+            let on_disk = self.files.file_size(tmp_path).await;
+            if target.size > 0 && on_disk == target.size {
+                self.update_entry(plan.key, |e| {
+                    e.progress = 1.0;
+                    e.bytes_downloaded = on_disk;
+                    e.total_bytes = on_disk;
+                });
+                return Ok(true);
+            }
+            if target.size > 0 && on_disk > target.size {
+                self.remove_tmp_files(&[tmp_path.to_string()]).await;
+                resume = false;
+            }
+        }
+        self.romm
+            .download_rom_file(
+                target.rom_id,
+                target.file_id,
+                &target.file_name,
+                tmp_path,
+                TransferMode::Single { resume },
+                self.hooks(plan, control),
+            )
+            .await?;
+        Ok(false)
+    }
+
+    /// Put a downloaded file in place: it must have RomM's size, and its game must still be installed in the same
+    /// folder. An existing file at the destination (a changed one) is replaced atomically.
+    async fn post_download_rom_file(&self, plan: &Plan, tmp: &str) -> anyhow::Result<String> {
+        let target = plan.rom_file.as_ref().ok_or_else(|| anyhow::anyhow!("a file plan without a target"))?;
+        let got = self.files.file_size(tmp).await;
+        if target.size > 0 && got != target.size {
+            let _ = self.files.remove_file(tmp).await;
+            anyhow::bail!("{} has {got} bytes, RomM reports {}; it was not installed", target.file_name, target.size);
+        }
+        if self.installed_rom_dir(target.rom_id).await.as_deref() != Some(target.install_dir.as_str()) {
+            let _ = self.files.remove_file(tmp).await;
+            anyhow::bail!("The game was uninstalled or moved while {} was downloading", target.file_name);
+        }
+        self.files.rename(tmp, &target.dest_path).await?;
+        Ok(target.dest_path.clone())
+    }
+
+    async fn finalize_rom_file_complete(&self, plan: &Plan, final_path: &str) {
+        let key = plan.key;
+        self.drop_job(key).await;
+        self.update_entry(key, |e| {
+            e.status = "completed".into();
+            e.progress = 1.0;
+            e.reason = None;
+        });
+        let mut payload = json!({
+            "rom_name": plan.rom_name,
+            "platform_name": plan.platform_name,
+            "file_path": final_path,
+            "parent_rom_id": plan.rom_id,
+        });
+        set_identity(&mut payload, key);
+        self.emit("download_complete", payload);
+        tracing::info!("File download complete: {} -> {final_path}", plan.rom_name);
+        if plan.system == crate::services::external_content::SWITCH_SYSTEM {
+            self.external_content.ensure_switch_content().await;
+        }
     }
 
     // ── Terminal state helpers ──────────────────────────────────────────
@@ -1367,6 +1745,9 @@ impl DownloadService {
         if plan.has_multiple {
             return 0;
         }
+        if let Some(base) = &plan.base_file {
+            return base.size;
+        }
         plan.rom.get("fs_size_bytes").and_then(Value::as_u64).unwrap_or(0)
     }
 
@@ -1449,6 +1830,9 @@ impl DownloadService {
         if plan.key.kind == JobKind::Firmware {
             return self.transfer_firmware(plan, tmp_path, control, resume).await;
         }
+        if plan.key.kind == JobKind::RomFile {
+            return self.transfer_rom_file(plan, tmp_path, control, resume).await;
+        }
         let mut resume = resume;
         if resume {
             let expected = self.expected_transfer_total(plan).await;
@@ -1474,15 +1858,31 @@ impl DownloadService {
                 resume = false;
             }
         }
-        self.romm
-            .download_rom_content(
-                plan.rom_id,
-                &plan.file_name,
-                tmp_path,
-                TransferMode::Single { resume },
-                self.hooks(plan, control),
-            )
-            .await?;
+        match &plan.base_file {
+            Some(base) => {
+                self.romm
+                    .download_rom_file(
+                        plan.rom_id,
+                        base.file_id,
+                        &plan.file_name,
+                        tmp_path,
+                        TransferMode::Single { resume },
+                        self.hooks(plan, control),
+                    )
+                    .await?;
+            }
+            None => {
+                self.romm
+                    .download_rom_content(
+                        plan.rom_id,
+                        &plan.file_name,
+                        tmp_path,
+                        TransferMode::Single { resume },
+                        self.hooks(plan, control),
+                    )
+                    .await?;
+            }
+        }
         Ok(false)
     }
 
@@ -1620,8 +2020,17 @@ impl DownloadService {
 
     async fn post_download_single(&self, plan: &Plan) -> anyhow::Result<String> {
         let tmp = format!("{}{TMP_EXT}", plan.target_path);
+        if let Some(base) = &plan.base_file {
+            let got = self.files.file_size(&tmp).await;
+            if base.size > 0 && got != base.size {
+                let _ = self.files.remove_file(&tmp).await;
+                anyhow::bail!("{} has {got} bytes, RomM reports {}; it was not installed", plan.file_name, base.size);
+            }
+        }
         self.files.rename(&tmp, &plan.target_path).await?;
-        self.record_install(plan, plan.target_path.clone(), None).await
+        // A game folder installed file by file keeps its folder: Game files and uninstall work on it.
+        let rom_dir = plan.base_file.as_ref().map(|b| b.install_dir.clone());
+        self.record_install(plan, plan.target_path.clone(), rom_dir).await
     }
 
     /// Extract the archive into the ROM-identity-named folder and record the
@@ -1684,6 +2093,8 @@ impl DownloadService {
             self.post_download_multi(plan, skipped).await
         } else if plan.key.kind == JobKind::Firmware {
             self.post_download_firmware(plan, &tmp).await
+        } else if plan.key.kind == JobKind::RomFile {
+            self.post_download_rom_file(plan, &tmp).await
         } else {
             self.post_download_single(plan).await
         };
@@ -1781,8 +2192,8 @@ impl DownloadService {
     /// ROM, the extract folder this download created. Never the bare target:
     /// that would destroy a pre-existing install.
     async fn cleanup_partial_download(&self, plan: &Plan) {
-        if plan.key.kind == JobKind::Firmware {
-            // A firmware download only ever owns its `<dest>.tmp`; the destination may be the user's own file.
+        if matches!(plan.key.kind, JobKind::Firmware | JobKind::RomFile) {
+            // A firmware or game-file download only ever owns its `<dest>.tmp`; the destination is an existing file.
             let tmp = format!("{}{TMP_EXT}", plan.target_path);
             if let Err(e) = self.files.remove_file(&tmp).await {
                 tracing::warn!("Cleanup failed for {tmp}: {e}");
@@ -1801,6 +2212,14 @@ impl DownloadService {
                 tracing::warn!("Cleanup failed for directory {staging}: {e}");
             }
         }
+        // The game folder a base-file download created goes again while nothing is in it.
+        if let Some(base) = &plan.base_file
+            && self.files.is_dir(&base.install_dir).await
+            && self.files.scan_files_with_sizes(&base.install_dir).await.is_empty()
+            && let Err(e) = self.files.remove_tree(&base.install_dir).await
+        {
+            tracing::warn!("Cleanup failed for directory {}: {e}", base.install_dir);
+        }
     }
 
     /// Mark the entry completed and emit `download_complete` with the bound
@@ -1809,6 +2228,10 @@ impl DownloadService {
         let key = plan.key;
         if key.kind == JobKind::Firmware {
             self.finalize_firmware_complete(plan, final_path).await;
+            return;
+        }
+        if key.kind == JobKind::RomFile {
+            self.finalize_rom_file_complete(plan, final_path).await;
             return;
         }
         let rom_id = plan.rom_id;
@@ -1834,6 +2257,10 @@ impl DownloadService {
             }),
         );
         tracing::info!("Download complete: {} -> {final_path}", plan.rom_name);
+        // A Switch game folder can bring update and DLC files; Eden picks them up from the ROM folder.
+        if plan.system == crate::services::external_content::SWITCH_SYSTEM {
+            self.external_content.ensure_switch_content().await;
+        }
     }
 
     /// `(shortcut_app_id, launch_options)` for a just-installed ROM: the full

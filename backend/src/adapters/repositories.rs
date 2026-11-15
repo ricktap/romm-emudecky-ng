@@ -96,7 +96,7 @@ impl RomRegionsReader for SqliteRomRegions {
 
 const JOB_COLUMNS: &str = "kind, item_id, rom_name, platform_name, file_name, target_path, tmp_path, is_multi, \
      total_bytes, status, interrupt_reason, range_supported, position, created_at, updated_at, \
-     etag, last_modified, representation_length, cached_zip, needs_recovery";
+     etag, last_modified, representation_length, cached_zip, needs_recovery, parent_rom_id";
 
 fn row_to_job(r: &Row<'_>) -> rusqlite::Result<DownloadJob> {
     let kind: String = r.get(0)?;
@@ -131,6 +131,7 @@ fn row_to_job(r: &Row<'_>) -> rusqlite::Result<DownloadJob> {
         representation_length: r.get::<_, Option<i64>>(17)?.and_then(|l| u64::try_from(l).ok()),
         cached_zip: r.get::<_, i64>(18)? != 0,
         needs_recovery: r.get::<_, i64>(19)? != 0,
+        parent_rom_id: r.get(20)?,
     })
 }
 
@@ -168,7 +169,7 @@ impl DownloadJobRepo for SqliteDownloadJobs {
                 c.execute(
                     &format!(
                         "INSERT OR REPLACE INTO download_jobs ({JOB_COLUMNS}) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)"
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)"
                     ),
                     params![
                         j.kind.as_str(),
@@ -191,6 +192,7 @@ impl DownloadJobRepo for SqliteDownloadJobs {
                         j.representation_length.map(|l| l as i64),
                         i64::from(j.cached_zip),
                         i64::from(j.needs_recovery),
+                        j.parent_rom_id,
                     ],
                 )
                 .map(|_| ())
@@ -670,6 +672,7 @@ mod tests {
                 is_multi,
                 position: rom_id,
                 total_bytes: None,
+                parent_rom_id: None,
             },
             "2026-01-01T00:00:00+00:00",
         )
@@ -716,7 +719,7 @@ mod tests {
         .unwrap();
         drop(old);
         let (db, version) = Db::open(&path).await.unwrap();
-        assert_eq!(version, 15);
+        assert_eq!(version, 16);
         let jobs = SqliteDownloadJobs::new(db);
         let multi = jobs.get(JobKey::rom(1)).await.unwrap().unwrap();
         assert!(multi.needs_recovery, "an old multipart partial is kept but flagged");
@@ -765,9 +768,10 @@ mod tests {
         .unwrap();
         drop(old);
         let (db, version) = Db::open(&path).await.unwrap();
-        assert_eq!(version, 15);
+        assert_eq!(version, 16);
         let jobs = SqliteDownloadJobs::new(db);
         let all = jobs.all().await.unwrap();
+        assert!(all.iter().all(|j| j.parent_rom_id.is_none()), "014 and 016 keep ROM jobs without a parent");
         assert_eq!(all.iter().map(|j| (j.kind, j.item_id, j.position)).collect::<Vec<_>>(), vec![
             (JobKind::Rom, 5, 4),
             (JobKind::Rom, 6, 9)
@@ -777,6 +781,67 @@ mod tests {
         assert_eq!((z.interrupt_reason.as_deref(), z.range_supported, z.total_bytes), (Some("timeout"), Some(true), Some(900)));
         assert_eq!(jobs.get(JobKey::rom(6)).await.unwrap().unwrap().status, JobStatus::Paused);
         assert_eq!(jobs.next_position().await.unwrap(), 10, "the position index and ordering survive");
+    }
+
+    #[tokio::test]
+    async fn migration_16_keeps_every_job_and_a_game_file_job_needs_its_game() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        let (old, version) = Db::open_with(&path, &crate::adapters::db::MIGRATIONS[..15]).await.unwrap();
+        assert_eq!(version, 15);
+        old.call(|c| {
+            c.execute_batch(
+                "INSERT INTO download_jobs (kind, item_id, rom_name, platform_name, file_name, target_path, tmp_path, is_multi,
+                     total_bytes, status, position, created_at, updated_at) VALUES
+                 ('firmware', 3, 'prod.keys', 'Switch firmware', 'prod.keys', '/k/prod.keys', '/k/prod.keys.tmp', 0, 10, 'paused', 2, 'c', 'u'),
+                 ('rom', 7, 'Zelda', 'Switch', 'z.nsp', '/r/z.nsp', '/r/z.nsp.tmp', 0, 20, 'queued', 1, 'c', 'u');",
+            )
+        })
+        .await
+        .unwrap();
+        drop(old);
+        let (db, version) = Db::open(&path).await.unwrap();
+        assert_eq!(version, 16);
+        let jobs = SqliteDownloadJobs::new(db.clone());
+        let all = jobs.all().await.unwrap();
+        assert_eq!(all.iter().map(|j| (j.kind, j.item_id, j.parent_rom_id)).collect::<Vec<_>>(), vec![
+            (JobKind::Rom, 7, None),
+            (JobKind::Firmware, 3, None)
+        ]);
+        // The table refuses a game-file job without its game.
+        let orphan = db
+            .call(|c| {
+                c.execute(
+                    "INSERT INTO download_jobs (kind, item_id, rom_name, platform_name, file_name, target_path, tmp_path, is_multi,
+                         status, position, created_at, updated_at) VALUES
+                     ('rom_file', 9, 'f', 'Update', 'u.nsp', '/r/u.nsp', '/r/u.nsp.tmp', 0, 'queued', 3, 'c', 'u')",
+                    [],
+                )
+            })
+            .await;
+        assert!(orphan.is_err());
+        // A game-file job round-trips with its game.
+        let job = DownloadJob::enqueue(
+            crate::domain::download_job::NewJob {
+                kind: JobKind::RomFile,
+                item_id: 9,
+                rom_name: "Mario Kart \u{b7} u.nsp".into(),
+                platform_name: "Update".into(),
+                file_name: "u.nsp".into(),
+                target_path: "/r/mk/update/u.nsp".into(),
+                tmp_path: "/r/mk/update/u.nsp.tmp".into(),
+                is_multi: false,
+                position: 3,
+                total_bytes: Some(30),
+                parent_rom_id: Some(7),
+            },
+            "now",
+        )
+        .unwrap();
+        jobs.save(&job).await.unwrap();
+        let back = jobs.get(JobKey::rom_file(9)).await.unwrap().unwrap();
+        assert_eq!(back, job);
+        assert_eq!(back.parent_rom_id, Some(7));
     }
 
     #[tokio::test]

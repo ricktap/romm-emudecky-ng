@@ -87,7 +87,7 @@ fn non_negative_int(v: Option<&Value>) -> Option<u64> {
     }
 }
 
-fn rom_root(rom: &Value) -> Option<String> {
+pub fn rom_root(rom: &Value) -> Option<String> {
     let fs_path = rom.get("fs_path").and_then(Value::as_str).filter(|s| !s.is_empty())?;
     let fs_name = rom.get("fs_name").and_then(Value::as_str).filter(|s| !s.is_empty())?;
     Some(crate::util::path_safety::join(fs_path, &[fs_name]))
@@ -95,7 +95,7 @@ fn rom_root(rom: &Value) -> Option<String> {
 
 /// Path of one RomM file entry relative to the ROM's own folder, URL-decoded
 /// per component like the extraction; `None` when outside the folder or unsafe.
-fn relative_file_path(entry: &Value, rom_root: &str) -> Option<String> {
+pub fn relative_file_path(entry: &Value, rom_root: &str) -> Option<String> {
     let file_path = entry.get("file_path")?.as_str()?;
     let file_name = entry.get("file_name")?.as_str().filter(|s| !s.is_empty())?;
     let full = if file_path.is_empty() {

@@ -46,6 +46,33 @@ async fn first_sync_fallback_and_unknown_rom() {
 }
 
 #[tokio::test]
+async fn a_dlc_bigger_than_the_base_game_never_becomes_the_default_launch_file() {
+    let env = DownloadEnv::new().await;
+    let dir = env.roms().join("switch/Small Base");
+    std::fs::create_dir_all(dir.join("dlc")).unwrap();
+    std::fs::create_dir_all(dir.join("update")).unwrap();
+    std::fs::write(dir.join("base.nsp"), vec![0u8; 10]).unwrap();
+    std::fs::write(dir.join("dlc/huge.nsp"), vec![0u8; 900]).unwrap();
+    std::fs::write(dir.join("update/u.nsp"), vec![0u8; 500]).unwrap();
+    let d = dir.to_string_lossy().into_owned();
+    let install = RomInstall {
+        rom_id: 1,
+        file_path: format!("{d}/base.nsp"),
+        rom_dir: Some(d.clone()),
+        platform_slug: "switch".into(),
+        system: "switch".into(),
+        installed_at: "t".into(),
+    };
+    assert_eq!(env.launch.resolve_bake_path(&install, None).await, format!("{d}/base.nsp"));
+    // The picker still offers every candidate: the top level first, then the rest by size.
+    let names: Vec<(String, usize)> = env.launch.enumerate_launch_files(&install).await.into_iter().map(|c| (c.filename, c.index)).collect();
+    assert_eq!(names, [("base.nsp".to_string(), 1), ("huge.nsp".to_string(), 2), ("u.nsp".to_string(), 3)]);
+    // Without a candidate at the top, the largest one further down is the default.
+    std::fs::remove_file(dir.join("base.nsp")).unwrap();
+    assert_eq!(env.launch.resolve_bake_path(&install, None).await, format!("{d}/dlc/huge.nsp"));
+}
+
+#[tokio::test]
 async fn bake_path_for_folder_and_single_installs() {
     let env = DownloadEnv::new().await;
     let dir = env.roms().join("switch/G");

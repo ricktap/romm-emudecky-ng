@@ -572,6 +572,7 @@ fn job(rom_id: i64, tmp: &str, status: JobStatus, position: i64, total: Option<u
             is_multi: tmp.ends_with(".zip.tmp"),
             position,
             total_bytes: total,
+            parent_rom_id: None,
         },
         "t0",
     )
@@ -866,6 +867,8 @@ async fn progress_is_throttled_but_the_final_tick_always_emits() {
         restart: false,
         key: JobKey::rom(ROM),
         firmware: None,
+        rom_file: None,
+        base_file: None,
     };
     let svc = DownloadService::new(DownloadServiceConfig {
         romm: env.romm.clone(),
@@ -890,6 +893,10 @@ async fn progress_is_throttled_but_the_final_tick_always_emits() {
         clock,
         firmware_api: env.romm.clone(),
         firmware_jobs: env.firmware_jobs.clone(),
+        external_content: Arc::new(crate::services::external_content::ExternalContentService::new(
+            Arc::new(crate::services::testing::FixedPaths { roms: String::new(), bios: String::new() }),
+            Arc::new(crate::services::testing::RecordingContentDirs::answering(crate::services::ports::ExternalContentOutcome::Added)),
+        )),
     });
     let mut hook = svc.progress_hook(&plan);
     hook(1, 10); // no entry yet: nothing
@@ -1493,5 +1500,336 @@ mod firmware {
         env.svc.reconcile_persisted_downloads().await;
         assert!(std::path::Path::new(&owned).exists(), "a job's partial under bios/ is kept");
         assert!(!std::path::Path::new(&orphan).exists(), "an orphan is cleaned");
+    }
+}
+
+/// The folders Eden was asked to scan once the download task got past `download_complete` (it runs right after).
+async fn content_dirs_after_completion(env: &DownloadEnv, expect_any: bool) -> Vec<String> {
+    for _ in 0..200 {
+        let calls = env.content_dirs.calls();
+        if !calls.is_empty() || !expect_any {
+            return calls;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    env.content_dirs.calls()
+}
+
+#[tokio::test]
+async fn a_finished_switch_download_points_eden_at_the_switch_rom_folder() {
+    let env = env_with_rom().await;
+    env.svc.start_download(ROM).await;
+    env.wait_status(ROM, "completed").await;
+    assert_eq!(content_dirs_after_completion(&env, true).await, [format!("{}/switch", env.roms_s())]);
+}
+
+#[tokio::test]
+async fn a_finished_download_of_another_system_leaves_eden_alone() {
+    let env = DownloadEnv::new().await;
+    env.seed_rom(ROM, "n64", "Mario.z64", None, None).await;
+    let mut rom = switch_rom(ROM, "Mario.z64", LEN);
+    rom["platform_slug"] = json!("n64");
+    rom["platform_fs_slug"] = json!("n64");
+    env.romm.set_rom(rom);
+    env.romm.set_content(ROM, payload(LEN));
+    env.svc.start_download(ROM).await;
+    env.wait_status(ROM, "completed").await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(content_dirs_after_completion(&env, false).await.is_empty());
+}
+
+/// Single files of an installed multi-file ROM (an update or DLC added on RomM after the install).
+mod rom_files {
+    use super::*;
+    use crate::domain::download_job::JobKind;
+    use crate::domain::rom_install::RomInstall;
+
+    const MK: i64 = 30;
+    const BASE: i64 = 301;
+    const UPDATE: i64 = 302;
+    const DLC: i64 = 303;
+    const NFO: i64 = 304;
+
+    fn mk_rom(update_size: usize) -> serde_json::Value {
+        json!({
+            "id": MK, "name": "Mario Kart", "fs_name": "Mario Kart", "fs_path": "switch", "platform_slug": "switch",
+            "files": [
+                {"id": BASE, "file_name": "MK8.xci", "file_path": "switch/Mario Kart", "file_size_bytes": 50, "category": "game"},
+                {"id": UPDATE, "file_name": "MK8 v3.nsp", "file_path": "switch/Mario Kart/update", "file_size_bytes": update_size, "category": "update"},
+                {"id": DLC, "file_name": "Booster.nsp", "file_path": "switch/Mario Kart/dlc", "file_size_bytes": 40, "category": "dlc"},
+                {"id": NFO, "file_name": "MK8.nfo", "file_path": "switch/Mario Kart", "file_size_bytes": 900, "category": "game"},
+            ],
+        })
+    }
+
+    fn game_dir(env: &DownloadEnv) -> String {
+        format!("{}/switch/Mario Kart", env.roms_s())
+    }
+
+    /// Mario Kart installed as a folder holding only its base game.
+    async fn installed(update_size: usize) -> DownloadEnv {
+        let env = DownloadEnv::new().await;
+        env.seed_rom(MK, "switch", "Mario Kart", Some(5151), None).await;
+        let dir = game_dir(&env);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(format!("{dir}/MK8.xci"), payload(50)).unwrap();
+        let install = RomInstall::mark_installed(
+            MK, format!("{dir}/MK8.xci"), Some(dir), "switch".into(), "switch".into(), "2026-01-01T00:00:00+00:00".into(),
+        )
+        .unwrap();
+        env.library.save_install(&install).await.unwrap();
+        env.romm.set_rom(mk_rom(update_size));
+        env.romm.set_file_content(UPDATE, payload(update_size));
+        env.romm.set_file_content(DLC, payload(40));
+        env
+    }
+
+    fn file_entry(env: &DownloadEnv, file_id: i64) -> Option<serde_json::Value> {
+        env.svc.get_download_queue()["downloads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["kind"] == "rom_file" && e["file_id"] == file_id)
+            .cloned()
+    }
+
+    async fn wait_file(env: &DownloadEnv, file_id: i64, status: &str) -> serde_json::Value {
+        for _ in 0..500 {
+            if let Some(e) = file_entry(env, file_id).filter(|e| e["status"] == status) {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                return e;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("file {file_id} never reached {status}: {:?}", file_entry(env, file_id));
+    }
+
+    fn states(list: &serde_json::Value) -> Vec<(i64, String, String, String)> {
+        list["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| (f["file_id"].as_i64().unwrap(), f["path"].as_str().unwrap().into(), f["category"].as_str().unwrap().into(), f["state"].as_str().unwrap().into()))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn lists_romm_files_with_their_state_in_the_install_folder() {
+        let env = installed(30).await;
+        let list = env.svc.get_rom_files(MK).await;
+        assert_eq!(list["success"], true);
+        assert_eq!(
+            states(&list),
+            [
+                (BASE, "MK8.xci".into(), "game".into(), "present".into()),
+                (DLC, "dlc/Booster.nsp".into(), "dlc".into(), "missing".into()),
+                (UPDATE, "update/MK8 v3.nsp".into(), "update".into(), "missing".into()),
+            ]
+        );
+        assert_eq!(list["files"][2]["size"], 30);
+        assert_eq!(list["files"][2]["downloading"], false);
+        // A file of another size counts as changed.
+        std::fs::create_dir_all(format!("{}/update", game_dir(&env))).unwrap();
+        std::fs::write(format!("{}/update/MK8 v3.nsp", game_dir(&env)), payload(7)).unwrap();
+        assert_eq!(states(&env.svc.get_rom_files(MK).await)[2].3, "changed");
+    }
+
+    /// Mario Kart not installed yet, its base game file servable on its own.
+    async fn not_installed() -> DownloadEnv {
+        let env = DownloadEnv::new().await;
+        env.seed_rom(MK, "switch", "Mario Kart", Some(5151), None).await;
+        env.romm.set_rom(mk_rom(30));
+        env.romm.set_file_content(BASE, payload(50));
+        env.romm.set_file_content(UPDATE, payload(30));
+        env
+    }
+
+    #[tokio::test]
+    async fn the_first_download_of_a_switch_folder_fetches_only_its_base_game_file() {
+        let env = not_installed().await;
+        assert_eq!(env.svc.start_download(MK).await["success"], true);
+        env.wait_status(MK, "completed").await;
+        let dir = game_dir(&env);
+        assert_eq!(std::fs::read(format!("{dir}/MK8.xci")).unwrap(), payload(50));
+        // Nothing else: no update, no DLC, no .nfo, and no archive.
+        let mut on_disk: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        on_disk.sort();
+        assert_eq!(on_disk, ["MK8.xci"]);
+        assert!(!std::path::Path::new(&format!("{dir}.zip.tmp")).exists());
+        let calls = env.romm.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!((calls[0].rom_id, calls[0].file_name.as_str()), (BASE, "MK8.xci"), "fetched by file id, not as the game's archive");
+        // Installed as a folder, launching the base game; the queue knew the size up front.
+        let install = env.library.install(MK).await.unwrap().unwrap();
+        assert_eq!((install.file_path.as_str(), install.rom_dir.as_deref()), (format!("{dir}/MK8.xci").as_str(), Some(dir.as_str())));
+        let complete = &env.events.named("download_complete")[0];
+        assert_eq!(complete["app_id"], 5151);
+        assert!(complete["launch_options"].as_str().unwrap().ends_with(&format!("-f -g \"{dir}/MK8.xci\"")));
+        assert!(env.events.named("download_progress").iter().any(|f| f["total_bytes"] == 50));
+        // The chooser then offers the update and DLC, never the .nfo.
+        let list = env.svc.get_rom_files(MK).await;
+        assert_eq!(
+            states(&list).into_iter().map(|s| (s.0, s.3)).collect::<Vec<_>>(),
+            [(BASE, "present".to_string()), (DLC, "missing".to_string()), (UPDATE, "missing".to_string())]
+        );
+        assert_eq!(env.svc.start_rom_file_downloads(MK, &[NFO]).await["reason"], "file_not_found");
+    }
+
+    #[tokio::test]
+    async fn a_short_base_file_is_not_installed_and_a_cancelled_first_download_leaves_no_empty_folder() {
+        let env = not_installed().await;
+        env.romm.set_file_content(BASE, payload(49));
+        env.svc.start_download(MK).await;
+        env.wait_status(MK, "failed").await;
+        assert!(env.library.install(MK).await.unwrap().is_none());
+        assert!(!std::path::Path::new(&format!("{}/MK8.xci", game_dir(&env))).exists());
+
+        let env = not_installed().await;
+        *env.romm.stall_at.lock().unwrap() = Some(20);
+        env.svc.start_download(MK).await;
+        env.romm.stalled.notified().await;
+        assert!(std::path::Path::new(&game_dir(&env)).is_dir());
+        env.svc.cancel_download(MK);
+        env.wait_status(MK, "cancelled").await;
+        assert!(!std::path::Path::new(&game_dir(&env)).exists());
+    }
+
+    #[tokio::test]
+    async fn a_paused_first_download_resumes_the_base_file_from_its_partial() {
+        let env = not_installed().await;
+        env.romm.set_file_content(BASE, payload(3000));
+        let mut rom = mk_rom(30);
+        rom["files"][0]["file_size_bytes"] = json!(3000);
+        env.romm.set_rom(rom);
+        *env.romm.stall_at.lock().unwrap() = Some(1200);
+        env.svc.start_download(MK).await;
+        env.romm.stalled.notified().await;
+        env.svc.pause_download(MK);
+        env.wait_status(MK, "paused").await;
+        *env.romm.stall_at.lock().unwrap() = None;
+        assert_eq!(env.svc.resume_download(MK).await["success"], true);
+        env.wait_status(MK, "completed").await;
+        let calls = env.romm.calls();
+        assert_eq!((calls[1].rom_id, calls[1].resume, calls[1].offset), (BASE, true, 1200));
+        assert_eq!(std::fs::read(format!("{}/MK8.xci", game_dir(&env))).unwrap(), payload(3000));
+    }
+
+    #[tokio::test]
+    async fn not_installed_single_file_and_offline_games_say_why() {
+        let env = installed(30).await;
+        assert_eq!(env.svc.get_rom_files(999).await["reason"], "not_installed");
+        // A single-file install has no folder.
+        env.seed_rom(31, "switch", "Zelda.nsp", None, None).await;
+        let single = RomInstall::mark_installed(31, "/r/Zelda.nsp".into(), None, "switch".into(), "switch".into(), "now".into()).unwrap();
+        env.library.save_install(&single).await.unwrap();
+        assert_eq!(env.svc.get_rom_files(31).await["reason"], "not_installed");
+        env.romm.fail_rom(MK, RommError::Connection("down".into()));
+        let offline = env.svc.get_rom_files(MK).await;
+        assert_eq!(offline["success"], false);
+        assert!(offline.get("error").is_none());
+    }
+
+    #[tokio::test]
+    async fn downloads_the_chosen_files_into_their_subfolders_and_reports_them_as_game_files() {
+        let env = installed(30).await;
+        let started = env.svc.start_rom_file_downloads(MK, &[UPDATE, DLC]).await;
+        assert_eq!(started, json!({"success": true, "started": 2, "errors": [], "message": "2 files queued"}));
+        wait_file(&env, UPDATE, "completed").await;
+        let done = wait_file(&env, DLC, "completed").await;
+        assert_eq!(done["platform_name"], "DLC");
+        assert_eq!(done["rom_name"], "Mario Kart \u{b7} Booster.nsp");
+        let dir = game_dir(&env);
+        assert_eq!(std::fs::read(format!("{dir}/update/MK8 v3.nsp")).unwrap(), payload(30));
+        assert_eq!(std::fs::read(format!("{dir}/dlc/Booster.nsp")).unwrap(), payload(40));
+        assert!(!std::path::Path::new(&format!("{dir}/update/MK8 v3.nsp.tmp")).exists());
+        // The completion frame is not a ROM install: no rom_id, no app_id or launch options.
+        let completes = env.events.named("download_complete");
+        let update = completes.iter().find(|c| c["file_id"] == UPDATE).unwrap();
+        assert_eq!(update["kind"], "rom_file");
+        assert_eq!(update["parent_rom_id"], MK);
+        assert_eq!(update["platform_name"], "Update");
+        assert!(update.get("rom_id").is_none() && update.get("app_id").is_none() && update.get("launch_options").is_none());
+        // Each file came through RomM's ?file_ids= path, and the install record is untouched.
+        let calls = env.romm.calls();
+        assert_eq!(calls.iter().map(|c| c.file_name.as_str()).collect::<Vec<_>>().len(), 2);
+        assert_eq!(env.svc.get_installed_rom(MK).await.unwrap()["file_path"], format!("{dir}/MK8.xci"));
+        assert!(states(&env.svc.get_rom_files(MK).await).iter().all(|s| s.3 == "present"));
+        // Eden is pointed at the Switch folder after a Switch file.
+        for _ in 0..200 {
+            if !env.content_dirs.calls().is_empty() { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(env.content_dirs.calls().iter().all(|d| d == &format!("{}/switch", env.roms_s())));
+        assert!(!env.content_dirs.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_changed_file_is_replaced_and_a_wrong_size_never_lands() {
+        let env = installed(30).await;
+        let dir = game_dir(&env);
+        std::fs::create_dir_all(format!("{dir}/update")).unwrap();
+        std::fs::write(format!("{dir}/update/MK8 v3.nsp"), b"old").unwrap();
+        env.svc.start_rom_file_downloads(MK, &[UPDATE]).await;
+        wait_file(&env, UPDATE, "completed").await;
+        assert_eq!(std::fs::read(format!("{dir}/update/MK8 v3.nsp")).unwrap(), payload(30));
+        // RomM serves fewer bytes than its file list says: the download fails and the old file stays.
+        let env = installed(30).await;
+        std::fs::create_dir_all(format!("{dir}/update", dir = game_dir(&env))).unwrap();
+        std::fs::write(format!("{}/update/MK8 v3.nsp", game_dir(&env)), b"old").unwrap();
+        env.romm.set_file_content(UPDATE, payload(29));
+        env.svc.start_rom_file_downloads(MK, &[UPDATE]).await;
+        wait_file(&env, UPDATE, "failed").await;
+        assert_eq!(std::fs::read(format!("{}/update/MK8 v3.nsp", game_dir(&env))).unwrap(), b"old");
+        assert!(!std::path::Path::new(&format!("{}/update/MK8 v3.nsp.tmp", game_dir(&env))).exists());
+    }
+
+    #[tokio::test]
+    async fn nothing_selected_unknown_files_and_duplicates_are_refused_per_file() {
+        let env = installed(30).await;
+        assert_eq!(env.svc.start_rom_file_downloads(MK, &[]).await["reason"], "nothing_selected");
+        let unknown = env.svc.start_rom_file_downloads(MK, &[999]).await;
+        assert_eq!((unknown["success"].clone(), unknown["reason"].clone()), (json!(false), json!("file_not_found")));
+        assert_eq!(unknown["errors"][0]["file_id"], 999);
+        // One good and one unknown file: the good one is queued, the other is reported.
+        let mixed = env.svc.start_rom_file_downloads(MK, &[DLC, 999]).await;
+        assert_eq!(mixed["started"], 1);
+        assert_eq!(mixed["errors"][0]["reason"], "file_not_found");
+        wait_file(&env, DLC, "completed").await;
+        assert_eq!(env.svc.start_rom_file_downloads(999, &[DLC]).await["reason"], "not_installed");
+    }
+
+    #[tokio::test]
+    async fn pause_and_resume_continue_the_partial_with_the_game_from_the_job_row() {
+        let env = installed(3000).await;
+        *env.romm.stall_at.lock().unwrap() = Some(1000);
+        env.svc.start_rom_file_downloads(MK, &[UPDATE]).await;
+        env.romm.stalled.notified().await;
+        let listed = env.svc.get_rom_files(MK).await;
+        assert_eq!(listed["files"].as_array().unwrap().iter().find(|f| f["file_id"] == UPDATE).unwrap()["downloading"], true);
+        assert_eq!(env.svc.pause_job(crate::domain::download_job::JobKey::rom_file(UPDATE))["message"], "Download paused");
+        wait_file(&env, UPDATE, "paused").await;
+        let job = env.jobs.get(crate::domain::download_job::JobKey::rom_file(UPDATE)).await.unwrap().unwrap();
+        assert_eq!((job.kind, job.parent_rom_id, job.total_bytes), (JobKind::RomFile, Some(MK), Some(3000)));
+        *env.romm.stall_at.lock().unwrap() = None;
+        assert_eq!(env.svc.resume_rom_file_download(UPDATE).await["success"], true);
+        wait_file(&env, UPDATE, "completed").await;
+        let calls = env.romm.calls();
+        assert_eq!((calls[1].resume, calls[1].offset), (true, 1000));
+        assert_eq!(std::fs::read(format!("{}/update/MK8 v3.nsp", game_dir(&env))).unwrap(), payload(3000));
+        assert!(env.jobs.get(crate::domain::download_job::JobKey::rom_file(UPDATE)).await.unwrap().is_none());
+        assert_eq!(env.svc.resume_rom_file_download(UPDATE).await["reason"], "not_paused");
+    }
+
+    #[tokio::test]
+    async fn a_file_finishing_after_its_game_was_uninstalled_is_not_put_back() {
+        let env = installed(3000).await;
+        *env.romm.stall_at.lock().unwrap() = Some(1000);
+        env.svc.start_rom_file_downloads(MK, &[UPDATE]).await;
+        env.romm.stalled.notified().await;
+        env.sql("DELETE FROM rom_installs WHERE rom_id = 30").await;
+        *env.romm.stall_at.lock().unwrap() = None;
+        env.romm.release.notify_one();
+        wait_file(&env, UPDATE, "failed").await;
+        assert!(!std::path::Path::new(&format!("{}/update/MK8 v3.nsp", game_dir(&env))).exists());
     }
 }

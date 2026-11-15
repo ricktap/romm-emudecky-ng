@@ -17,6 +17,7 @@ import { createElement, type ComponentProps, type ReactElement } from "react";
 import { RomMPlaySection } from "./RomMPlaySection";
 import * as backend from "../api/backend";
 import { Navigation, showContextMenu, showModal } from "@decky/ui";
+import { showRomFilesModal } from "./RomFilesModal";
 import { getLibraryPlatformFilter } from "../utils/libraryRoute";
 import { toaster } from "@decky/api";
 import {
@@ -36,6 +37,8 @@ import { useVersionError } from "./VersionErrorCard";
 // runtime impl, but pinning the captured-props shape to the real component
 // keeps assertions in sync as the child's prop interface evolves.
 import type { CustomPlayButton } from "./CustomPlayButton";
+
+vi.mock("./RomFilesModal", () => ({ showRomFilesModal: vi.fn() }));
 
 // ----- Sibling hook mocks -----
 vi.mock("./VersionErrorCard", () => ({
@@ -1832,7 +1835,7 @@ describe("RomMPlaySection", () => {
       });
       vi.mocked(toaster.toast).mockClear();
       await act(async () => {
-        await items[2]!.props.onClick?.();
+        await items.find((i) => i.props.children === "Sync Save Files")!.props.onClick?.();
       });
       expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1851,7 +1854,7 @@ describe("RomMPlaySection", () => {
       });
       vi.mocked(toaster.toast).mockClear();
       await act(async () => {
-        await items[2]!.props.onClick?.();
+        await items.find((i) => i.props.children === "Sync Save Files")!.props.onClick?.();
       });
       expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1870,7 +1873,7 @@ describe("RomMPlaySection", () => {
       });
       vi.mocked(toaster.toast).mockClear();
       await act(async () => {
-        await items[2]!.props.onClick?.();
+        await items.find((i) => i.props.children === "Sync Save Files")!.props.onClick?.();
       });
       expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1888,7 +1891,7 @@ describe("RomMPlaySection", () => {
       });
       vi.mocked(toaster.toast).mockClear();
       await act(async () => {
-        await items[2]!.props.onClick?.();
+        await items.find((i) => i.props.children === "Sync Save Files")!.props.onClick?.();
       });
       expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1906,7 +1909,7 @@ describe("RomMPlaySection", () => {
       });
       vi.mocked(toaster.toast).mockClear();
       await act(async () => {
-        await items[2]!.props.onClick?.();
+        await items.find((i) => i.props.children === "Sync Save Files")!.props.onClick?.();
       });
       expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(expect.objectContaining({ body: "Server refused" }));
     });
@@ -1920,7 +1923,7 @@ describe("RomMPlaySection", () => {
       });
       vi.mocked(toaster.toast).mockClear();
       await act(async () => {
-        await items[2]!.props.onClick?.();
+        await items.find((i) => i.props.children === "Sync Save Files")!.props.onClick?.();
       });
       expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(expect.objectContaining({ body: "Save sync failed" }));
     });
@@ -1930,7 +1933,7 @@ describe("RomMPlaySection", () => {
       vi.mocked(backend.syncRomSaves).mockRejectedValue(new Error("crash"));
       vi.mocked(toaster.toast).mockClear();
       await act(async () => {
-        await items[2]!.props.onClick?.();
+        await items.find((i) => i.props.children === "Sync Save Files")!.props.onClick?.();
       });
       expect(vi.mocked(toaster.toast)).toHaveBeenCalledWith(expect.objectContaining({ body: "Save sync failed" }));
     });
@@ -2572,7 +2575,7 @@ describe("RomMPlaySection", () => {
   // ------------------------------------------------------------------
 
   describe("context menus", () => {
-    it("showRomMMenu groups Game / Saves / Remove: 6 MenuItems for an installed ROM (refresh artwork/metadata, sync saves, save history, delete saves, uninstall)", async () => {
+    it("showRomMMenu groups Game / Saves / Remove: 7 MenuItems for an installed ROM (refresh artwork/metadata, game files, sync saves, save history, delete saves, uninstall)", async () => {
       vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
         found: true,
         rom_id: 42,
@@ -2580,10 +2583,11 @@ describe("RomMPlaySection", () => {
       render(<RomMPlaySection appId={testAppId} />);
       await flushAsync();
       const items = await openRomMMenuAndGetItems(testAppId);
-      expect(items).toHaveLength(6);
+      expect(items).toHaveLength(7);
       expect(items.map((i) => i.props.children)).toEqual([
         "Refresh Artwork",
         "Refresh Metadata",
+        "Game files\u2026",
         "Sync Save Files",
         "Save History",
         "Delete Local Saves…",
@@ -2608,6 +2612,18 @@ describe("RomMPlaySection", () => {
       ]);
     });
 
+    it("Game files… opens the file chooser for the installed ROM", async () => {
+      vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({ found: true, rom_id: 42, rom_name: "Mario Kart" });
+      render(<RomMPlaySection appId={testAppId} />);
+      await flushAsync();
+      const items = await openRomMMenuAndGetItems(testAppId);
+      const gameFiles = items.find((i) => i.props.children === "Game files\u2026");
+      act(() => {
+        (gameFiles?.props.onClick as () => void)();
+      });
+      expect(showRomFilesModal).toHaveBeenCalledWith(42, "Mario Kart");
+    });
+
     it("Save History opens the SAVES tab", async () => {
       vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({ found: true, rom_id: 42 });
       render(<RomMPlaySection appId={testAppId} />);
@@ -2617,7 +2633,7 @@ describe("RomMPlaySection", () => {
       const rec = (e: Event) => seen.push((e as CustomEvent).detail);
       globalThis.addEventListener("romm_tab_switch", rec);
       act(() => {
-        items[3]!.props.onClick?.();
+        items.find((i) => i.props.children === "Save History")!.props.onClick?.();
       });
       globalThis.removeEventListener("romm_tab_switch", rec);
       expect(seen).toEqual([{ tab: "saves" }]);
@@ -2639,7 +2655,7 @@ describe("RomMPlaySection", () => {
         emitDeckyEvent("download_complete", { rom_id: 42 });
       });
       await flushAsync();
-      expect(await openRomMMenuAndGetItems(testAppId)).toHaveLength(6);
+      expect(await openRomMMenuAndGetItems(testAppId)).toHaveLength(7);
       act(() => {
         globalThis.dispatchEvent(new CustomEvent("romm_rom_uninstalled", { detail: { rom_id: 42 } }));
       });

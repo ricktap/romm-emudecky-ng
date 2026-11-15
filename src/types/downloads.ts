@@ -13,15 +13,19 @@
 export type DownloadStatus =
   "queued" | "downloading" | "extracting" | "completed" | "failed" | "cancelled" | "paused" | "interrupted";
 
-/** What a queued download is. ROM frames carry `rom_id`; firmware frames carry `firmware_id`. */
-export type DownloadKind = "rom" | "firmware";
+/**
+ * What a queued download is. ROM frames carry `rom_id`; firmware frames carry `firmware_id`; a single file of an
+ * installed multi-file game (an update or DLC) carries `file_id` (and its game in `parent_rom_id` on completion).
+ */
+export type DownloadKind = "rom" | "firmware" | "rom_file";
 
 export interface DownloadItem {
   /** Absent on frames from before kinds existed: a ROM. */
   kind?: DownloadKind;
-  /** The ROM id; `0` for a firmware download, which is identified by `firmware_id` (use `downloadKey`). */
+  /** The ROM id; `0` for firmware and game-file downloads, identified by `firmware_id` / `file_id` (use `downloadKey`). */
   rom_id: number;
   firmware_id?: number;
+  file_id?: number;
   rom_name: string;
   platform_name: string;
   file_name: string;
@@ -61,9 +65,10 @@ export type DownloadPhase = "waiting" | "retrying";
 
 export interface DownloadProgressEvent {
   kind?: DownloadKind;
-  /** Absent on firmware frames. */
+  /** Absent on firmware and game-file frames. */
   rom_id?: number;
   firmware_id?: number;
+  file_id?: number;
   rom_name: string;
   platform_name: string;
   file_name: string;
@@ -85,9 +90,12 @@ export interface DownloadProgressEvent {
 
 export interface DownloadCompleteEvent {
   kind?: DownloadKind;
-  /** Absent for firmware. */
+  /** Absent for firmware and game files. */
   rom_id?: number;
   firmware_id?: number;
+  file_id?: number;
+  /** The game a finished game file (`kind: "rom_file"`) belongs to. */
+  parent_rom_id?: number;
   rom_name: string;
   platform_name: string;
   file_path: string;
@@ -112,9 +120,10 @@ export interface DownloadCompleteEvent {
 
 export interface DownloadFailedEvent {
   kind?: DownloadKind;
-  /** Absent for firmware. */
+  /** Absent for firmware and game files. */
   rom_id?: number;
   firmware_id?: number;
+  file_id?: number;
   rom_name: string;
   platform_name: string;
   error_message: string;

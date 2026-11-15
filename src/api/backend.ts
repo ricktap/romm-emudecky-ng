@@ -118,6 +118,34 @@ export const moveToFront = callable<[number, DownloadKind?], BackendResult>("mov
 export const getEmudeckHealth = callable<[], EmuDeckHealthInfo>("get_emudeck_health");
 /** Accept the current EmuDeck storage location as the new normal (nothing is moved). */
 export const acceptEmudeckStoragePath = callable<[], BackendResult>("accept_emudeck_storage_path");
+/** One file of an installed multi-file game as RomM lists it, with its state in the install folder. */
+export interface RomFileInfo {
+  file_id: number;
+  /** Path inside the game's folder, e.g. `update/Game v3.nsp`. */
+  path: string;
+  /** RomM's category: `update`, `dlc`, `game`, … */
+  category: string;
+  size: number;
+  /** `missing` (not on this device), `changed` (another size than on RomM), `present`. */
+  state: "missing" | "changed" | "present";
+  /** A download of this file is unfinished in the queue. */
+  downloading: boolean;
+}
+export const getRomFiles = callable<
+  [number],
+  { success: boolean; rom_id?: number; files?: RomFileInfo[]; reason?: string; message?: string }
+>("get_rom_files");
+/** Queue the chosen files of an installed game, one download each; `errors` lists files that were not queued. */
+export const downloadRomFiles = callable<
+  [number, number[]],
+  {
+    success: boolean;
+    started?: number;
+    errors?: { file_id: number; reason: string; message: string }[];
+    reason?: string;
+    message: string;
+  }
+>("download_rom_files");
 export const getDownloadQueue = callable<[], { downloads: DownloadItem[] }>("get_download_queue");
 export const getInstalledRom = callable<[number], InstalledRom | null>("get_installed_rom");
 export const evaluateLaunch = callable<[number], LaunchVerdict>("evaluate_launch");
@@ -606,3 +634,9 @@ export const savesRollbackToVersion = callable<[number, string, number], Rollbac
 // Self-update: checks GitHub for a newer release (throttled to every 6 h unless
 // force=true). Never installs — see utils/selfUpdate.ts for the Decky handoff.
 export const checkForUpdate = callable<[boolean], UpdateCheckResult>("check_for_update");
+// Danger zone: put <roms>/switch into Eden's External Content folders now (the plugin also does it at startup and after
+// every Switch download), so Eden loads the update and DLC files in the game folders without installing them.
+export const setEdenExternalContent = callable<
+  [],
+  { success: boolean; outcome?: "added" | "already_present"; folder?: string; reason?: string; message: string }
+>("set_eden_external_content");

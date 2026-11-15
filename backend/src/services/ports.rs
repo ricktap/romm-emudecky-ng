@@ -224,6 +224,16 @@ pub trait RommRomApi: Send + Sync {
         mode: TransferMode,
         hooks: TransferHooks,
     ) -> anyhow::Result<TransferOutcome>;
+    /// Stream one file of a multi-file ROM (`?file_ids=<file_id>`: RomM serves that file itself, not a ZIP).
+    async fn download_rom_file(
+        &self,
+        rom_id: i64,
+        file_id: i64,
+        file_name: &str,
+        dest: &str,
+        mode: TransferMode,
+        hooks: TransferHooks,
+    ) -> anyhow::Result<TransferOutcome>;
 }
 
 /// One save upload (`POST /api/saves`, or `PUT /api/saves/<id>` when `save_id` is set).
@@ -355,6 +365,27 @@ pub trait DownloadFiles: Send + Sync {
     async fn decode_url_encoded_names(&self, dir: &str) -> anyhow::Result<()>;
     /// `(path, size)` of every file under `dir`, recursively.
     async fn scan_files_with_sizes(&self, dir: &str) -> Vec<(String, u64)>;
+}
+
+/// What happened when making sure an emulator scans a folder for Switch updates and DLC.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExternalContentOutcome {
+    /// The folder was added to the emulator's config.
+    Added,
+    /// The folder (or one above it) was already there.
+    AlreadyPresent,
+    /// The emulator has no config yet (never started on this machine): nothing was written.
+    NotConfigured,
+    /// The emulator is running and would overwrite the change when it closes: nothing was written.
+    EmulatorRunning,
+    Failed(String),
+}
+
+/// Eden's "External Content" folders, which it scans for updates and DLC every time a game starts.
+#[async_trait]
+pub trait ExternalContentDirs: Send + Sync {
+    /// Make sure Eden scans `dir`. Never fails the caller; the outcome says what happened.
+    async fn ensure(&self, dir: &str) -> ExternalContentOutcome;
 }
 
 /// EmuDeck's storage roots (`<storagePath>/Emulation/...`).

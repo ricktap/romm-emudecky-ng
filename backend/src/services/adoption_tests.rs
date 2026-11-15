@@ -41,6 +41,7 @@ async fn job_for(env: &DownloadEnv, rom_id: i64) {
             is_multi: false,
             position: 1,
             total_bytes: None,
+            parent_rom_id: None,
         },
         "t",
     )
@@ -196,6 +197,25 @@ async fn multi_file_exact_rule() {
             .len(),
         1
     );
+}
+
+#[tokio::test]
+async fn a_switch_folder_holding_only_its_base_game_file_is_adopted() {
+    let env = DownloadEnv::new().await;
+    let base = place(&env, "switch/Mario Kart/MK8.xci", 100);
+    let rom = json!({
+        "id": 30, "name": "Mario Kart", "fs_name": "Mario Kart", "fs_path": "switch", "platform_slug": "switch",
+        "platform_fs_slug": "switch", "fs_size_bytes": 131,
+        "files": [
+            {"id": 1, "file_path": "switch/Mario Kart", "file_name": "MK8.xci", "file_size_bytes": 100, "category": "game"},
+            {"id": 2, "file_path": "switch/Mario Kart", "file_name": "MK8.nfo", "file_size_bytes": 1, "category": "game"},
+            {"id": 3, "file_path": "switch/Mario Kart/update", "file_name": "U.nsp", "file_size_bytes": 30, "category": "update"},
+        ],
+    });
+    let plan = env.adoption.plan_adoptions(&[rom]).await;
+    assert_eq!(plan.len(), 1, "no .nfo, no update: the base game file is what installs it");
+    let dir = env.roms().join("switch/Mario Kart").to_string_lossy().into_owned();
+    assert_eq!((plan[0].install.file_path.as_str(), plan[0].install.rom_dir.as_deref()), (base.as_str(), Some(dir.as_str())));
 }
 
 #[tokio::test]

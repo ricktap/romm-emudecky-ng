@@ -200,6 +200,22 @@ archive identity columns; legacy multipart partials are flagged `needs_recovery`
   (`REMOVED_TILL_0_90_0.md` has reasons + where the old code lives: tag `v0.33.2`).
 - Rewrite tests are ported to Rust (no Python contract tests after the swap). Rust target ≈80% line coverage.
 - Shortcut exe stays `bin/rom-launcher-ng`; standalone emulators are launched directly (not via EmuDeck's `tools/launchers`).
+- **Switch updates/DLC (Eden):** game folders keep update/DLC files in subfolders. The plugin keeps `<roms>/switch` in
+  Eden's External Content folders (`[Paths] external_content_dirs` in `~/.config/eden/qt-config.ini`, Eden ≥ 0.2.0),
+  which Eden scans recursively at every boot, also for `eden -g` launches — no NAND install. Written at startup and after
+  each Switch download, only while Eden is not running (it saves its config on exit), atomically, with a one-time
+  `qt-config.ini.romm-backup`. **Ryujinx is deferred:** its `autoload_dirs` are only scanned when its game list loads,
+  which a direct launch skips; doing it properly means writing `games/<title-id>/updates.json` + `dlc.json`, which needs
+  title IDs from NCA headers (AES-XTS with `prod.keys`).
+- **Switch game folders install file by file:** the first download of a multi-file Switch ROM fetches only its base
+  game file (largest top-level `.xci/.nsp/.xcz/.nsz` not marked update/DLC) via `?file_ids=` into the game folder —
+  no RomM ZIP, known size, resumable; the install keeps `rom_dir`. Without an identifiable base file the folder is
+  fetched whole as before. Only content files are listed/downloadable (no `.nfo`/`.sfv`). Launch candidates rank
+  top-level files first (a big DLC never becomes the default); adoption of a Switch folder expects its base file.
+- **Single game files (updates/DLC added later):** game page gear → "Game files…" lists RomM's files of an installed
+  multi-file game (missing / changed size / present) and queues the chosen ones as `rom_file` jobs (keyed by RomM file
+  id, `parent_rom_id` in `download_jobs` since migration 016). RomM's `/api/roms/{id}/content/{name}?file_ids=<one>`
+  serves that file itself (nginx, resumable), not a ZIP. Change detection is by size only.
 - Switch adoption matches by **normalized name** (size is useless: XCI files are padded; four different games were all
   7,985,954,816 bytes). Folder games launch the largest `.xci`/`.nsp`, overridable per game.
 

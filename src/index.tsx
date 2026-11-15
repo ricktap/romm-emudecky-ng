@@ -388,6 +388,7 @@ export default definePlugin(() => {
       const prev = getDownloadState().find((d) => downloadKey(d) === key);
       updateDownload({
         ...(data.kind === "firmware" ? { kind: "firmware" as const, firmware_id: data.firmware_id as number } : {}),
+        ...(data.kind === "rom_file" ? { kind: "rom_file" as const, file_id: data.file_id as number } : {}),
         rom_id: data.rom_id ?? 0,
         rom_name: data.rom_name,
         platform_name: data.platform_name,
@@ -435,6 +436,30 @@ export default definePlugin(() => {
         });
         toaster.toast({ title: "EmuDecky RomM Manager", body: `Downloaded ${data.rom_name}` });
         globalThis.dispatchEvent(new CustomEvent("romm_data_changed", { detail: { type: "firmware" } }));
+        return;
+      }
+      // One file of an installed game (an update or DLC): the game stays installed as it was, so no shortcut or
+      // launch-options work. Mark it done, say so, and let the game page refresh its file list.
+      if (data.kind === "rom_file") {
+        const key = downloadKey(data);
+        const prev = getDownloadState().find((d) => downloadKey(d) === key);
+        updateDownload({
+          kind: "rom_file",
+          file_id: data.file_id as number,
+          rom_id: 0,
+          rom_name: data.rom_name,
+          platform_name: data.platform_name,
+          file_name: prev?.file_name ?? data.rom_name,
+          status: "completed",
+          progress: 1,
+          bytes_downloaded: prev?.bytes_downloaded ?? 0,
+          total_bytes: prev?.total_bytes ?? 0,
+          resumable: false,
+        });
+        toaster.toast({ title: "EmuDecky RomM Manager", body: `Downloaded ${data.rom_name}` });
+        globalThis.dispatchEvent(
+          new CustomEvent("romm_data_changed", { detail: { type: "rom_files", rom_id: data.parent_rom_id } }),
+        );
         return;
       }
       // An adopted ROM (files already on disk, nothing downloaded) never went
