@@ -12,6 +12,20 @@ pub fn first_image(v:&Value,thumb:bool)->Option<&str>{
     if thumb {if let Some(s)=first["thumb"].as_str().filter(|s|!s.is_empty()){return Some(s);}}
     first["url"].as_str().filter(|s|!s.is_empty())
 }
+/// The gallery's images: up to `per_kind` heroes and wide grids each, then the rest of either up to `max`.
+/// Only http(s) image URLs; anything else in the payload is skipped.
+pub fn gallery_urls(heroes:&Value,grids:&Value,per_kind:usize,max:usize)->Vec<String>{
+    let urls=|v:&Value|->Vec<String>{
+        if v["success"]!=true{return vec![];}
+        v["data"].as_array().into_iter().flatten().filter_map(|i|i["url"].as_str())
+            .filter(|u|u.starts_with("https://")||u.starts_with("http://")).map(str::to_string).collect()
+    };
+    let (heroes,grids)=(urls(heroes),urls(grids));
+    let mut out:Vec<String>=heroes.iter().take(per_kind).chain(grids.iter().take(per_kind)).cloned().collect();
+    out.extend(heroes.iter().skip(per_kind).chain(grids.iter().skip(per_kind)).cloned());
+    out.truncate(max);
+    out
+}
 pub fn candidates(v:&Value)->Vec<Value>{
     if v["success"]!=true{return vec![];}
     v["data"].as_array().into_iter().flatten().filter_map(|v|{
@@ -43,6 +57,18 @@ mod tests {
         }
         for code in [i64::MIN, -1, 0, 5, i64::MAX] { assert_eq!(asset_name(code), None); }
         assert_eq!(endpoint("poster", 9), None);
+    }
+
+    #[test]
+    fn gallery_mixes_heroes_and_grids_fills_up_and_skips_non_http_urls() {
+        let list=|prefix:&str,n:usize|json!({"success":true,"data":(0..n).map(|i|json!({"url":format!("https://cdn/{prefix}{i}.png")})).collect::<Vec<_>>()});
+        let names=|v:Vec<String>|v.into_iter().map(|u|u.trim_start_matches("https://cdn/").trim_end_matches(".png").to_string()).collect::<Vec<_>>();
+        assert_eq!(names(gallery_urls(&list("h",6),&list("g",6),4,8)),["h0","h1","h2","h3","g0","g1","g2","g3"]);
+        // Few heroes: the grids fill the remaining places, and the other way round.
+        assert_eq!(names(gallery_urls(&list("h",1),&list("g",9),4,8)),["h0","g0","g1","g2","g3","g4","g5","g6"]);
+        assert_eq!(names(gallery_urls(&list("h",6),&json!({"success":false}),4,8)),["h0","h1","h2","h3","h4","h5"]);
+        let odd=json!({"success":true,"data":[{"url":"file:///etc/passwd"},{"url":""},{"thumb":"x"},null,{"url":"http://cdn/ok.png"}]});
+        assert_eq!(gallery_urls(&odd,&Value::Null,4,8),["http://cdn/ok.png"]);
     }
 
     #[test]

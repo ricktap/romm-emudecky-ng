@@ -45,7 +45,7 @@ pub const PORTED_CALLABLES: &[&str] = &[
     "record_session_start", "finalize_game_session", "get_all_playtime", "get_playtime_scope_notice", "reconcile_playtime",
 
     "get_cached_game_detail", "get_rom_metadata", "get_all_metadata_cache", "fetch_cover_base64", "refresh_cover_artwork",
-    "get_rom_screenshots", "get_rom_screenshot",
+    "get_rom_screenshots", "get_rom_screenshot", "get_sgdb_gallery", "get_sgdb_gallery_image",
     "get_sgdb_artwork_base64", "verify_sgdb_api_key", "save_sgdb_api_key", "get_sgdb_resolution", "search_sgdb_games", "apply_sgdb_game_id",
     "get_platform_core_info", "set_game_core", "set_platform_core", "clear_game_core", "get_disc_selection", "select_disc",
     "get_rom_relaunch_options", "get_installed_relaunch_options",
@@ -512,6 +512,8 @@ impl Backend {
             "get_sgdb_artwork_base64" => bind(name,2,2,sgdb,|s,a|async move{Ok(s.artwork(rom_id_arg(&a[0])?,rom_id_arg(&a[1])?).await)}),
             "verify_sgdb_api_key" => bind(name,0,1,sgdb,|s,a|async move{let key=opt_str(&a,0,"api_key")?;Ok(s.verify(Some(&key)).await)}),
             "save_sgdb_api_key" => bind(name,1,1,sgdb,|s,a|async move{Ok(s.save_key(&opt_str(&a,0,"api_key")?).await.unwrap_or_else(|e|unknown_failure(&e)))}),
+            "get_sgdb_gallery" => bind(name,1,1,sgdb,|s,a|async move{Ok(s.gallery(rom_id_arg(&a[0])?).await)}),
+            "get_sgdb_gallery_image" => bind(name,2,2,sgdb,|s,a|async move{Ok(s.gallery_image(rom_id_arg(&a[0])?,a[1].as_i64().ok_or_else(||"index must be an integer".to_string())?).await)}),
             "get_sgdb_resolution" => bind(name,1,1,sgdb,|s,a|async move{Ok(s.resolution(rom_id_arg(&a[0])?).await.unwrap_or_else(|e|unknown_failure(&e)))}),
             "search_sgdb_games" => bind(name,1,1,sgdb,|s,a|async move{Ok(s.search(&req_str(&a,0,"term")?).await)}),
             "apply_sgdb_game_id" => bind(name,2,2,sgdb,|s,a|async move{Ok(s.apply(rom_id_arg(&a[0])?,rom_id_arg(&a[1])?).await.unwrap_or_else(|e|unknown_failure(&e)))}),
@@ -849,7 +851,7 @@ mod tests {
     #[test]
     fn surface_matches_python_backend_size_and_includes_ported() {
         let names = callable_names();
-        assert_eq!(names.len(), 119);
+        assert_eq!(names.len(), 121);
         let mut dedup = names.clone();
         dedup.dedup();
         assert_eq!(dedup.len(), names.len());

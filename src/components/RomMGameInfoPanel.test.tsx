@@ -63,10 +63,10 @@ vi.mock("./SavesTab", () => ({
 }));
 
 const capturedGallery: { romId: number }[] = [];
-vi.mock("./ScreenshotGallery", () => ({
-  ScreenshotGallery: (props: { romId: number }) => {
+vi.mock("./GameGallery", () => ({
+  GameGallery: (props: { romId: number }) => {
     capturedGallery.push(props);
-    return createElement("div", { "data-testid": "screenshot-gallery" });
+    return createElement("div", { "data-testid": "game-gallery" });
   },
 }));
 
@@ -968,7 +968,7 @@ describe("RomMGameInfoPanel", () => {
       expect(capturedBiosCoreTab[capturedBiosCoreTab.length - 1]).toMatchObject({ appId: testAppId, romId: 55, platformSlug: "switch" });
     });
 
-    it("the OVERVIEW tab shows the screenshot gallery for the ROM; other tabs do not", async () => {
+    it("the OVERVIEW tab shows the gallery for the ROM; other tabs do not", async () => {
       capturedGallery.length = 0;
       vi.mocked(cachedStore.getCachedGameDetail).mockResolvedValue({
         found: true,
@@ -979,10 +979,10 @@ describe("RomMGameInfoPanel", () => {
       });
       const { getByText, queryByTestId } = render(<RomMGameInfoPanel appId={testAppId} />);
       await flushAsync();
-      expect(queryByTestId("screenshot-gallery")).not.toBeNull();
+      expect(queryByTestId("game-gallery")).not.toBeNull();
       expect(capturedGallery[capturedGallery.length - 1]).toEqual({ romId: 55 });
       fireEvent.click(getByText("BIOS & CORE"));
-      expect(queryByTestId("screenshot-gallery")).toBeNull();
+      expect(queryByTestId("game-gallery")).toBeNull();
     });
 
     it("has no BIOS & CORE tab while the game is unknown", async () => {

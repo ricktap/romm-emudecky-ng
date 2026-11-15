@@ -55,6 +55,8 @@
   "get_settings",
   "get_settings_reset_notice",
   "get_sgdb_artwork_base64",
+  "get_sgdb_gallery",
+  "get_sgdb_gallery_image",
   "get_sgdb_resolution",
   "get_slot_delete_info",
   "get_slot_saves",

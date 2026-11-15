@@ -16,7 +16,8 @@ fn screenshot_paths(rom:&Value)->Vec<String>{
     rom["merged_screenshots"].as_array().map(|list|list.iter().filter_map(Value::as_str)
         .filter(|p|p.starts_with('/')&&!p.starts_with("//")).take(MAX_SCREENSHOTS).map(str::to_string).collect()).unwrap_or_default()
 }
-fn image_mime(bytes:&[u8])->&'static str{
+/// The MIME type of a downloaded image, from its first bytes (JPEG when unknown).
+pub fn image_mime(bytes:&[u8])->&'static str{
     if bytes.starts_with(b"\x89PNG"){"image/png"}
     else if bytes.starts_with(b"GIF8"){"image/gif"}
     else if bytes.len()>=12&&&bytes[..4]==b"RIFF"&&&bytes[8..12]==b"WEBP"{"image/webp"}

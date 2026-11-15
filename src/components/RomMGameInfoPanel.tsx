@@ -32,7 +32,7 @@ import {
 import { SlotSetupWizard } from "./SlotSetupWizard";
 import { SavesTab } from "./SavesTab";
 import { BiosCoreTab } from "./BiosCoreTab";
-import { ScreenshotGallery } from "./ScreenshotGallery";
+import { GameGallery } from "./GameGallery";
 import type {
   RomMetadata,
   InstalledRom,
@@ -786,7 +786,7 @@ export const RomMGameInfoPanel: FC<RomMGameInfoPanelProps> = ({ appId }) => { //
       "div",
       { key: "tab-info" },
       gameInfoSection,
-      createElement(ScreenshotGallery, { key: "screenshots", romId }),
+      createElement(GameGallery, { key: "gallery", romId }),
       romFileSection,
     );
   } else if (state.activeTab === "bios" && state.romId != null) {
