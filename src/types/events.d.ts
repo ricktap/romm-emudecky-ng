@@ -18,7 +18,9 @@ export type RommDataChangedDetail =
   | { type: "bios"; platform_slug: string }
   | { type: "core_changed"; platform_slug: string }
   | { type: "cover_refreshed"; rom_id: number }
-  | { type: "version_switched"; app_id: number; rom_id: number };
+  | { type: "version_switched"; app_id: number; rom_id: number }
+  /** A file of an installed game (update/DLC) finished downloading. */
+  | { type: "rom_files"; rom_id?: number };
 
 export interface RommRomUninstalledDetail {
   rom_id: number;

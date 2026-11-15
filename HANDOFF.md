@@ -207,6 +207,10 @@ archive identity columns; legacy multipart partials are flagged `needs_recovery`
   `qt-config.ini.romm-backup`. **Ryujinx is deferred:** its `autoload_dirs` are only scanned when its game list loads,
   which a direct launch skips; doing it properly means writing `games/<title-id>/updates.json` + `dlc.json`, which needs
   title IDs from NCA headers (AES-XTS with `prod.keys`).
+- **Single game files (updates/DLC added later):** game page gear → "Game files…" lists RomM's files of an installed
+  multi-file game (missing / changed size / present) and queues the chosen ones as `rom_file` jobs (keyed by RomM file
+  id, `parent_rom_id` in `download_jobs` since migration 016). RomM's `/api/roms/{id}/content/{name}?file_ids=<one>`
+  serves that file itself (nginx, resumable), not a ZIP. Change detection is by size only.
 - Switch adoption matches by **normalized name** (size is useless: XCI files are padded; four different games were all
   7,985,954,816 bytes). Folder games launch the largest `.xci`/`.nsp`, overridable per game.
 

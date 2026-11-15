@@ -32,6 +32,7 @@ import { WarningCard } from "./WarningCard";
 import { ReadinessStrip } from "./ReadinessStrip";
 import { SgdbGamePickerModalContent } from "./SgdbGamePickerModal";
 import { applyArtwork } from "../utils/artwork";
+import { showRomFilesModal } from "./RomFilesModal";
 import { hasAnySaveConflict } from "../utils/saveStatus";
 import { scrollToTop } from "../utils/scrollHelpers";
 import { getEventTarget } from "../utils/events";
@@ -911,6 +912,15 @@ export const RomMPlaySection: FC<RomMPlaySectionProps> = ({ appId }) => { // NOS
         { key: "refresh-metadata", onClick: () => detach(handleRefreshMetadata()) },
         "Refresh Metadata",
       ),
+      ...(installed && info.romId
+        ? [
+            createElement(
+              MenuItem,
+              { key: "game-files", onClick: () => showRomFilesModal(info.romId as number, info.romName) },
+              "Game files\u2026",
+            ),
+          ]
+        : []),
       createElement(MenuSeparator, { key: "sep-saves" }),
       createElement(MenuItem, { key: "sync-saves", onClick: () => detach(handleSyncSaves()) }, "Sync Save Files"),
       createElement(

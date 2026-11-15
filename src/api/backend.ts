@@ -118,6 +118,34 @@ export const moveToFront = callable<[number, DownloadKind?], BackendResult>("mov
 export const getEmudeckHealth = callable<[], EmuDeckHealthInfo>("get_emudeck_health");
 /** Accept the current EmuDeck storage location as the new normal (nothing is moved). */
 export const acceptEmudeckStoragePath = callable<[], BackendResult>("accept_emudeck_storage_path");
+/** One file of an installed multi-file game as RomM lists it, with its state in the install folder. */
+export interface RomFileInfo {
+  file_id: number;
+  /** Path inside the game's folder, e.g. `update/Game v3.nsp`. */
+  path: string;
+  /** RomM's category: `update`, `dlc`, `game`, … */
+  category: string;
+  size: number;
+  /** `missing` (not on this device), `changed` (another size than on RomM), `present`. */
+  state: "missing" | "changed" | "present";
+  /** A download of this file is unfinished in the queue. */
+  downloading: boolean;
+}
+export const getRomFiles = callable<
+  [number],
+  { success: boolean; rom_id?: number; files?: RomFileInfo[]; reason?: string; message?: string }
+>("get_rom_files");
+/** Queue the chosen files of an installed game, one download each; `errors` lists files that were not queued. */
+export const downloadRomFiles = callable<
+  [number, number[]],
+  {
+    success: boolean;
+    started?: number;
+    errors?: { file_id: number; reason: string; message: string }[];
+    reason?: string;
+    message: string;
+  }
+>("download_rom_files");
 export const getDownloadQueue = callable<[], { downloads: DownloadItem[] }>("get_download_queue");
 export const getInstalledRom = callable<[number], InstalledRom | null>("get_installed_rom");
 export const evaluateLaunch = callable<[number], LaunchVerdict>("evaluate_launch");

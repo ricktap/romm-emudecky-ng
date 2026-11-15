@@ -38,6 +38,7 @@ export function handleGlobalDownloadFailure(
   const prev = store.getDownloadState().find((d) => downloadKey(d) === key);
   store.updateDownload({
     ...(event.kind === "firmware" ? { kind: "firmware" as const, firmware_id: event.firmware_id as number } : {}),
+    ...(event.kind === "rom_file" ? { kind: "rom_file" as const, file_id: event.file_id as number } : {}),
     rom_id: event.rom_id ?? 0,
     rom_name: event.rom_name,
     platform_name: event.platform_name,
