@@ -92,7 +92,8 @@ describe("SaveSetupModal", () => {
   it("opened through showModal, Done removes the modal (the prop Decky injects is closeModal)", async () => {
     vi.mocked(getSaveTitleInfo).mockResolvedValue(info() as never);
     const result = showSaveSetupModal(7);
-    const el = vi.mocked(showModal).mock.calls.at(-1)?.[0] as ReactElement;
+    const calls = vi.mocked(showModal).mock.calls;
+    const el = calls[calls.length - 1]?.[0] as ReactElement<{ closeModal?: () => void }>;
     const closeModal = vi.fn();
     const { getByText } = render(cloneElement(el, { closeModal }));
     await flush();
