@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cloneElement, type ReactElement } from "react";
 import { act, fireEvent, render } from "@testing-library/react";
 import { toaster } from "@decky/api";
+import { showModal } from "@decky/ui";
 
 vi.mock("../api/backend", () => ({ getSaveTitleInfo: vi.fn(), setSaveTitleId: vi.fn(), setSaveProfile: vi.fn() }));
 
 import { getSaveTitleInfo, setSaveProfile, setSaveTitleId } from "../api/backend";
-import { SaveSetupModal } from "./SaveSetupModal";
+import { SaveSetupModal, showSaveSetupModal } from "./SaveSetupModal";
 
 const info = (over = {}) => ({
   success: true, title_id: null, source: null, proposal: null, profile: null, profiles: [],
@@ -17,7 +19,7 @@ async function open(over = {}) {
   vi.mocked(getSaveTitleInfo).mockResolvedValue(info(over) as never);
   const onDone = vi.fn();
   const close = vi.fn();
-  const utils = render(<SaveSetupModal romId={7} onDone={onDone} close={close} />);
+  const utils = render(<SaveSetupModal romId={7} onDone={onDone} closeModal={close} />);
   await flush();
   return { ...utils, onDone, close };
 }
@@ -85,6 +87,19 @@ describe("SaveSetupModal", () => {
     await act(async () => { fireEvent.click(second.getByText(/saved while you played/)); });
     fireEvent.click(second.getByText("Done"));
     expect(second.onDone).toHaveBeenCalledWith(true);
+  });
+
+  it("opened through showModal, Done removes the modal (the prop Decky injects is closeModal)", async () => {
+    vi.mocked(getSaveTitleInfo).mockResolvedValue(info() as never);
+    const result = showSaveSetupModal(7);
+    const calls = vi.mocked(showModal).mock.calls;
+    const el = calls[calls.length - 1]?.[0] as ReactElement<{ closeModal?: () => void }>;
+    const closeModal = vi.fn();
+    const { getByText } = render(cloneElement(el, { closeModal }));
+    await flush();
+    fireEvent.click(getByText("Done"));
+    expect(closeModal).toHaveBeenCalledTimes(1);
+    await expect(result).resolves.toBe(false);
   });
 
   it("a failed load offers a retry", async () => {

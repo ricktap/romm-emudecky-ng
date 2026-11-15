@@ -185,6 +185,18 @@ export const getArtworkBase64 = callable<[number], { base64: string | null }>("g
 // cover, read error — returns { base64: null } silently; it never re-downloads a
 // cached cover.
 export const fetchCoverBase64 = callable<[number], { base64: string | null }>("fetch_cover_base64");
+// Game page gallery: how many screenshots RomM has for a ROM (cached ones still count offline), then one image per call.
+export const getRomScreenshots = callable<[number], { success: boolean; count?: number; reason?: string; message?: string }>(
+  "get_rom_screenshots",
+);
+export const getRomScreenshot = callable<[number, number], { base64: string | null; mime?: string }>("get_rom_screenshot");
+// Game page gallery: SteamGridDB heroes and wide grids for a ROM (cached ones still count offline), one image per call.
+export const getSgdbGallery = callable<[number], { success: boolean; count?: number; reason?: string; message?: string }>(
+  "get_sgdb_gallery",
+);
+export const getSgdbGalleryImage = callable<[number, number], { base64: string | null; mime?: string }>(
+  "get_sgdb_gallery_image",
+);
 export const refreshCoverArtwork = callable<
   [number],
   { success: boolean; reason?: string; message: string; cover_path?: string }

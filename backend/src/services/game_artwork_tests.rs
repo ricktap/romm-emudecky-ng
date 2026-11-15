@@ -385,3 +385,118 @@ async fn simultaneous_sync_fetch_and_refresh_share_atomic_cover_writes() {
     assert_eq!(std::fs::read(format!("{grid}/99p.png")).unwrap(),b"new cover");
     assert!(!std::path::Path::new(&format!("{}.tmp",c.art.assets.cache_path(1))).exists());
 }
+
+#[tokio::test]
+async fn screenshots_come_from_romm_paths_are_cached_and_still_count_offline() {
+    let c=CoverEnv::new().await;
+    // Unknown ROM and server down: the gallery says why instead of showing nothing.
+    assert_eq!(c.svc.screenshots(1).await["reason"],"server_unreachable");
+    let paths:Vec<String>=(0..10).map(|i|format!("/assets/romm/resources/roms/1/screenshots/{i}.jpg")).collect();
+    let mut listed=vec![json!("https://images.igdb.com/external.jpg"),json!("//elsewhere/x.jpg")];
+    listed.extend(paths.iter().map(|p|json!(p)));
+    c.g.e.romm.set_rom(json!({"id":1,"merged_screenshots":listed}));
+    // External URLs never go out with RomM credentials; at most eight.
+    assert_eq!(c.svc.screenshots(1).await,json!({"success":true,"count":8}));
+    c.g.e.romm.get_rom_calls.lock().unwrap().clear();
+    let shot=c.svc.screenshot(1,0).await;
+    assert_eq!(shot["base64"],STANDARD.encode(b"new cover"));
+    assert_eq!(shot["mime"],"image/jpeg");
+    assert_eq!(c.api.calls.lock().unwrap().as_slice(),[paths[0].clone()]);
+    // The listing's paths are reused: no second ROM read for the image.
+    assert!(c.g.e.romm.get_rom_calls.lock().unwrap().is_empty());
+    // Out of range or negative: nothing, and no download.
+    for index in [8,-1,i64::MAX]{assert_eq!(c.svc.screenshot(1,index).await,json!({"base64":null}));}
+    assert_eq!(c.api.calls.lock().unwrap().len(),1);
+    // A failed download leaves no partial file behind and can be retried.
+    c.api.fail.store(true,Ordering::SeqCst);
+    assert_eq!(c.svc.screenshot(1,1).await,json!({"base64":null}));
+    assert!(!std::path::Path::new(&format!("{}/1_shot1.img.tmp",c.art.assets.cache_dir())).exists());
+    c.api.fail.store(false,Ordering::SeqCst);
+    assert_eq!(c.svc.screenshot(1,1).await["base64"],STANDARD.encode(b"new cover"));
+    // Offline: the cached screenshots still count and load, without any download.
+    c.g.e.romm.roms.lock().unwrap().remove(&1);
+    assert_eq!(c.svc.screenshots(1).await,json!({"success":true,"count":2}));
+    let downloads=c.api.calls.lock().unwrap().len();
+    assert_eq!(c.svc.screenshot(1,0).await["base64"],STANDARD.encode(b"new cover"));
+    assert_eq!(c.api.calls.lock().unwrap().len(),downloads);
+}
+
+#[tokio::test]
+async fn screenshot_mime_follows_the_bytes_and_unsynced_screenshots_are_pruned() {
+    let c=CoverEnv::new().await;
+    let dir=c.art.assets.cache_dir();std::fs::create_dir_all(&dir).unwrap();
+    for (index,bytes,mime) in [(0,&b"\x89PNG\r\n"[..],"image/png"),(1,b"GIF89a",  "image/gif"),(2,b"RIFF0000WEBPVP8 ","image/webp"),(3,b"\xff\xd8\xff","image/jpeg")]{
+        std::fs::write(format!("{dir}/5_shot{index}.img"),bytes).unwrap();
+        assert_eq!(c.svc.screenshot(5,index).await["mime"],mime);
+    }
+    // ROM 5 is not synced; ROM 6 is. Startup cleanup drops only the unsynced one's screenshots.
+    c.g.e.seed_rom(6,"switch","kept",Some(66),None).await;
+    std::fs::write(format!("{dir}/6_shot0.img"),b"x").unwrap();
+    c.art.prune().await.unwrap();
+    assert!(!std::path::Path::new(&format!("{dir}/5_shot0.img")).exists());
+    assert!(std::path::Path::new(&format!("{dir}/6_shot0.img")).exists());
+}
+
+#[tokio::test]
+async fn sgdb_gallery_resolves_like_refresh_artwork_filters_nsfw_and_caches_for_offline() {
+    let g = GridEnv::new().await;
+    assert_eq!(g.svc.gallery(1).await["reason"],"no_api_key");
+    g.key();
+    g.e.seed_rom(1,"switch","game",Some(99),None).await;
+    // No SteamGridDB game known anywhere: nothing to show, and no name search behind the user's back.
+    g.e.romm.set_rom(json!({"id":1,"name":"Game"}));
+    assert_eq!(g.svc.gallery(1).await["reason"],"server_unreachable");
+    assert!(!g.api.calls.lock().unwrap().iter().any(|(p,_)|p.starts_with("/search/")));
+    // The IGDB cross-ref finds it (and remembers it, as Refresh Artwork would).
+    g.e.romm.set_rom(json!({"id":1,"name":"Game","igdb_id":3}));
+    g.api.respond("/games/igdb/3",json!({"success":true,"data":{"id":12}}));
+    let list=|prefix:&str,n:usize|json!({"success":true,"data":(0..n).map(|i|json!({"url":format!("https://cdn/{prefix}{i}")})).collect::<Vec<_>>()});
+    g.api.respond("/heroes/game/12?nsfw=false&humor=false",list("hero",2));
+    g.api.respond("/grids/game/12?dimensions=460x215,920x430&nsfw=false&humor=false",list("grid",9));
+    assert_eq!(g.svc.gallery(1).await,json!({"success":true,"count":8}));
+    assert_eq!(SqliteSyncLibrary::new(g.e.db.clone()).registry().await.unwrap()[&1]["sgdb_id"],12);
+    let image=g.svc.gallery_image(1,0).await;
+    assert_eq!(image["base64"],STANDARD.encode(b"https://cdn/hero0"));
+    assert_eq!(image["mime"],"image/jpeg");
+    assert_eq!(g.svc.gallery_image(1,2).await["base64"],STANDARD.encode(b"https://cdn/grid0"));
+    // Out of range: nothing and no download.
+    let downloads=g.api.downloads.lock().unwrap().len();
+    for index in [8,-1,i64::MAX]{assert_eq!(g.svc.gallery_image(1,index).await,json!({"base64":null}));}
+    // A failed CDN download is not cached and can be retried.
+    g.api.fail_image.store(true,Ordering::SeqCst);
+    assert_eq!(g.svc.gallery_image(1,1).await,json!({"base64":null}));
+    g.api.fail_image.store(false,Ordering::SeqCst);
+    assert_eq!(g.svc.gallery_image(1,1).await["base64"],STANDARD.encode(b"https://cdn/hero1"));
+    assert_eq!(g.api.downloads.lock().unwrap().len(),downloads+2);
+    // Offline (SteamGridDB down): the cached images still count and load without a download.
+    *g.api.status.lock().unwrap()=Some(503);
+    assert_eq!(g.svc.gallery(1).await,json!({"success":true,"count":3}));
+    assert_eq!(g.svc.gallery_image(1,0).await["base64"],STANDARD.encode(b"https://cdn/hero0"));
+    assert_eq!(g.api.downloads.lock().unwrap().len(),downloads+2);
+}
+
+#[tokio::test]
+async fn sgdb_gallery_uses_the_stored_id_without_asking_romm_and_prunes_unsynced_images() {
+    let g = GridEnv::new().await;
+    g.key();
+    g.e.seed_rom(1,"switch","game",Some(99),None).await;
+    g.e.sql("UPDATE roms SET sgdb_id=8;").await;
+    g.api.respond("/heroes/game/8?nsfw=false&humor=false",json!({"success":true,"data":[{"url":"https://cdn/h"}]}));
+    // A failing grid list does not hide the heroes.
+    assert_eq!(g.svc.gallery(1).await,json!({"success":true,"count":1}));
+    assert!(g.e.romm.get_rom_calls.lock().unwrap().is_empty());
+    // Image read before any listing (e.g. after a restart): the URLs are looked up again.
+    let fresh = GridEnv::new().await;
+    fresh.key();
+    fresh.e.seed_rom(2,"switch","other",Some(98),None).await;
+    fresh.e.sql("UPDATE roms SET sgdb_id=8;").await;
+    fresh.api.respond("/heroes/game/8?nsfw=false&humor=false",json!({"success":true,"data":[{"url":"https://cdn/h"}]}));
+    assert_eq!(fresh.svc.gallery_image(2,0).await["base64"],STANDARD.encode(b"https://cdn/h"));
+    // Startup cleanup keeps a synced ROM's gallery and drops an unsynced one's.
+    g.svc.gallery_image(1,0).await;
+    g.write(7,"gallery0",b"orphan");
+    std::fs::rename(g.path(7,"gallery0"),format!("{}/7_gallery0.img",g.assets.cache_dir())).unwrap();
+    g.svc.prune().await.unwrap();
+    assert!(std::path::Path::new(&format!("{}/1_gallery0.img",g.assets.cache_dir())).exists());
+    assert!(!std::path::Path::new(&format!("{}/7_gallery0.img",g.assets.cache_dir())).exists());
+}

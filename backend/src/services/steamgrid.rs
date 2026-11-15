@@ -10,9 +10,12 @@ pub struct SteamGridServiceConfig {
     pub registry:Arc<dyn SyncLibraryRepo>,pub records:Arc<dyn GameReadRepo>,pub pending:Arc<dyn PendingRomReader>,
     pub settings:SettingsStore,pub persister:Arc<dyn SettingsPersister>,
 }
-pub struct SteamGridService {config:SteamGridServiceConfig,art_lock:Mutex<()>,key_lock:Mutex<()>}
+pub struct SteamGridService {config:SteamGridServiceConfig,art_lock:Mutex<()>,key_lock:Mutex<()>,gallery:std::sync::Mutex<std::collections::HashMap<i64,Vec<String>>>}
+/// The game page gallery shows at most this many SteamGridDB images (up to half heroes, half wide grids).
+pub const GALLERY_MAX:usize=8;
 impl SteamGridService {
-    pub fn new(config:SteamGridServiceConfig)->Self{Self{config,art_lock:Mutex::new(()),key_lock:Mutex::new(())}}
+    pub fn new(config:SteamGridServiceConfig)->Self{Self{config,art_lock:Mutex::new(()),key_lock:Mutex::new(()),gallery:Default::default()}}
+    fn gallery_path(&self,id:i64,index:usize)->String{format!("{}/{}_gallery{}.img",self.config.assets.cache_dir(),id,index)}
     fn key(&self)->String{self.config.settings.get_str("steamgriddb_api_key").unwrap_or_default()}
     fn path(&self,id:i64,kind:&str)->String{format!("{}/{}_{}.png",self.config.assets.cache_dir(),id,kind)}
     async fn cached(&self,path:&str)->Option<String>{self.config.assets.read(path).await.ok().filter(|b|!b.is_empty()).map(|b|STANDARD.encode(b))}
@@ -43,22 +46,67 @@ impl SteamGridService {
     }
     pub async fn resolution(&self,id:i64)->anyhow::Result<Value>{
         let key=self.key();if key.is_empty(){return Ok(json!({"decision":"no_api_key"}));}
+        let (game,rom)=self.resolve_auto(id,&key).await?;
+        if let Some(game)=game{return Ok(json!({"decision":"resolved","sgdb_id":game}));}
+        let search=self.search(rom["name"].as_str().unwrap_or("")).await;
+        Ok(json!({"decision":"needs_pick","candidates":search["games"]}))
+    }
+    /// The automatic part of resolution: RomM's sgdb_id, then the local one, then the IGDB cross-ref; a found id is
+    /// remembered. Returns the RomM ROM too (Null when the server is unreachable) for the name search that follows.
+    async fn resolve_auto(&self,id:i64,key:&str)->anyhow::Result<(Option<i64>,Value)>{
         let state=self.state_id(id).await?;
         let rom=self.config.romm.get_rom(id).await.unwrap_or(Value::Null);
         if let Some(game)=rom["sgdb_id"].as_i64(){
             if Some(game)!=state{self.config.records.remember_sgdb_id(id,game).await?;}
-            return Ok(json!({"decision":"resolved","sgdb_id":game}));
+            return Ok((Some(game),rom));
         }
-        if let Some(game)=state{return Ok(json!({"decision":"resolved","sgdb_id":game}));}
+        if state.is_some(){return Ok((state,rom));}
         if let Some(igdb)=rom["igdb_id"].as_i64().filter(|id|*id!=0){
-            if let Ok(response)=self.config.api.request(&format!("/games/igdb/{igdb}"),&key).await {
+            if let Ok(response)=self.config.api.request(&format!("/games/igdb/{igdb}"),key).await {
                 if response["success"]==true{if let Some(game)=response["data"]["id"].as_i64().filter(|id|*id!=0){
-                    self.config.records.remember_sgdb_id(id,game).await?;return Ok(json!({"decision":"resolved","sgdb_id":game}));
+                    self.config.records.remember_sgdb_id(id,game).await?;return Ok((Some(game),rom));
                 }}
             }
         }
-        let search=self.search(rom["name"].as_str().unwrap_or("")).await;
-        Ok(json!({"decision":"needs_pick","candidates":search["games"]}))
+        Ok((None,rom))
+    }
+    /// The image URLs of the game page gallery, looked up now and remembered for the image reads.
+    async fn gallery_urls(&self,id:i64,key:&str)->Option<Vec<String>>{
+        let game=match self.state_id(id).await{Ok(Some(game))=>game,_=>self.resolve_auto(id,key).await.ok()?.0?};
+        let filter="nsfw=false&humor=false";
+        let heroes=self.config.api.request(&format!("/heroes/game/{game}?{filter}"),key).await.unwrap_or(Value::Null);
+        let grids=self.config.api.request(&format!("/grids/game/{game}?dimensions=460x215,920x430&{filter}"),key).await.unwrap_or(Value::Null);
+        if heroes.is_null()&&grids.is_null(){return None;}
+        let urls=sgdb_artwork::gallery_urls(&heroes,&grids,GALLERY_MAX/2,GALLERY_MAX);
+        self.gallery.lock().unwrap_or_else(|e|e.into_inner()).insert(id,urls.clone());
+        Some(urls)
+    }
+    /// How many SteamGridDB images the game page gallery has. Without a key or a connection, the cached ones count,
+    /// so the gallery still works offline.
+    pub async fn gallery(&self,id:i64)->Value{
+        let key=self.key();
+        if !key.is_empty(){if let Some(urls)=self.gallery_urls(id,&key).await{return json!({"success":true,"count":urls.len()});}}
+        let mut cached=0;
+        while cached<GALLERY_MAX&&self.config.assets.exists(&self.gallery_path(id,cached)).await{cached+=1;}
+        if cached>0{return json!({"success":true,"count":cached});}
+        if key.is_empty(){failure("no_api_key","No SteamGridDB API key configured")}else{failure("server_unreachable","Could not load SteamGridDB images")}
+    }
+    /// One gallery image as base64 with its MIME type; cache first, then the SteamGridDB CDN.
+    pub async fn gallery_image(&self,id:i64,index:i64)->Value{
+        let none=json!({"base64":null});
+        let Some(index)=usize::try_from(index).ok().filter(|i|*i<GALLERY_MAX)else{return none};
+        let dest=self.gallery_path(id,index);
+        if !self.config.assets.exists(&dest).await{
+            let known=self.gallery.lock().unwrap_or_else(|e|e.into_inner()).get(&id).cloned();
+            let urls=match known{Some(urls)=>urls,None=>{let key=self.key();if key.is_empty(){return none;}match self.gallery_urls(id,&key).await{Some(u)=>u,None=>return none}}};
+            let Some(url)=urls.get(index)else{return none};
+            let _guard=self.art_lock.lock().await;
+            if !self.config.assets.exists(&dest).await&&self.config.api.download_image(url,&dest).await.is_err(){return none;}
+        }
+        match self.config.assets.read(&dest).await{
+            Ok(bytes)if !bytes.is_empty()=>json!({"base64":STANDARD.encode(&bytes),"mime":crate::services::game_covers::image_mime(&bytes)}),
+            _=>none,
+        }
     }
     pub async fn search(&self,term:&str)->Value{
         let key=self.key();if key.is_empty(){let mut result=failure("no_api_key","No SteamGridDB API key configured");result["games"]=json!([]);return result;}

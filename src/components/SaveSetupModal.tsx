@@ -11,7 +11,8 @@ const say = (body: string) => toaster.toast({ title: "EmuDecky RomM Manager", bo
 interface Props {
   romId: number;
   onDone: (changed: boolean) => void;
-  close?: () => void;
+  /** Injected by showModal; the modal stays on screen until it is called. */
+  closeModal?: () => void;
 }
 
 /**
@@ -19,7 +20,7 @@ interface Props {
  * save is found by title ID, and the plugin never guesses one. Every row is a button, because the Steam UI can only
  * move between focusable elements.
  */
-const SaveSetupModal: FC<Props> = ({ romId, onDone, close }) => {
+const SaveSetupModal: FC<Props> = ({ romId, onDone, closeModal }) => {
   const [info, setInfo] = useState<SaveTitleInfo | null>(null);
   const [changed, setChanged] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -33,7 +34,7 @@ const SaveSetupModal: FC<Props> = ({ romId, onDone, close }) => {
 
   const finish = () => {
     onDone(changed);
-    close?.();
+    closeModal?.();
   };
 
   const choose = async (title: string, source: "manual" | "learned") => {
