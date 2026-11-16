@@ -4,10 +4,10 @@ import { act, fireEvent, render } from "@testing-library/react";
 import { toaster } from "@decky/api";
 import { showModal } from "@decky/ui";
 
-vi.mock("../api/backend", () => ({ getRomFiles: vi.fn(), downloadRomFiles: vi.fn() }));
+vi.mock("../api/backend", () => ({ getRomFiles: vi.fn(), downloadRomFiles: vi.fn(), removeRomFiles: vi.fn() }));
 
-import { downloadRomFiles, getRomFiles, type RomFileInfo } from "../api/backend";
-import { RomFilesModal, preselected, showRomFilesModal } from "./RomFilesModal";
+import { downloadRomFiles, getRomFiles, removeRomFiles, type RomFileInfo } from "../api/backend";
+import { RomFilesModal, actionable, preselected, showRomFilesModal } from "./RomFilesModal";
 
 const file = (file_id: number, path: string, state: RomFileInfo["state"], over: Partial<RomFileInfo> = {}): RomFileInfo => ({
   file_id,
@@ -20,7 +20,7 @@ const file = (file_id: number, path: string, state: RomFileInfo["state"], over: 
 });
 
 const FILES = [
-  file(1, "MK8.xci", "present"),
+  file(1, "MK8.xci", "present", { base: true }),
   file(2, "dlc/Booster.nsp", "missing"),
   file(3, "update/MK8 v3.nsp", "changed"),
   file(4, "update/MK8 v2.nsp", "missing", { downloading: true }),
@@ -45,6 +45,7 @@ describe("RomFilesModal", () => {
     vi.clearAllMocks();
     vi.mocked(getRomFiles).mockResolvedValue({ success: true, rom_id: 30, files: FILES });
     vi.mocked(downloadRomFiles).mockResolvedValue({ success: true, started: 2, errors: [], message: "2 files queued" });
+    vi.mocked(removeRomFiles).mockResolvedValue({ success: true, removed: 1, errors: [], message: "1 file removed" });
   });
 
   it("preselects what is missing or changed, never what is present or already downloading", () => {
@@ -55,7 +56,7 @@ describe("RomFilesModal", () => {
     const { getByText } = await open();
     expect(getRomFiles).toHaveBeenCalledWith(30);
     expect(getByText("Mario Kart")).toBeTruthy();
-    expect(row(getByText, "MK8.xci").textContent).toBe("☐ MK8.xci · 1.0 MB · on this device");
+    expect(row(getByText, "MK8.xci").textContent).toBe("☐ MK8.xci · 1.0 MB · on this device · base game");
     expect(row(getByText, "dlc/Booster.nsp").textContent).toContain("☑");
     expect(row(getByText, "dlc/Booster.nsp").textContent).toContain("not on this device");
     expect(row(getByText, "update/MK8 v3.nsp").textContent).toContain("changed on RomM");
@@ -64,25 +65,77 @@ describe("RomFilesModal", () => {
     expect(getByText("Download selected (2)")).toBeTruthy();
   });
 
-  it("toggles files and downloads exactly the chosen ones, then closes", async () => {
+  it("downloads only the ticked files that are missing or changed, then closes", async () => {
     const { getByText, closeModal } = await open();
     fireEvent.click(row(getByText, "dlc/Booster.nsp"));
     fireEvent.click(row(getByText, "MK8.xci"));
-    expect(row(getByText, "dlc/Booster.nsp").textContent).toContain("☐");
+    expect(row(getByText, "dlc/Booster.nsp").textContent).toContain("\u2610");
+    // MK8.xci is ticked but already here: nothing to download for it (and as the base game it is never removed).
     await act(async () => {
-      fireEvent.click(getByText("Download selected (2)"));
+      fireEvent.click(getByText("Download selected (1)"));
     });
-    expect(vi.mocked(downloadRomFiles).mock.calls[0]?.[0]).toBe(30);
-    expect([...(vi.mocked(downloadRomFiles).mock.calls[0]?.[1] ?? [])].sort()).toEqual([1, 3]);
+    expect(vi.mocked(downloadRomFiles).mock.calls[0]).toEqual([30, [3]]);
     expect(toaster.toast).toHaveBeenCalledWith(expect.objectContaining({ body: "2 files queued" }));
     expect(closeModal).toHaveBeenCalledTimes(1);
   });
 
-  it("nothing chosen: the download button is disabled", async () => {
+  it("what a ticked file counts for: download when missing/changed, removal when on this device and not the base game", () => {
+    const files = [
+      file(1, "base.xci", "present", { base: true }),
+      file(2, "dlc/a.nsp", "present"),
+      file(3, "update/b.nsp", "changed"),
+      file(4, "update/c.nsp", "missing"),
+      file(5, "update/d.nsp", "present", { downloading: true }),
+    ];
+    expect(actionable(files, new Set([1, 2, 3, 4, 5]))).toEqual({ download: [3, 4], remove: [2, 3] });
+    expect(actionable(files, new Set())).toEqual({ download: [], remove: [] });
+  });
+
+  it("removes the ticked files after a confirmation, then reloads the list and stays open", async () => {
+    const { getByText, closeModal } = await open();
+    // Untick the preselected downloads, tick the changed update for removal only.
+    fireEvent.click(row(getByText, "dlc/Booster.nsp"));
+    expect(getByText("Remove selected (1)")).toBeTruthy();
+    fireEvent.click(getByText("Remove selected (1)"));
+    const calls = vi.mocked(showModal).mock.calls;
+    const confirm = calls[calls.length - 1]?.[0] as ReactElement<{ strTitle: string; onOK: () => void }>;
+    expect(confirm.props.strTitle).toBe("Remove 1 file from this device?");
+    expect(removeRomFiles).not.toHaveBeenCalled();
+    await act(async () => {
+      confirm.props.onOK();
+    });
+    await flush();
+    expect(vi.mocked(removeRomFiles).mock.calls[0]).toEqual([30, [3]]);
+    expect(toaster.toast).toHaveBeenCalledWith(expect.objectContaining({ body: "1 file removed" }));
+    expect(getRomFiles).toHaveBeenCalledTimes(2);
+    expect(closeModal).not.toHaveBeenCalled();
+  });
+
+  it("a refused or failed removal says why", async () => {
+    vi.mocked(removeRomFiles).mockResolvedValueOnce({ success: false, reason: "downloading", message: "This file is downloading; cancel the download first" });
+    const { getByText } = await open();
+    fireEvent.click(getByText("Remove selected (1)"));
+    let calls = vi.mocked(showModal).mock.calls;
+    await act(async () => {
+      (calls[calls.length - 1]?.[0] as ReactElement<{ onOK: () => void }>).props.onOK();
+    });
+    expect(toaster.toast).toHaveBeenCalledWith(expect.objectContaining({ body: "This file is downloading; cancel the download first" }));
+    expect(getRomFiles).toHaveBeenCalledTimes(1);
+    vi.mocked(removeRomFiles).mockRejectedValueOnce(new Error("socket"));
+    fireEvent.click(getByText("Remove selected (1)"));
+    calls = vi.mocked(showModal).mock.calls;
+    await act(async () => {
+      (calls[calls.length - 1]?.[0] as ReactElement<{ onOK: () => void }>).props.onOK();
+    });
+    expect(toaster.toast).toHaveBeenCalledWith(expect.objectContaining({ body: "Could not remove the files" }));
+  });
+
+  it("nothing chosen: both buttons are disabled", async () => {
     const { getByText } = await open();
     fireEvent.click(row(getByText, "dlc/Booster.nsp"));
     fireEvent.click(row(getByText, "update/MK8 v3.nsp"));
     expect((getByText("Download selected (0)") as HTMLButtonElement).disabled).toBe(true);
+    expect((getByText("Remove selected (0)") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("a refused or failed download says why and keeps the modal open", async () => {

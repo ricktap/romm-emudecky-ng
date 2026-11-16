@@ -42,7 +42,7 @@ pub const PORTED_CALLABLES: &[&str] = &[
     "get_firmware_status", "save_firmware_version", "replace_firmware_key", "download_required_firmware", "download_all_firmware",
     "get_version_list", "switch_version", "evaluate_launch", "check_local_drift", "check_core_change",
     "remove_rom", "uninstall_all_roms", "apply_steam_input_setting", "check_for_update", "set_eden_external_content",
-    "get_rom_files", "download_rom_files",
+    "get_rom_files", "download_rom_files", "remove_rom_files",
     "record_session_start", "finalize_game_session", "get_all_playtime", "get_playtime_scope_notice", "reconcile_playtime",
 
     "get_cached_game_detail", "get_rom_metadata", "get_all_metadata_cache", "fetch_cover_base64", "refresh_cover_artwork",
@@ -599,6 +599,12 @@ impl Backend {
             "accept_emudeck_storage_path" => bind(name, 0, 0, loc, |l, _| async move { Ok(l.accept().await) }),
             "get_download_queue" => bind(name, 0, 0, d, |d, _| async move { Ok(d.get_download_queue()) }),
             "get_rom_files" => bind(name, 1, 1, d, |d, a| async move { Ok(d.get_rom_files(rom_id_arg(&a[0])?).await) }),
+            "remove_rom_files" => bind(name, 2, 2, d, |d, a| async move {
+                let rom_id = rom_id_arg(&a[0])?;
+                let ids = a[1].as_array().ok_or_else(|| "file_ids must be a list".to_string())?;
+                let ids: Vec<i64> = ids.iter().map(|v| v.as_i64().filter(|id| *id > 0).ok_or_else(|| "file_ids must be positive integers".to_string())).collect::<Result<_, _>>()?;
+                Ok(d.remove_rom_files(rom_id, &ids).await)
+            }),
             "download_rom_files" => bind(name, 2, 2, d, |d, a| async move {
                 let rom_id = rom_id_arg(&a[0])?;
                 let ids = a[1].as_array().ok_or_else(|| "file_ids must be a list".to_string())?;
@@ -877,7 +883,7 @@ mod tests {
     #[test]
     fn surface_matches_python_backend_size_and_includes_ported() {
         let names = callable_names();
-        assert_eq!(names.len(), 124);
+        assert_eq!(names.len(), 125);
         let mut dedup = names.clone();
         dedup.dedup();
         assert_eq!(dedup.len(), names.len());

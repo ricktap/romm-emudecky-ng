@@ -80,6 +80,7 @@
   "remove_all_shortcuts",
   "remove_platform_shortcuts",
   "remove_rom",
+  "remove_rom_files",
   "replace_firmware_key",
   "report_removal_results",
   "report_unit_results",
