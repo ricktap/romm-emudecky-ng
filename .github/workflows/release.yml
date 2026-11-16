@@ -5,8 +5,9 @@ name: Release
 # previous tag. The version in package.json / plugin.json is stamped from the
 # tag at build time, so tagging is the only release step.
 #
-# A manual run (workflow_dispatch) on any branch only builds and smoke-tests
-# the zip, as a dry run; it never publishes.
+# A manual run (workflow_dispatch) on a branch only builds and smoke-tests
+# the zip, as a dry run; it never publishes. A manual run on a tag publishes
+# like a tag push (tag.yml starts it that way).
 on:
   push:
     tags: ["v*"]

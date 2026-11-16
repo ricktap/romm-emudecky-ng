@@ -221,10 +221,13 @@ archive identity columns; legacy multipart partials are flagged `needs_recovery`
 
 ## Working agreements with Patrick
 
-- **No linters, formatters, type-check gates, SonarCloud, release-please.** CI is two workflows: `test.yml` (tests on every
-  push; Rust job enforces ≥80% coverage) and `release.yml` (on a `v*` tag; also `workflow_dispatch` dry run).
+- **No linters, formatters, type-check gates, SonarCloud, release-please.** CI is `test.yml` (tests on every
+  push; Rust job enforces ≥80% coverage), `release.yml` (on a `v*` tag; also `workflow_dispatch` dry run on a branch) and
+  `tag.yml` (manual: tags main's head and starts `release.yml` on the tag).
 - **Semver; releases are tags on `main`:** bump `version` in `package.json` + `plugin.json` in the PR, merge, then
   `git tag vX.Y.Z && git push origin vX.Y.Z`; verify the release asset and its sha256 digest (the self-updater needs it).
+  Cloud sessions can't push tags (their git proxy allows only their own branch): check that `test.yml` is green on main's
+  head, then run the `tag.yml` workflow on `main` with input `version=X.Y.Z` (GitHub MCP `actions_run_trigger`).
   Patrick authorized me to release **minor and patch** versions of the `main` line without asking; **ask first** for
   major/milestone releases (0.40.0) and never move/delete existing tags or releases without being told to.
 - Patrick tests on a Steam Deck; he runs read-only diagnostics over SSH and pastes/saves the output. Bazzite boxes are untested.
