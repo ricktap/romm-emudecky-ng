@@ -27,7 +27,8 @@ a thin Decky shim (`main.py`), React/TypeScript frontend (`src/`). The backend i
 
 **CI** (`.github/workflows/`): `test.yml` runs both test suites on every push to any branch. `release.yml` runs on a
 `v*` tag: stamps the version from the tag, builds and smoke-tests `romm-emudecky-ng.zip`, publishes a GitHub Release with
-the commit subjects since the previous tag as notes. To release: `git tag v0.27.0 && git push origin v0.27.0`. There is
+the commit subjects since the previous tag as notes. To release: `git tag v0.27.0 && git push origin v0.27.0`, or (where
+tags can't be pushed, e.g. cloud sessions) run `tag.yml` on `main` with `version=0.27.0`. There is
 no linting/formatting in CI — don't add any.
 
 ## Environment facts

@@ -1,0 +1,41 @@
+name: Tag release
+
+# Tags main's head as v<version> and starts release.yml on that tag, for
+# sessions that can't push tags themselves (cloud agent sessions may push only
+# their own branch). Run it from main:
+#   gh workflow run tag.yml --repo ricktap/romm-emudecky-ng --ref main -f version=0.64.0
+#
+# A tag pushed with GITHUB_TOKEN doesn't trigger push workflows, so release.yml
+# is started by workflow_dispatch on the tag; on a tag ref it publishes.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release from main's head, without the v (e.g. 0.64.0)"
+        required: true
+
+permissions:
+  contents: write # push the tag
+  actions: write # start release.yml
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Tag and start the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "run this from main, not $GITHUB_REF"; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] \
+            || { echo "version '$VERSION' is not semver like 0.64.0"; exit 1; }
+          TAG="v$VERSION"
+          # Never moves an existing tag: the push is refused if it exists.
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"
+          gh workflow run release.yml --ref "$TAG"
+          echo "Tagged $GITHUB_SHA as $TAG and started release.yml on it"
