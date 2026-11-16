@@ -35,7 +35,8 @@ async fn selections_rebake_shared_command_and_survive_backend_restart() {
     std::fs::create_dir_all(folder.join("dlc")).unwrap();
     std::fs::write(folder.join("base.xci"), [0; 50]).unwrap();
     let selected = "update $thing `id` (EU).nsp";
-    std::fs::write(folder.join("dlc").join(selected), [0; 5]).unwrap();
+    std::fs::write(folder.join(selected), [0; 5]).unwrap();
+    std::fs::write(folder.join("dlc").join("dlc pack.nsp"), [0; 500]).unwrap();
     let mut b = Backend::spawn(&dirs).await;
     seed(&dirs, folder.to_str().unwrap());
     let menu = b.call("get_platform_core_info", json!([1])).await;
@@ -47,7 +48,7 @@ async fn selections_rebake_shared_command_and_survive_backend_restart() {
     assert_eq!(pick["default"], json!({"kind":"file","label":"base","filename":"base.xci"}));
     assert_eq!(pick["discs"][1]["filename"], selected);
     let set = b.call("select_disc", json!([1,selected])).await;
-    let expected = format!("vblank_mode=0 %command% \"{}\" \"{}/dlc/update \\$thing \\`id\\` (EU).nsp\"", ryu.display(), folder.display());
+    let expected = format!("vblank_mode=0 %command% \"{}\" \"{}/update \\$thing \\`id\\` (EU).nsp\"", ryu.display(), folder.display());
     assert_eq!(set, json!({"success":true,"selected":selected,"launch_options":expected}));
     assert_eq!(b.call("get_rom_relaunch_options", json!(["1"])).await, json!({"app_id":99,"launch_options":expected}));
     assert_eq!(b.call("get_installed_relaunch_options", json!([])).await, json!([{"app_id":99,"launch_options":expected}]));
@@ -69,7 +70,7 @@ async fn selections_rebake_shared_command_and_survive_backend_restart() {
     assert_eq!(b.call("get_installed_relaunch_options", json!([])).await, json!([{"app_id":99,"launch_options":expected}]));
     let clear = b.call("clear_game_core", json!([1])).await;
     assert!(clear["launch_options"].as_str().unwrap().contains(&format!("\"{}\" -f -g", eden.display())));
-    assert!(clear["launch_options"].as_str().unwrap().contains("/dlc/update \\$thing"));
+    assert!(clear["launch_options"].as_str().unwrap().contains("/update \\$thing"));
     let reset = b.call("select_disc", json!([1,null])).await;
     assert_eq!(reset["selected"], Value::Null);
     assert!(reset["launch_options"].as_str().unwrap().ends_with("/base.xci\""));

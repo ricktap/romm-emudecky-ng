@@ -1,7 +1,7 @@
 import { FC, useEffect, useState } from "react";
 import { toaster } from "@decky/api";
-import { DialogButton, Focusable, ModalRoot, showModal } from "@decky/ui";
-import { downloadRomFiles, getRomFiles, type RomFileInfo } from "../api/backend";
+import { ConfirmModal, DialogButton, Focusable, ModalRoot, showModal } from "@decky/ui";
+import { downloadRomFiles, getRomFiles, removeRomFiles, type RomFileInfo } from "../api/backend";
 import { formatBytes } from "../utils/formatters";
 import { detach } from "../utils/detach";
 
@@ -18,6 +18,15 @@ export function preselected(files: RomFileInfo[]): Set<number> {
   return new Set(files.filter((f) => f.state !== "present" && !f.downloading).map((f) => f.file_id));
 }
 
+/** Of the ticked files, those a download fetches (missing or changed) and those a removal deletes (on this device, never the base game). */
+export function actionable(files: RomFileInfo[], chosen: Set<number>): { download: number[]; remove: number[] } {
+  const ticked = files.filter((f) => chosen.has(f.file_id) && !f.downloading);
+  return {
+    download: ticked.filter((f) => f.state !== "present").map((f) => f.file_id),
+    remove: ticked.filter((f) => f.state !== "missing" && !f.base).map((f) => f.file_id),
+  };
+}
+
 interface Props {
   romId: number;
   romName: string;
@@ -27,8 +36,9 @@ interface Props {
 
 /**
  * The files of an installed multi-file game as RomM lists them (base game, updates, DLC), to download single ones
- * without the whole game: an update or DLC added on RomM after the install, or a file that changed there. Every row
- * is a button, because the Steam UI can only move between focusable elements.
+ * without the whole game (an update or DLC added on RomM after the install, or a file that changed there) or to
+ * remove ones no longer wanted from this device. Every row is a button, because the Steam UI can only move between
+ * focusable elements.
  */
 export const RomFilesModal: FC<Props> = ({ romId, romName, closeModal }) => {
   const [files, setFiles] = useState<RomFileInfo[] | null>(null);
@@ -59,10 +69,12 @@ export const RomFilesModal: FC<Props> = ({ romId, romName, closeModal }) => {
       return next;
     });
 
+  const { download: toDownload, remove: toRemove } = actionable(files ?? [], chosen);
+
   const download = async () => {
     setBusy(true);
     try {
-      const result = await downloadRomFiles(romId, [...chosen]);
+      const result = await downloadRomFiles(romId, toDownload);
       say(result.message || (result.success ? "Download started" : "Could not start the download"));
       if (result.success) {
         closeModal?.();
@@ -72,6 +84,31 @@ export const RomFilesModal: FC<Props> = ({ romId, romName, closeModal }) => {
       say("Could not start the download");
     }
     setBusy(false);
+  };
+
+  const remove = async (ids: number[]) => {
+    setBusy(true);
+    try {
+      const result = await removeRomFiles(romId, ids);
+      say(result.message || (result.success ? "Removed" : "Could not remove the files"));
+      if (result.success) load();
+    } catch {
+      say("Could not remove the files");
+    }
+    setBusy(false);
+  };
+
+  const confirmRemove = () => {
+    const ids = toRemove;
+    showModal(
+      <ConfirmModal
+        strTitle={ids.length === 1 ? "Remove 1 file from this device?" : `Remove ${ids.length} files from this device?`}
+        strDescription="RomM keeps them; you can download them again here."
+        strOKButtonText="Remove"
+        strCancelButtonText="Cancel"
+        onOK={() => detach(remove(ids))}
+      />,
+    );
   };
 
   return (
@@ -86,7 +123,7 @@ export const RomFilesModal: FC<Props> = ({ romId, romName, closeModal }) => {
           <Focusable flow-children="down" style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
             {files.map((f) => {
               const on = chosen.has(f.file_id);
-              const status = f.downloading ? "downloading" : STATE_LABEL[f.state];
+              const status = (f.downloading ? "downloading" : STATE_LABEL[f.state]) + (f.base ? " \u00b7 base game" : "");
               return (
                 <DialogButton
                   key={f.file_id}
@@ -101,8 +138,11 @@ export const RomFilesModal: FC<Props> = ({ romId, romName, closeModal }) => {
           </Focusable>
         )}
         <Focusable flow-children="right" style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-          <DialogButton disabled={busy || chosen.size === 0} onClick={() => detach(download())}>
-            {busy ? "Starting..." : `Download selected (${chosen.size})`}
+          <DialogButton disabled={busy || toDownload.length === 0} onClick={() => detach(download())}>
+            {`Download selected (${toDownload.length})`}
+          </DialogButton>
+          <DialogButton disabled={busy || toRemove.length === 0} onClick={confirmRemove}>
+            {`Remove selected (${toRemove.length})`}
           </DialogButton>
           <DialogButton onClick={() => closeModal?.()}>Close</DialogButton>
         </Focusable>

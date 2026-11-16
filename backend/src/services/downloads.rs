@@ -1318,11 +1318,13 @@ impl DownloadService {
                 .map(|(key, _)| key.id)
                 .collect()
         };
+        let base_id = base_game_file_of(&rom, &system).map(|b| b.file_id);
         let list: Vec<Value> = files
             .iter()
             .map(|f| {
                 json!({
                     "file_id": f.file_id,
+                    "base": Some(f.file_id) == base_id,
                     "path": f.rel_path,
                     "category": f.category,
                     "size": f.size,
@@ -1332,6 +1334,85 @@ impl DownloadService {
             })
             .collect();
         json!({"success": true, "rom_id": rom_id, "files": list})
+    }
+
+    /// Delete chosen files of installed folder ROM `rom_id` from this device (an update or DLC no longer wanted).
+    /// The base game file and the launch file stay (uninstalling removes the game), a file with an unfinished
+    /// download is refused, and a subfolder left empty goes too. Succeeds when at least one file was removed;
+    /// `errors` lists the others with reason and message.
+    pub async fn remove_rom_files(&self, rom_id: i64, file_ids: &[i64]) -> Value {
+        if file_ids.is_empty() {
+            return failure("nothing_selected", "Choose at least one file");
+        }
+        let _mutation = self.mutation_lock.lock().await;
+        let install = self.library.install(rom_id).await.ok().flatten();
+        let Some((dir, system, launch_file)) =
+            install.and_then(|i| i.rom_dir.filter(|d| !d.is_empty()).map(|d| (d, i.system, i.file_path)))
+        else {
+            return failure("not_installed", "Only a game installed as a folder has separate files");
+        };
+        let rom = match self.romm.get_rom(rom_id).await {
+            Ok(rom) => rom,
+            Err(e) => return e.to_failure(),
+        };
+        let Some(files) = remote_files(&rom) else {
+            return failure("unknown_layout", "RomM's file list for this game cannot be used");
+        };
+        let files = content_files(files, &system);
+        let base_id = base_game_file_of(&rom, &system).map(|b| b.file_id);
+        let mut removed = 0;
+        let mut errors = Vec::new();
+        for &file_id in file_ids {
+            let refuse = |reason: &str, message: &str| json!({"file_id": file_id, "reason": reason, "message": message});
+            let Some(file) = files.iter().find(|f| f.file_id == file_id) else {
+                errors.push(refuse("file_not_found", "RomM does not list this file for the game"));
+                continue;
+            };
+            let Ok(path) = safe_join_lexical(&dir, &file.parts()) else {
+                errors.push(refuse("unsafe_path", "The server sent an unsafe file path"));
+                continue;
+            };
+            if Some(file_id) == base_id || path == launch_file {
+                errors.push(refuse("base_game", "The base game stays; uninstall the game to remove it"));
+                continue;
+            }
+            let unfinished = self
+                .st()
+                .queue
+                .get(&JobKey::rom_file(file_id))
+                .is_some_and(|e| !matches!(e.status.as_str(), "completed" | "failed" | "cancelled"));
+            if unfinished {
+                errors.push(refuse("downloading", "This file is downloading; cancel the download first"));
+                continue;
+            }
+            if self.files.regular_file_size(&path).await.is_none() {
+                errors.push(refuse("not_on_device", "This file is not on this device"));
+                continue;
+            }
+            if let Err(e) = self.files.remove_file(&path).await {
+                tracing::warn!("Cannot remove {path}: {e}");
+                errors.push(refuse("remove_failed", &format!("Could not remove {}", file.file_name)));
+                continue;
+            }
+            removed += 1;
+            tracing::info!("Removed game file {path}");
+            // Empty subfolders up to (not including) the game folder go too.
+            let mut parent = dirname(&path).to_string();
+            while parent.len() > dir.len() && parent.starts_with(&format!("{dir}/")) {
+                if !self.files.scan_files_with_sizes(&parent).await.is_empty() || self.files.remove_tree(&parent).await.is_err() {
+                    break;
+                }
+                parent = dirname(&parent).to_string();
+            }
+        }
+        if removed == 0 {
+            let mut first = errors[0].clone();
+            first["success"] = json!(false);
+            first["errors"] = json!(errors);
+            return first;
+        }
+        let message = if removed == 1 { "1 file removed".to_string() } else { format!("{removed} files removed") };
+        json!({"success": true, "removed": removed, "errors": errors, "message": message})
     }
 
     /// Queue the chosen files of installed ROM `rom_id`, one download each. Succeeds when at least one was queued;

@@ -232,12 +232,12 @@ async fn multi_file_switch_folder_extracts_and_bakes_largest() {
     assert_eq!(complete["app_id"], 55);
     assert!(complete["launch_options"].as_str().unwrap().ends_with(&format!("-f -g \"{dir}/base.nsp\"")));
 
-    // A persisted launch-file pick survives a reinstall.
+    // An update in a subfolder is never what launches: a pin on it is stale and the base game launches.
     env.sql("UPDATE roms SET selected_disc = 'u pd.nsp' WHERE rom_id = 9").await;
     let bake = env.launch.resolve_bake_path(&install, Some("u pd.nsp")).await;
-    assert_eq!(bake, format!("{dir}/update/u pd.nsp"));
+    assert_eq!(bake, format!("{dir}/base.nsp"));
     let item = env.launch.relaunch_item_for_rom(9).await.unwrap();
-    assert!(item["launch_options"].as_str().unwrap().ends_with("u pd.nsp\""));
+    assert!(item["launch_options"].as_str().unwrap().ends_with("base.nsp\""));
 }
 
 #[tokio::test]
@@ -1712,6 +1712,49 @@ mod rom_files {
         let calls = env.romm.calls();
         assert_eq!((calls[1].rom_id, calls[1].resume, calls[1].offset), (BASE, true, 1200));
         assert_eq!(std::fs::read(format!("{}/MK8.xci", game_dir(&env))).unwrap(), payload(3000));
+    }
+
+    #[tokio::test]
+    async fn chosen_files_are_removed_again_but_the_base_game_stays() {
+        let env = installed(30).await;
+        env.svc.start_rom_file_downloads(MK, &[UPDATE, DLC]).await;
+        wait_file(&env, UPDATE, "completed").await;
+        wait_file(&env, DLC, "completed").await;
+        let dir = game_dir(&env);
+        // Something else in update/ keeps that folder; dlc/ goes once empty.
+        std::fs::write(format!("{dir}/update/notes.txt"), b"x").unwrap();
+        let list = env.svc.get_rom_files(MK).await;
+        assert_eq!(list["files"].as_array().unwrap().iter().filter(|f| f["base"] == true).map(|f| f["file_id"].clone()).collect::<Vec<_>>(), [json!(BASE)]);
+        let removed = env.svc.remove_rom_files(MK, &[UPDATE, DLC, BASE]).await;
+        assert_eq!((removed["success"].clone(), removed["removed"].clone(), removed["message"].clone()), (json!(true), json!(2), json!("2 files removed")));
+        assert_eq!(removed["errors"], json!([{"file_id": BASE, "reason": "base_game", "message": "The base game stays; uninstall the game to remove it"}]));
+        assert!(!std::path::Path::new(&format!("{dir}/update/MK8 v3.nsp")).exists());
+        assert!(std::path::Path::new(&format!("{dir}/update")).is_dir(), "a folder with other files stays");
+        assert!(!std::path::Path::new(&format!("{dir}/dlc")).exists(), "an emptied subfolder goes");
+        assert_eq!(std::fs::read(format!("{dir}/MK8.xci")).unwrap(), payload(50));
+        assert!(env.library.install(MK).await.unwrap().is_some(), "the game stays installed");
+        let states = states(&env.svc.get_rom_files(MK).await);
+        assert_eq!(states.iter().map(|s| s.3.as_str()).collect::<Vec<_>>(), ["present", "missing", "missing"]);
+    }
+
+    #[tokio::test]
+    async fn removal_refuses_what_is_not_there_downloading_or_unknown() {
+        let env = installed(3000).await;
+        assert_eq!(env.svc.remove_rom_files(MK, &[]).await["reason"], "nothing_selected");
+        assert_eq!(env.svc.remove_rom_files(999, &[UPDATE]).await["reason"], "not_installed");
+        let missing = env.svc.remove_rom_files(MK, &[UPDATE, 999, NFO]).await;
+        assert_eq!(missing["success"], false);
+        assert_eq!(
+            missing["errors"].as_array().unwrap().iter().map(|e| e["reason"].as_str().unwrap()).collect::<Vec<_>>(),
+            ["not_on_device", "file_not_found", "file_not_found"]
+        );
+        // A file whose download is still running is not touched.
+        *env.romm.stall_at.lock().unwrap() = Some(1000);
+        env.svc.start_rom_file_downloads(MK, &[UPDATE]).await;
+        env.romm.stalled.notified().await;
+        assert_eq!(env.svc.remove_rom_files(MK, &[UPDATE]).await["reason"], "downloading");
+        env.svc.cancel_job(crate::domain::download_job::JobKey::rom_file(UPDATE));
+        wait_file(&env, UPDATE, "cancelled").await;
     }
 
     #[tokio::test]

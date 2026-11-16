@@ -27,6 +27,7 @@ pub mod game_detail;
 pub mod game_covers;
 pub mod steamgrid;
 pub mod external_content;
+pub mod emulator_starter;
 
 #[cfg(test)]
 mod game_artwork_tests;
