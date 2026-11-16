@@ -232,12 +232,12 @@ async fn multi_file_switch_folder_extracts_and_bakes_largest() {
     assert_eq!(complete["app_id"], 55);
     assert!(complete["launch_options"].as_str().unwrap().ends_with(&format!("-f -g \"{dir}/base.nsp\"")));
 
-    // A persisted launch-file pick survives a reinstall.
+    // An update in a subfolder is never what launches: a pin on it is stale and the base game launches.
     env.sql("UPDATE roms SET selected_disc = 'u pd.nsp' WHERE rom_id = 9").await;
     let bake = env.launch.resolve_bake_path(&install, Some("u pd.nsp")).await;
-    assert_eq!(bake, format!("{dir}/update/u pd.nsp"));
+    assert_eq!(bake, format!("{dir}/base.nsp"));
     let item = env.launch.relaunch_item_for_rom(9).await.unwrap();
-    assert!(item["launch_options"].as_str().unwrap().ends_with("u pd.nsp\""));
+    assert!(item["launch_options"].as_str().unwrap().ends_with("base.nsp\""));
 }
 
 #[tokio::test]

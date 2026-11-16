@@ -15,7 +15,9 @@ async fn folder(env: &DownloadEnv, id: i64, app: Option<i64>) -> String {
     let dir = env.roms().join(format!("switch/G{id}"));
     std::fs::create_dir_all(dir.join("dlc")).unwrap();
     std::fs::write(dir.join("base.XCI"), [0; 50]).unwrap();
-    std::fs::write(dir.join("dlc/update.nsp"), [0; 5]).unwrap();
+    std::fs::write(dir.join("update.nsp"), [0; 5]).unwrap();
+    // Updates and DLC in subfolders are never launch choices, however big.
+    std::fs::write(dir.join("dlc/huge dlc.nsp"), [0; 500]).unwrap();
     std::fs::write(dir.join("ignored.txt"), [0; 100]).unwrap();
     let path = dir.to_string_lossy().into_owned();
     env.library.save_install(&RomInstall { rom_id: id, file_path: format!("{path}/base.XCI"),
@@ -76,7 +78,7 @@ async fn core_changes_preserve_launch_file_install_binding_and_metadata() {
     let before = env.library.launch_snapshot(1).await.unwrap().unwrap();
     let changed = s.set_game_core(1, "Ryujinx").await.unwrap();
     assert_eq!(changed, json!({"success": true, "app_id": 99,
-        "launch_options": format!("vblank_mode=0 %command% \"{RYU}\" \"{dir}/dlc/update.nsp\"")}));
+        "launch_options": format!("vblank_mode=0 %command% \"{RYU}\" \"{dir}/update.nsp\"")}));
     let after = env.library.launch_snapshot(1).await.unwrap().unwrap();
     assert_eq!(after.install, before.install);
     assert_eq!(after.rom.selected_disc.as_deref(), Some("update.nsp"));
@@ -88,7 +90,7 @@ async fn core_changes_preserve_launch_file_install_binding_and_metadata() {
     assert_eq!(s.clear_game_core(1).await.unwrap(), changed);
     env.settings.set("platform_cores", json!({}));
     let cleared = s.clear_game_core(1).await.unwrap();
-    assert_eq!(cleared["launch_options"], format!("vblank_mode=0 %command% \"{EDEN}\" -f -g \"{dir}/dlc/update.nsp\""));
+    assert_eq!(cleared["launch_options"], format!("vblank_mode=0 %command% \"{EDEN}\" -f -g \"{dir}/update.nsp\""));
     // An emulator removed before a re-bake produces the empty placeholder.
     env.locator.missing.lock().unwrap().insert(EDEN.into());
     assert_eq!(s.clear_game_core(1).await.unwrap()["launch_options"], "");
@@ -129,7 +131,7 @@ async fn launch_file_picker_ranks_pins_clears_and_down_validates_without_mutatio
         "discs": [{"filename": "base.XCI", "label": "base", "index": 1}, {"filename": "update.nsp", "label": "update", "index": 2}],
         "selected": null, "default": {"kind": "file", "label": "base", "filename": "base.XCI"}}));
     assert_eq!(s.select_disc(1, Some("update.nsp")).await.unwrap(), json!({"success": true, "selected": "update.nsp",
-        "launch_options": format!("vblank_mode=0 %command% \"{EDEN}\" -f -g \"{dir}/dlc/update.nsp\"")}));
+        "launch_options": format!("vblank_mode=0 %command% \"{EDEN}\" -f -g \"{dir}/update.nsp\"")}));
     assert_eq!(s.get_disc_selection(1).await.unwrap()["selected"], "update.nsp");
     let before = env.library.launch_snapshot(1).await.unwrap();
     for name in ["gone.nsp", "../base.XCI", "", "BASE.XCI", "/arbitrary/game.nsp"] {
@@ -156,7 +158,7 @@ async fn non_folder_and_fewer_than_two_candidates_have_no_picker_or_writes() {
         assert_eq!(s.select_disc(id, None).await.unwrap()["reason"], "not_installed");
     }
     let dir = folder(&env, 2, Some(2)).await;
-    std::fs::remove_file(format!("{dir}/dlc/update.nsp")).unwrap();
+    std::fs::remove_file(format!("{dir}/update.nsp")).unwrap();
     for zero in [false, true] {
         if zero { std::fs::remove_file(format!("{dir}/base.XCI")).unwrap(); }
         assert_eq!(s.get_disc_selection(2).await.unwrap(), json!({"multi_disc": false}));
@@ -184,7 +186,7 @@ async fn relaunch_batch_matches_single_and_excludes_unbound_uninstalled() {
     s.select_disc(1, Some("update.nsp")).await.unwrap();
     let item = s.get_rom_relaunch_options(1).await.unwrap();
     assert_eq!(s.get_installed_relaunch_options().await.unwrap(), json!([item]));
-    assert!(item["launch_options"].as_str().unwrap().ends_with(&format!("{dir}/dlc/update.nsp\"")));
+    assert!(item["launch_options"].as_str().unwrap().ends_with(&format!("{dir}/update.nsp\"")));
     env.locator.installed.lock().unwrap().clear();
     assert_eq!(s.get_installed_relaunch_options().await.unwrap(), json!([{"app_id": 99, "launch_options": ""}]));
 }
