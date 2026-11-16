@@ -201,7 +201,7 @@ archive identity columns; legacy multipart partials are flagged `needs_recovery`
 - Rewrite tests are ported to Rust (no Python contract tests after the swap). Rust target ≈80% line coverage.
 - Shortcut exe stays `bin/rom-launcher-ng`; standalone emulators are launched directly (not via EmuDeck's `tools/launchers`).
 - **Switch updates/DLC (Eden):** game folders keep update/DLC files in subfolders. The plugin keeps `<roms>/switch` in
-  Eden's External Content folders (`[Paths] external_content_dirs` in `~/.config/eden/qt-config.ini`, Eden ≥ 0.2.0),
+  Eden's External Content folders (`[UI]` → `Paths\external_content_dirs\N\path` + `…\size` in `~/.config/eden/qt-config.ini`, Eden ≥ 0.2.0; v0.64.0 wrongly wrote a `[Paths]` section, cleaned up since),
   which Eden scans recursively at every boot, also for `eden -g` launches — no NAND install. Written at startup and after
   each Switch download, only while Eden is not running (it saves its config on exit), atomically, with a one-time
   `qt-config.ini.romm-backup`. **Ryujinx is deferred:** its `autoload_dirs` are only scanned when its game list loads,
