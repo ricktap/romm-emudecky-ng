@@ -1,6 +1,7 @@
 import { definePlugin, addEventListener, removeEventListener, toaster, routerHook } from "@decky/api";
 import { FaGamepad } from "react-icons/fa";
 import { downloadKey } from "./utils/downloadKey";
+import { ensureEmulatorStarter } from "./utils/emulatorStarter";
 import { LibraryRoute } from "./components/LibraryRoute";
 import { LIBRARY_ROUTE } from "./utils/libraryRoute";
 import { QAMPanel } from "./components/QAMPanel";
@@ -165,6 +166,9 @@ export default definePlugin(() => {
     })(),
   );
 
+  // The "Eden" entry in the Steam library (opens Eden itself), made once when Eden is installed.
+  detach(ensureEmulatorStarter());
+
   // Register device and initialize session manager for save sync (if enabled)
   detach(
     (async () => {
@@ -188,6 +192,7 @@ export default definePlugin(() => {
     cancelled?: boolean;
   }) => {
     logInfo(`sync_complete received: ${data.total_games} games, cancelled=${data.cancelled ?? false}`);
+    detach(ensureEmulatorStarter());
 
     // Report the TRUE delta, not the total processed set. The library applies
     // whole platforms, so total_games is not a real delta — the exact, honest

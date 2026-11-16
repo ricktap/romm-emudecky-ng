@@ -647,6 +647,14 @@ export const savesRollbackToVersion = callable<[number, string, number], Rollbac
 // Self-update: checks GitHub for a newer release (throttled to every 6 h unless
 // force=true). Never installs — see utils/selfUpdate.ts for the Decky handoff.
 export const checkForUpdate = callable<[boolean], UpdateCheckResult>("check_for_update");
+// The "Eden" entry in the Steam library: where Eden is (`exe` null while not installed) and the shortcut made before.
+export const getEmulatorStarter = callable<
+  [],
+  { success: boolean; name: string; exe: string | null; start_dir: string | null; app_id: number | null }
+>("get_emulator_starter");
+export const rememberEmulatorStarter = callable<[number], { success: boolean; reason?: string; message?: string }>(
+  "remember_emulator_starter",
+);
 // Danger zone: put <roms>/switch into Eden's External Content folders now (the plugin also does it at startup and after
 // every Switch download), so Eden loads the update and DLC files in the game folders without installing them.
 export const setEdenExternalContent = callable<
